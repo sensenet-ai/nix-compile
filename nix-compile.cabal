@@ -1,0 +1,147 @@
+cabal-version:      3.0
+name:               nix-compile
+version:            0.1.0.0
+synopsis:           Type inference for bash scripts at Nix eval time
+description:        Eliminates runtime bash bugs by catching type errors, missing variables,
+                    and policy violations during the build.
+license:            MIT
+author:             Aleph Systems
+maintainer:         dev@aleph.systems
+category:           Development
+build-type:         Simple
+
+common warnings
+    ghc-options: -Wall -Werror -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+library
+    import:           warnings
+    exposed-modules:
+        NixCompile
+        NixCompile.Bash.Builtins
+        NixCompile.Bash.Facts
+        NixCompile.Bash.Parse
+        NixCompile.Bash.Patterns
+        NixCompile.Emit.Config
+        NixCompile.Infer.Constraint
+        NixCompile.Infer.Unify
+        NixCompile.Lint.Forbidden
+        NixCompile.Nix.Effect
+        NixCompile.Nix.Flake
+        NixCompile.Nix.Format
+        NixCompile.Nix.Infer
+        NixCompile.Nix.Layout
+        NixCompile.Nix.Lint
+        NixCompile.Nix.Module
+        NixCompile.Nix.Parse
+        NixCompile.Nix.Pretty
+        NixCompile.Nix.Scope
+        NixCompile.Nix.Types
+        NixCompile.Nix.Utils
+        NixCompile.Schema.Build
+        NixCompile.Types
+    build-depends:
+        aeson >= 2.0 && < 2.3,
+        async >= 2.2 && < 2.3,
+        base >= 4.16 && < 4.21,
+        bytestring >= 0.11 && < 0.13,
+        containers >= 0.6 && < 0.8,
+        data-fix >= 0.3 && < 0.4,
+        dhall >= 1.42 && < 1.43,
+        directory >= 1.3 && < 1.4,
+        filepath >= 1.4 && < 1.6,
+        hnix >= 0.17 && < 0.18,
+        megaparsec >= 9.0 && < 10.0,
+        mtl >= 2.3 && < 2.4,
+        ShellCheck >= 0.9 && < 0.12,
+        text >= 2.0 && < 2.2,
+        transformers >= 0.5 && < 0.7
+    hs-source-dirs:   lib
+    default-language: GHC2021
+
+executable nix-compile
+    import:           warnings
+    main-is:          nix-compile.hs
+    build-depends:
+        aeson >= 2.0 && < 2.3,
+        async >= 2.2 && < 2.3,
+        base >= 4.16 && < 4.21,
+        bytestring >= 0.11 && < 0.13,
+        containers >= 0.6 && < 0.8,
+        data-fix >= 0.3 && < 0.4,
+        dhall >= 1.42 && < 1.43,
+        directory >= 1.3 && < 1.4,
+        filepath >= 1.4 && < 1.6,
+        hnix >= 0.17 && < 0.18,
+        megaparsec >= 9.0 && < 10.0,
+        mtl >= 2.3 && < 2.4,
+        nix-compile,
+        ShellCheck >= 0.9 && < 0.12,
+        text >= 2.0 && < 2.2,
+        transformers >= 0.5 && < 0.7
+    hs-source-dirs:   app
+    default-language: GHC2021
+
+test-suite nix-compile-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Props.hs
+    other-modules:    Adversarial
+    build-depends:
+        aeson >= 2.0 && < 2.3,
+        async >= 2.2 && < 2.3,
+        base >= 4.16 && < 4.21,
+        bytestring >= 0.11 && < 0.13,
+        containers >= 0.6 && < 0.8,
+        data-fix >= 0.3 && < 0.4,
+        deepseq >= 1.4 && < 1.6,
+        dhall >= 1.42 && < 1.43,
+        directory >= 1.3 && < 1.4,
+        filepath >= 1.4 && < 1.6,
+        hnix >= 0.17 && < 0.18,
+        megaparsec >= 9.0 && < 10.0,
+        mtl >= 2.3 && < 2.4,
+        nix-compile,
+        QuickCheck >= 2.14 && < 2.16,
+        ShellCheck >= 0.9 && < 0.12,
+        text >= 2.0 && < 2.2,
+        transformers >= 0.5 && < 0.7
+    hs-source-dirs:   test
+    default-language: GHC2021
+
+test-suite nix-compile-fixtures
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Fixtures.hs
+    build-depends:
+        base >= 4.16 && < 4.21,
+        containers >= 0.6 && < 0.8,
+        nix-compile,
+        text >= 2.0 && < 2.2
+    hs-source-dirs:   test
+    default-language: GHC2021
+
+test-suite nix-compile-more-fixtures
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          MoreFixtures.hs
+    build-depends:
+        base >= 4.16 && < 4.21,
+        containers >= 0.6 && < 0.8,
+        nix-compile,
+        text >= 2.0 && < 2.2
+    hs-source-dirs:   test
+    default-language: GHC2021
+
+test-suite nix-compile-flake-parts
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          FlakePartsTest.hs
+    build-depends:
+        base >= 4.16 && < 4.21,
+        containers >= 0.6 && < 0.8,
+        directory >= 1.3 && < 1.4,
+        filepath >= 1.4 && < 1.6,
+        nix-compile,
+        text >= 2.0 && < 2.2
+    hs-source-dirs:   test
+    default-language: GHC2021

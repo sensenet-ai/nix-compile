@@ -1,0 +1,762 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+-- |
+-- nix-compile - CLI for compile-time Nix type inference
+--
+-- Usage:
+--   nix-compile parse <script>       Parse and show facts
+--   nix-compile infer <script>       Infer types and show schema
+--   nix-compile check <script>       Check for policy violations
+--   nix-compile lint <script>        Check for forbidden constructs
+--   nix-compile emit <script>       Generate emit-config bash function
+--   nix-compile nix <file.nix>       Check embedded bash in Nix files
+module Main (main) where
+
+import Data.Aeson (encode)
+import qualified Data.ByteString.Lazy.Char8 as BL
+import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
+import System.Environment (getArgs)
+import System.Exit (exitFailure, exitSuccess)
+import NixCompile
+import NixCompile.Bash.Parse (parseBash)
+import NixCompile.Bash.Facts (extractFacts)
+import NixCompile.Emit.Config (emitConfigFunction)
+import NixCompile.Lint.Forbidden (findViolations, formatViolationsAt)
+import NixCompile.Infer.Constraint (factsToConstraints)
+import NixCompile.Infer.Unify (solve)
+import qualified NixCompile.Nix.Infer
+import qualified NixCompile.Nix.Parse as Nix
+import qualified NixCompile.Nix.Format as NixFmt
+import qualified NixCompile.Nix.Flake as Flake
+import qualified NixCompile.Nix.Module as Mod
+import qualified NixCompile.Nix.Layout as Layout
+import qualified NixCompile.Nix.Lint as Lint
+import qualified NixCompile.Nix.Scope as Scope
+import qualified NixCompile.Nix.Types
+import qualified Data.Map.Strict as Map
+
+-- hnix imports for detectUnsupported function
+import Data.Fix (Fix(..))
+import Data.Functor.Compose (Compose(..))
+import Data.List.NonEmpty (NonEmpty(..))
+import Nix.Expr.Types
+import Nix.Expr.Types.Annotated (AnnUnit(..), NExprLoc)
+import Control.Applicative ((<|>))
+import Control.Monad (forM, forM_, unless)
+import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.MVar (newMVar, withMVar)
+import System.Directory (doesDirectoryExist, listDirectory)
+import System.FilePath ((</>), takeExtension, makeRelative, takeDirectory)
+import Control.Exception (SomeException, try)
+
+data TCResult = TCOk | TCFail | TCSkip
+  deriving (Eq, Show)
+
+-- Helper function for extracting text from VarName
+-- varNameText :: VarName -> T.Text
+-- varNameText = coerce
+
+main :: IO ()
+main = do
+  args <- getArgs
+  case args of
+    ["lint", file] -> cmdLint file
+    ["check", file] -> cmdCheck file
+    ["infer", file] -> cmdInfer file
+    ["parse", file] -> cmdParse file
+    ["emit", file] -> cmdEmit file
+    ["nix", file] -> cmdNix file
+    ["fmt", file] -> cmdFmt file
+    ["typecheck", path] -> cmdTypeCheck path
+    ["flake"] -> cmdFlake "."
+    ["flake", dir] -> cmdFlake dir
+    ["graph"] -> cmdGraph "." False
+    ["graph", dir] -> cmdGraph dir False
+    ["graph", "--dot"] -> cmdGraph "." True
+    ["graph", "--dot", dir] -> cmdGraph dir True
+    ["graph", dir, "--dot"] -> cmdGraph dir True
+    ["scope", file] -> cmdScope file
+    ["scope", "--json", file] -> cmdScopeJSON file
+    ["scope", "--dhall", file] -> cmdScopeDhall file
+    ["--help"] -> usage
+    ["-h"] -> usage
+    [] -> usage
+    _ -> do
+      putStrLn $ "Unknown command: " ++ unwords args
+      usage
+      exitFailure
+
+usage :: IO ()
+usage = do
+  putStrLn "nix-compile - compile-time type checker for Nix expressions"
+  putStrLn ""
+  putStrLn "Usage:"
+  putStrLn "  nix-compile lint <script.sh>    Check for forbidden constructs (heredocs, eval, etc)"
+  putStrLn "  nix-compile check <script.sh>   Full check (lint + policy + types)"
+  putStrLn "  nix-compile infer <script.sh>   Infer types and show schema (JSON)"
+  putStrLn "  nix-compile parse <script.sh>   Parse and show extracted facts"
+  putStrLn "  nix-compile emit <script.sh>    Generate emit-config bash function (use: emit-config <json|yaml|toml>)"
+  putStrLn "  nix-compile nix <file.nix>      Check embedded bash in Nix files"
+  putStrLn "  nix-compile fmt <file.nix>      Add type annotations to Nix file"
+  putStrLn "  nix-compile typecheck <path>    Recursively infer and check types for all Nix files"
+  putStrLn "  nix-compile flake [dir]         Analyze a flake"
+  putStrLn "  nix-compile graph [--dot] [dir] Show module dependency graph (exits 1 on violations)"
+  putStrLn "  nix-compile scope <file.nix>    Show scope graph (declarations, references, edges)"
+  putStrLn "  nix-compile scope --json <file> Emit scope graph as JSON (for zeitschrift)"
+  putStrLn "  nix-compile scope --dhall <file> Emit scope graph as Dhall (for zeitschrift)"
+  putStrLn ""
+  putStrLn "Bash policy checks (enforced by `check` and `nix`; no escape hatch):"
+  putStrLn "  - heredocs (<<, <<-)"
+  putStrLn "  - here-strings (<<<)"
+  putStrLn "  - eval"
+  putStrLn "  - backticks (`cmd`)"
+  putStrLn "  - bare commands (external commands must use store paths; shell builtins allowed)"
+  putStrLn "  - dynamic commands ($cmd)"
+  putStrLn ""
+  putStrLn "Forbidden Nix constructs (no escape hatch):"
+  putStrLn "  - with expr;  (obscures scope, breaks tooling)"
+  putStrLn "  - rec { }     (enables non-termination, breaks analysis)"
+  putStrLn "  - \"str\".attr  (breaks hnix parser)"
+  putStrLn ""
+  putStrLn "Examples:"
+  putStrLn "  nix-compile lint ./deploy.sh"
+  putStrLn "  nix-compile check ./scripts/*.sh"
+  putStrLn "  nix-compile infer ./deploy.sh | jq '.env'"
+  putStrLn "  nix-compile nix ./default.nix"
+
+-- ============================================================================
+-- Pretty-printing for bash policy violations
+-- ============================================================================
+
+formatBareCommand :: T.Text -> (T.Text, Span) -> T.Text
+formatBareCommand src (cmd, sp) =
+  let tok = locLine (spanStart sp)
+   in T.unlines
+        [ "error[ALEPH-B005]: bare command not allowed: " <> cmd
+        , "  --> " <> src <> ":" <> T.pack (show tok)
+        , ""
+        , "  Use an explicit store path for external commands:"
+        , "    /nix/store/...-pkg/bin/" <> cmd
+        ]
+
+formatDynamicCommand :: T.Text -> (T.Text, Span) -> T.Text
+formatDynamicCommand src (var, sp) =
+  let tok = locLine (spanStart sp)
+   in T.unlines
+        [ "error[ALEPH-B006]: dynamic command not allowed: $" <> var
+        , "  --> " <> src <> ":" <> T.pack (show tok)
+        , ""
+        , "  Dynamic command selection is not statically analyzable."
+        , "  Use a known store path or a case statement over a small allowlist."
+        ]
+
+-- | Indent every line of a multi-line block.
+indentBlock :: T.Text -> T.Text -> T.Text
+indentBlock prefix block =
+  T.unlines [prefix <> line | line <- T.lines block]
+
+cmdParse :: FilePath -> IO ()
+cmdParse file = do
+  result <- parseScriptFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right script -> do
+      putStrLn "Facts:"
+      mapM_ print (scriptFacts script)
+
+cmdInfer :: FilePath -> IO ()
+cmdInfer file = do
+  result <- parseScriptFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Error: " <> err
+      exitFailure
+    Right script -> do
+      BL.putStrLn (encode (scriptSchema script))
+
+-- | Lint for forbidden constructs only (heredocs, eval, backticks)
+cmdLint :: FilePath -> IO ()
+cmdLint file = do
+  src <- TIO.readFile file
+  case parseBash src of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right ast -> do
+      let violations = findViolations ast
+      if null violations
+        then do
+          putStrLn $ file ++ ": OK (no forbidden constructs)"
+          exitSuccess
+        else do
+          TIO.putStr $ formatViolationsAt (T.pack file) violations
+          putStrLn $ "\n" ++ show (length violations) ++ " error(s) in " ++ file
+          exitFailure
+
+-- | Full check: lint + bare commands + type inference
+cmdCheck :: FilePath -> IO ()
+cmdCheck file = do
+  src <- TIO.readFile file
+  -- First check for forbidden constructs
+  case parseBash src of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right ast -> do
+      let violations = findViolations ast
+      unless (null violations) $ do
+        TIO.putStr $ formatViolationsAt (T.pack file) violations
+        putStrLn ""
+      
+      -- Then do type inference and check policy violations
+      let facts = extractFacts ast
+      let constraints = factsToConstraints facts
+      _subst <- case solve constraints of
+        Left err -> do
+          TIO.putStrLn $ "Type error: " <> T.pack (show err)
+          exitFailure
+        Right s -> pure s
+
+      let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
+      let dynFacts = [(var, sp) | DynamicCommand var sp <- facts]
+      let bareCount = length bareFacts
+      let dynCount = length dynFacts
+      let violationCount = length violations
+
+      -- Report bare commands
+      unless (null bareFacts) $ do
+        TIO.putStrLn ""
+        TIO.putStrLn "Bare commands (external commands must use store paths; shell builtins allowed):"
+        mapM_ (TIO.putStr . formatBareCommand (T.pack file)) bareFacts
+
+      -- Report dynamic commands
+      unless (null dynFacts) $ do
+        TIO.putStrLn ""
+        TIO.putStrLn "Dynamic commands (cannot analyze):"
+        mapM_ (TIO.putStr . formatDynamicCommand (T.pack file)) dynFacts
+
+      let totalErrors = violationCount + bareCount + dynCount
+      if totalErrors > 0
+        then do
+          putStrLn $ "\n" ++ show totalErrors ++ " error(s) in " ++ file
+          exitFailure
+        else do
+          putStrLn $ file ++ ": OK"
+          exitSuccess
+
+cmdEmit :: FilePath -> IO ()
+cmdEmit file = do
+  result <- parseScriptFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Error: " <> err
+      exitFailure
+    Right script -> do
+      TIO.putStr $ emitConfigFunction (scriptSchema script)
+
+-- | Check embedded bash scripts in Nix files
+cmdNix :: FilePath -> IO ()
+cmdNix file = do
+  result <- Nix.extractBashScripts file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right scripts -> do
+      putStrLn $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
+      totalErrors <- sum <$> mapM checkScript scripts
+      if totalErrors > 0
+        then do
+          putStrLn $ "\n" ++ show totalErrors ++ " total error(s)"
+          exitFailure
+        else do
+          putStrLn $ file ++ ": OK"
+          exitSuccess
+  where
+    checkScript :: Nix.BashScript -> IO Int
+    checkScript bs = do
+      putStrLn $ "\n=== " ++ T.unpack (Nix.bsName bs) ++ " ==="
+      -- Parse and check the bash content
+      case parseBash (Nix.bsContent bs) of
+        Left err -> do
+          TIO.putStrLn $ "  Parse error: " <> err
+          return 1
+        Right ast -> do
+          -- Check for forbidden constructs
+          let violations = findViolations ast
+          unless (null violations) $ do
+            let srcLabel = T.pack file <> ":" <> Nix.bsName bs
+            TIO.putStr $ formatViolationsAt srcLabel violations
+          
+          -- Check for non-store-path interpolations
+          let badInterps = filter (not . Nix.intIsStorePath) (Nix.bsInterpolations bs)
+          unless (null badInterps) $ do
+            putStrLn "  Non-store-path interpolations (may need verification):"
+            mapM_ (\i -> putStrLn $ "    ${" ++ T.unpack (Nix.intExpr i) ++ "}") badInterps
+          
+          -- Type inference and policy checks
+          let facts = extractFacts ast
+          let constraints = factsToConstraints facts
+          _subst <- case solve constraints of
+            Left err -> do
+              TIO.putStrLn $ "  Type error: " <> T.pack (show err)
+              return (length violations + 1)
+            Right s -> pure (Map.size s)
+
+          let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
+          let dynFacts = [(var, sp) | DynamicCommand var sp <- facts]
+          let bareCount = length bareFacts
+          let dynCount = length dynFacts
+
+          unless (null bareFacts) $ do
+            putStrLn "  Bare commands (external commands must use store paths; shell builtins allowed):"
+            let srcLabel = T.pack file <> ":" <> Nix.bsName bs
+            mapM_ (TIO.putStr . indentBlock "  " . formatBareCommand srcLabel) bareFacts
+
+          unless (null dynFacts) $ do
+            putStrLn "  Dynamic commands (cannot analyze):"
+            let srcLabel = T.pack file <> ":" <> Nix.bsName bs
+            mapM_ (TIO.putStr . indentBlock "  " . formatDynamicCommand srcLabel) dynFacts
+
+          let errorCount = length violations + bareCount + dynCount
+          if errorCount == 0
+            then putStrLn "  OK"
+            else putStrLn $ "  " ++ show errorCount ++ " error(s)"
+          return errorCount
+
+-- | Recursively type check a directory or single file in parallel
+cmdTypeCheck :: FilePath -> IO ()
+cmdTypeCheck path = do
+  isDir <- doesDirectoryExist path
+  files <- if isDir 
+           then findAllNixFiles path
+           else return [path]
+  
+  TIO.putStrLn $ T.unlines
+    [ ""
+    , "================================================================"
+    , "  nix-compile typecheck"
+    , "  " <> T.pack (show (length files) <> " files")
+    , "================================================================"
+    , ""
+    ]
+  
+  -- Lock for synchronized output
+  outLock <- newMVar ()
+  let logFn msg = withMVar outLock $ \_ -> TIO.putStrLn msg
+  
+  results <- mapConcurrently (checkFile logFn) files
+  let okCount = length [() | r <- results, r == TCOk]
+  let skipCount = length [() | r <- results, r == TCSkip]
+  let failCount = length [() | r <- results, r == TCFail]
+  
+  TIO.putStrLn $ T.unlines
+    [ ""
+    , "================================================================"
+    , "  Summary"
+    , "  " <> T.pack (show okCount <> " passed")
+    , "  " <> T.pack (show skipCount <> " skipped (unsupported constructs)")
+    , "  " <> T.pack (show failCount <> " failed")
+    , "================================================================"
+    , ""
+    ]
+  
+  if failCount == 0
+    then exitSuccess
+    else exitFailure
+  where
+    findAllNixFiles :: FilePath -> IO [FilePath]
+    findAllNixFiles dir = do
+      entries <- listDirectory dir
+      paths <- forM entries $ \entry -> do
+        let fullPath = dir </> entry
+        -- Skip excluded directories
+        if entry `elem` [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
+          then return []
+          else do
+            isD <- doesDirectoryExist fullPath
+            if isD
+              then findAllNixFiles fullPath
+              else return [fullPath | takeExtension fullPath == ".nix"]
+      return (concat paths)
+
+    checkFile :: (T.Text -> IO ()) -> FilePath -> IO TCResult
+    checkFile logFn file = do
+      -- First check if file uses unsupported constructs
+      parseRes <- Nix.parseNixFile file
+      case parseRes of
+        Left err -> do
+          logFn $ T.unlines
+            [ ""
+            , "━━━ " <> cross <> " " <> T.pack file <> " ━━━"
+            , ""
+            , "  PARSE ERROR: " <> err
+            , ""
+            ]
+          return TCFail
+        Right expr -> 
+          case detectUnsupported expr of
+            Just reason -> do
+              -- Skip files with unsupported constructs
+              logFn $ skip <> " " <> T.pack file <> " (unsupported: " <> reason <> ")"
+              return TCSkip
+            Nothing -> do
+              -- Type check the file
+              result <- try $ case NixCompile.Nix.Infer.inferExpr expr of
+                Left err -> return $ Left err
+                Right (t, _) -> return $ Right (NixCompile.Nix.Types.prettyType t)
+                
+              case result of
+                Left (e :: SomeException) -> do
+                  logFn $ T.unlines
+                    [ ""
+                    , "━━━ " <> cross <> " " <> T.pack file <> " ━━━"
+                    , ""
+                    , "  INTERNAL ERROR (this is a bug in nix-compile):"
+                    , ""
+                    , T.unlines $ map ("     " <>) $ T.lines $ T.pack $ show e
+                    ]
+                  return TCFail
+                Right (Left err) -> do
+                  logFn $ T.unlines
+                    [ ""
+                    , "━━━ " <> cross <> " " <> T.pack file <> " ━━━"
+                    , ""
+                    , formatError err
+                    , ""
+                    ]
+                  return TCFail
+                Right (Right _t) -> do
+                  logFn $ check <> " " <> T.pack file
+                  return TCOk
+      where
+        check = "[OK]"
+        cross = "[XX]"
+        skip = "[SKIP]"
+        
+        formatError :: T.Text -> T.Text
+        formatError err = 
+          let lines' = T.lines err
+          in case lines' of
+               (first:rest) -> T.unlines $ ("  ERROR: " <> first) : map ("         " <>) rest
+               [] -> "  ERROR: unknown error"
+        
+        -- Detect unsupported constructs that are fundamentally incompatible with static analysis
+        detectUnsupported :: NExprLoc -> Maybe T.Text
+        detectUnsupported (Fix (Compose (AnnUnit _ expr))) = case expr of
+          -- Dynamic attribute access
+          NSelect _ _ (DynamicKey _ :| _) -> Just "dynamic attribute access"
+          -- with expression
+          NWith _ _ -> Just "with expression"
+          -- Dynamic imports (NImport removed in hnix 0.17.0)
+          -- NImport path -> case path of
+          --   Fix (Compose (AnnUnit _ (NStr _))) -> Just "dynamic import"
+          --   _ -> Nothing
+          -- Recursively check sub-expressions
+          NAbs _ body -> detectUnsupported body
+          NLet bindings body -> 
+            foldl (<|>) (detectUnsupported body) (map detectUnsupportedBinding bindings)
+          NSet _ bindings ->
+            foldl (<|>) Nothing (map detectUnsupportedBinding bindings)
+          NList elems ->
+            foldl (<|>) Nothing (map detectUnsupported elems)
+          NBinary _ left right ->
+            detectUnsupported left <|> detectUnsupported right
+          NUnary _ arg -> detectUnsupported arg
+          NSelect _ base _ -> detectUnsupported base
+          NHasAttr base _ -> detectUnsupported base
+          NApp fun arg -> detectUnsupported fun <|> detectUnsupported arg
+          NIf cond t f -> detectUnsupported cond <|> detectUnsupported t <|> detectUnsupported f
+          NAssert cond body -> detectUnsupported cond <|> detectUnsupported body
+          _ -> Nothing
+        
+        detectUnsupportedBinding :: Binding NExprLoc -> Maybe T.Text
+        detectUnsupportedBinding binding = case binding of
+          NamedVar _ expr _ -> detectUnsupported expr
+          Inherit _ _ _ -> Nothing
+
+-- | Format a Nix file with type annotations
+cmdFmt :: FilePath -> IO ()
+cmdFmt file = do
+  result <- NixFmt.formatFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Error: " <> err
+      exitFailure
+    Right formatted -> do
+      TIO.putStr formatted
+
+-- | Analyze a flake
+cmdFlake :: FilePath -> IO ()
+cmdFlake dir = do
+  result <- Flake.parseFlakeDir dir
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Error: " <> err
+      exitFailure
+    Right flake -> do
+      putStrLn "=== Flake ==="
+      putStrLn $ "Path: " ++ Flake.flakePath flake
+      TIO.putStrLn $ "Description: " <> maybe "(none)" id (Flake.flakeDescription flake)
+      
+      putStrLn "\n=== Inputs ==="
+      mapM_ printInput (Map.toList $ Flake.flakeInputs flake)
+      
+      putStrLn "\n=== Inferred Type ==="
+      let types = Flake.inferFlake flake
+      TIO.putStrLn $ "outputs : " <> prettyType (Flake.ftOutputsType types)
+  where
+    printInput (name, input) = do
+      TIO.putStr $ "  " <> name <> " : FlakeInput"
+      case Flake.inputUrl input of
+        Just url -> TIO.putStrLn $ " = \"" <> url <> "\""
+        Nothing -> case Flake.inputFollows input of
+          Just follows -> TIO.putStrLn $ " (follows " <> follows <> ")"
+          Nothing -> putStrLn ""
+    
+    prettyType = NixCompile.Nix.Types.prettyType
+
+-- | Show module dependency graph
+cmdGraph :: FilePath -> Bool -> IO ()
+cmdGraph dir asDot = do
+  result <- Mod.buildModuleGraphFromFlake dir
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Error: " <> err
+      exitFailure
+    Right graph -> do
+      let rootDir = takeDirectory (Mod.mgRoot graph)
+      if asDot
+        then printDot rootDir graph
+        else do
+          printGraph rootDir graph
+          -- Exit with failure if there are any violations
+          if Mod.hasViolations graph
+            then exitFailure
+            else exitSuccess
+  where
+    printGraph :: FilePath -> Mod.ModuleGraph -> IO ()
+    printGraph rootDir graph = do
+      putStrLn "=== Module Graph ==="
+      putStrLn $ "Root: " ++ makeRelative rootDir (Mod.mgRoot graph)
+      putStrLn $ "Modules: " ++ show (Map.size (Mod.mgModules graph))
+      
+      let parseFailures = Mod.mgFailures graph
+      let lintFailures = Mod.mgLintFailures graph
+      let layoutFailures = Mod.mgLayoutFailures graph
+      let lintViolationCount = sum (map (length . Mod.lfViolations) lintFailures)
+      let layoutViolationCount = sum (map (length . Mod.layViolations) layoutFailures)
+      
+      if null parseFailures && null lintFailures && null layoutFailures
+        then putStrLn ""
+        else do
+          if not (null parseFailures)
+            then do
+              putStrLn $ "Parse failures: " ++ show (length parseFailures)
+              putStrLn ""
+              putStrLn "=== Parse Failures (banned syntax) ==="
+              mapM_ (printParseFailure rootDir) parseFailures
+              putStrLn ""
+            else return ()
+          
+          if not (null lintFailures)
+            then do
+              putStrLn $ "Lint violations: " ++ show lintViolationCount ++ " in " ++ show (length lintFailures) ++ " files"
+              putStrLn ""
+              putStrLn "=== Lint Failures (with/rec banned) ==="
+              mapM_ (printLintFailure rootDir) lintFailures
+              putStrLn ""
+            else return ()
+          
+          if not (null layoutFailures)
+            then do
+              putStrLn $ "Layout violations: " ++ show layoutViolationCount ++ " in " ++ show (length layoutFailures) ++ " files"
+              putStrLn ""
+              putStrLn "=== Layout Failures (directory structure) ==="
+              mapM_ (printLayoutFailure rootDir) layoutFailures
+              putStrLn ""
+            else return ()
+      
+      putStrLn "=== Topological Order (dependencies first) ==="
+      mapM_ (\p -> putStrLn $ "  " ++ makeRelative rootDir p) (Mod.mgOrder graph)
+      putStrLn ""
+      
+      putStrLn "=== Import Graph ==="
+      mapM_ (printModuleImports rootDir) (Map.elems (Mod.mgModules graph))
+      
+      putStrLn ""
+      putStrLn "=== Module Types ==="
+      mapM_ (printModuleType rootDir graph) (Mod.mgOrder graph)
+    
+    printParseFailure :: FilePath -> Mod.ParseFailure -> IO ()
+    printParseFailure rootDir pf = do
+      let path = makeRelative rootDir (Mod.pfPath pf)
+      TIO.putStrLn $ "  " <> T.pack path <> ":"
+      -- Extract just the first line of the error (location info)
+      let errLines = T.lines (Mod.pfError pf)
+      case errLines of
+        (l:_) -> TIO.putStrLn $ "    " <> l
+        [] -> return ()
+    
+    printLintFailure :: FilePath -> Mod.LintFailure -> IO ()
+    printLintFailure rootDir lf = do
+      let path = makeRelative rootDir (Mod.lfPath lf)
+      TIO.putStrLn $ "  " <> T.pack path <> ":"
+      mapM_ printViolation (Mod.lfViolations lf)
+    
+    printViolation :: Lint.NixViolation -> IO ()
+    printViolation v = do
+      let loc = Lint.nvSpan v
+      let code = case Lint.nvType v of
+            Lint.VWith -> "ALEPH-N001"
+            Lint.VRec -> "ALEPH-N002"
+      TIO.putStrLn $ "    " <> T.pack (show (locLine (spanStart loc))) <> ":" <>
+                     T.pack (show (locCol (spanStart loc))) <> " " <> code <> ": " <>
+                     Lint.nvContext v
+    
+    locLine (Loc l _) = l
+    locCol (Loc _ c) = c
+    spanStart (Span s _ _) = s
+    
+    printLayoutFailure :: FilePath -> Mod.LayoutFailure -> IO ()
+    printLayoutFailure rootDir lf = do
+      let path = makeRelative rootDir (Mod.layPath lf)
+      TIO.putStrLn $ "  " <> T.pack path <> ":"
+      mapM_ printLayoutViolation (Mod.layViolations lf)
+    
+    printLayoutViolation :: Layout.LayoutViolation -> IO ()
+    printLayoutViolation v = do
+      let code = case Layout.lvCode v of
+            Layout.L001 -> "ALEPH-L001"
+            Layout.L002 -> "ALEPH-L002"
+            Layout.L003 -> "ALEPH-L003"
+            Layout.L004 -> "ALEPH-L004"
+            Layout.L005 -> "ALEPH-L005"
+      case Layout.lvSpan v of
+        Just loc -> 
+          TIO.putStrLn $ "    " <> T.pack (show (locLine (spanStart loc))) <> ":" <>
+                         T.pack (show (locCol (spanStart loc))) <> " " <> code <> ": " <>
+                         Layout.lvMessage v
+        Nothing ->
+          TIO.putStrLn $ "    " <> code <> ": " <> Layout.lvMessage v
+    
+    printModuleImports :: FilePath -> Mod.Module -> IO ()
+    printModuleImports rootDir m = do
+      let path = makeRelative rootDir (Mod.modPath m)
+      let imports = Mod.modImports m
+      if null imports
+        then return ()
+        else do
+          putStrLn $ path ++ ":"
+          mapM_ (\imp -> putStrLn $ "  -> " ++ makeRelative rootDir (Mod.impPath imp)) imports
+    
+    printModuleType :: FilePath -> Mod.ModuleGraph -> FilePath -> IO ()
+    printModuleType rootDir graph path =
+      case Map.lookup path (Mod.mgModules graph) of
+        Nothing -> return ()
+        Just m -> do
+          let relPath = makeRelative rootDir path
+          TIO.putStrLn $ T.pack relPath <> " : " <> NixCompile.Nix.Types.prettyType (Mod.modType m)
+    
+    printDot :: FilePath -> Mod.ModuleGraph -> IO ()
+    printDot rootDir graph = do
+      putStrLn "digraph modules {"
+      putStrLn "  rankdir=LR;"
+      putStrLn "  node [shape=box];"
+      putStrLn ""
+      mapM_ (printDotEdges rootDir) (Map.elems (Mod.mgModules graph))
+      putStrLn "}"
+    
+    printDotEdges :: FilePath -> Mod.Module -> IO ()
+    printDotEdges rootDir m = do
+      let path = makeRelative rootDir (Mod.modPath m)
+      mapM_ (\imp -> do
+        let impPath = makeRelative rootDir (Mod.impPath imp)
+        putStrLn $ "  \"" ++ path ++ "\" -> \"" ++ impPath ++ "\";") (Mod.modImports m)
+
+-- | Show scope graph for a Nix file
+cmdScope :: FilePath -> IO ()
+cmdScope file = do
+  result <- Nix.parseNixFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right expr -> do
+      let sg = Scope.fromNixFile file expr
+      printScopeGraph sg
+
+-- | Emit scope graph as JSON (for zeitschrift)
+cmdScopeJSON :: FilePath -> IO ()
+cmdScopeJSON file = do
+  result <- Nix.parseNixFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right expr -> do
+      let sg = Scope.fromNixFile file expr
+      BL.putStrLn $ encode sg
+
+-- | Emit scope graph as Dhall (for zeitschrift)
+cmdScopeDhall :: FilePath -> IO ()
+cmdScopeDhall file = do
+  result <- Nix.parseNixFile file
+  case result of
+    Left err -> do
+      TIO.putStrLn $ "Parse error: " <> err
+      exitFailure
+    Right expr -> do
+      let sg = Scope.fromNixFile file expr
+      TIO.putStrLn $ Scope.toDhall sg
+
+printScopeGraph :: Scope.ScopeGraph -> IO ()
+printScopeGraph sg = do
+  putStrLn "=== Scope Graph ==="
+  putStrLn $ "File: " ++ maybe "(none)" id (Scope.sgFile sg)
+  putStrLn $ "Scopes: " ++ show (Map.size (Scope.sgScopes sg))
+  putStrLn ""
+  
+  -- Print scopes with their contents
+  forM_ (Map.elems (Scope.sgScopes sg)) $ \scope -> do
+    putStrLn $ "Scope " ++ show (Scope.unScopeId (Scope.scopeId scope)) ++ 
+               " (" ++ show (Scope.scopeKind scope) ++ "):"
+    
+    -- Declarations
+    let decls = Scope.scopeDeclarations scope
+    unless (null decls) $ do
+      putStrLn "  Declarations:"
+      forM_ decls $ \d -> do
+        TIO.putStrLn $ "    " <> Scope.declName d <> 
+                       maybe "" (\t -> " : " <> t) (Scope.declType d)
+    
+    -- References
+    let refs = Scope.scopeReferences scope
+    unless (null refs) $ do
+      putStrLn "  References:"
+      forM_ refs $ \r -> do
+        TIO.putStrLn $ "    " <> Scope.refName r <> " (" <> T.pack (show (Scope.refKind r)) <> ")"
+    
+    -- Edges
+    let edges = Scope.scopeEdges scope
+    unless (null edges) $ do
+      putStrLn "  Edges:"
+      forM_ edges $ \e -> do
+        putStrLn $ "    -> " ++ show (Scope.unScopeId (Scope.edgeTarget e)) ++
+                   " (" ++ show (Scope.edgeLabel e) ++ ")"
+    
+    putStrLn ""
+  
+  -- Resolution summary
+  case Scope.resolveAll sg of
+    Left errors -> do
+      putStrLn $ "=== Unresolved References (" ++ show (length errors) ++ ") ==="
+      forM_ errors $ \case
+        Scope.Unresolved ref -> TIO.putStrLn $ "  " <> Scope.refName ref
+        Scope.Ambiguous ref _ -> TIO.putStrLn $ "  " <> Scope.refName ref <> " (ambiguous)"
+    Right resolved -> do
+      putStrLn $ "=== All " ++ show (length resolved) ++ " references resolved ==="
