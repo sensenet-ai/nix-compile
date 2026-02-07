@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- |
 -- nix-compile - CLI for compile-time Nix type inference
@@ -19,7 +20,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import NixCompile
+import NixCompile hiding (Severity)
+import NixCompile.Log
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Emit.Config (emitConfigFunction)
@@ -36,6 +38,7 @@ import qualified NixCompile.Nix.Lint as Lint
 import qualified NixCompile.Nix.Scope as Scope
 import qualified NixCompile.Nix.Types
 import qualified Data.Map.Strict as Map
+import Control.Monad.IO.Class (MonadIO (..))
 
 -- hnix imports for detectUnsupported function
 import Data.Fix (Fix(..))
@@ -46,7 +49,6 @@ import Nix.Expr.Types.Annotated (AnnUnit(..), NExprLoc)
 import Control.Applicative ((<|>))
 import Control.Monad (forM, forM_, unless)
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.MVar (newMVar, withMVar)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath ((</>), takeExtension, makeRelative, takeDirectory)
 import Control.Exception (SomeException, try)
@@ -54,13 +56,9 @@ import Control.Exception (SomeException, try)
 data TCResult = TCOk | TCFail | TCSkip
   deriving (Eq, Show)
 
--- Helper function for extracting text from VarName
--- varNameText :: VarName -> T.Text
--- varNameText = coerce
-
 main :: IO ()
-main = do
-  args <- getArgs
+main = runLog InfoS $ do
+  args <- liftIO getArgs
   case args of
     ["lint", file] -> cmdLint file
     ["check", file] -> cmdCheck file
@@ -80,13 +78,13 @@ main = do
     ["scope", file] -> cmdScope file
     ["scope", "--json", file] -> cmdScopeJSON file
     ["scope", "--dhall", file] -> cmdScopeDhall file
-    ["--help"] -> usage
-    ["-h"] -> usage
-    [] -> usage
+    ["--help"] -> liftIO usage
+    ["-h"] -> liftIO usage
+    [] -> liftIO usage
     _ -> do
-      putStrLn $ "Unknown command: " ++ unwords args
-      usage
-      exitFailure
+      $(logTM) ErrorS $ logStr $ T.pack $ "Unknown command: " ++ unwords args
+      liftIO usage
+      liftIO exitFailure
 
 usage :: IO ()
 usage = do
@@ -157,68 +155,68 @@ indentBlock :: T.Text -> T.Text -> T.Text
 indentBlock prefix block =
   T.unlines [prefix <> line | line <- T.lines block]
 
-cmdParse :: FilePath -> IO ()
+cmdParse :: FilePath -> AppM ()
 cmdParse file = do
-  result <- parseScriptFile file
+  result <- liftIO $ parseScriptFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right script -> do
-      putStrLn "Facts:"
-      mapM_ print (scriptFacts script)
+      liftIO $ putStrLn "Facts:"
+      liftIO $ mapM_ print (scriptFacts script)
 
-cmdInfer :: FilePath -> IO ()
+cmdInfer :: FilePath -> AppM ()
 cmdInfer file = do
-  result <- parseScriptFile file
+  result <- liftIO $ parseScriptFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
     Right script -> do
-      BL.putStrLn (encode (scriptSchema script))
+      liftIO $ BL.putStrLn (encode (scriptSchema script))
 
 -- | Lint for forbidden constructs only (heredocs, eval, backticks)
-cmdLint :: FilePath -> IO ()
+cmdLint :: FilePath -> AppM ()
 cmdLint file = do
-  src <- TIO.readFile file
+  src <- liftIO $ TIO.readFile file
   case parseBash src of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right ast -> do
       let violations = findViolations ast
       if null violations
         then do
-          putStrLn $ file ++ ": OK (no forbidden constructs)"
-          exitSuccess
+          $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK (no forbidden constructs)"
+          liftIO exitSuccess
         else do
-          TIO.putStr $ formatViolationsAt (T.pack file) violations
-          putStrLn $ "\n" ++ show (length violations) ++ " error(s) in " ++ file
-          exitFailure
+          $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
+          $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show (length violations) ++ " error(s) in " ++ file
+          liftIO exitFailure
 
 -- | Full check: lint + bare commands + type inference
-cmdCheck :: FilePath -> IO ()
+cmdCheck :: FilePath -> AppM ()
 cmdCheck file = do
-  src <- TIO.readFile file
+  src <- liftIO $ TIO.readFile file
   -- First check for forbidden constructs
   case parseBash src of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right ast -> do
       let violations = findViolations ast
       unless (null violations) $ do
-        TIO.putStr $ formatViolationsAt (T.pack file) violations
-        putStrLn ""
+        $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
+        liftIO $ putStrLn ""
       
       -- Then do type inference and check policy violations
       let facts = extractFacts ast
       let constraints = factsToConstraints facts
       _subst <- case solve constraints of
         Left err -> do
-          TIO.putStrLn $ "Type error: " <> T.pack (show err)
-          exitFailure
+          $(logTM) ErrorS $ logStr $ "Type error: " <> T.pack (show err)
+          liftIO exitFailure
         Right s -> pure s
 
       let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
@@ -229,81 +227,81 @@ cmdCheck file = do
 
       -- Report bare commands
       unless (null bareFacts) $ do
-        TIO.putStrLn ""
-        TIO.putStrLn "Bare commands (external commands must use store paths; shell builtins allowed):"
-        mapM_ (TIO.putStr . formatBareCommand (T.pack file)) bareFacts
+        liftIO $ TIO.putStrLn ""
+        liftIO $ TIO.putStrLn "Bare commands (external commands must use store paths; shell builtins allowed):"
+        liftIO $ mapM_ (TIO.putStr . formatBareCommand (T.pack file)) bareFacts
 
       -- Report dynamic commands
       unless (null dynFacts) $ do
-        TIO.putStrLn ""
-        TIO.putStrLn "Dynamic commands (cannot analyze):"
-        mapM_ (TIO.putStr . formatDynamicCommand (T.pack file)) dynFacts
+        liftIO $ TIO.putStrLn ""
+        liftIO $ TIO.putStrLn "Dynamic commands (cannot analyze):"
+        liftIO $ mapM_ (TIO.putStr . formatDynamicCommand (T.pack file)) dynFacts
 
       let totalErrors = violationCount + bareCount + dynCount
       if totalErrors > 0
         then do
-          putStrLn $ "\n" ++ show totalErrors ++ " error(s) in " ++ file
-          exitFailure
+          $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " error(s) in " ++ file
+          liftIO exitFailure
         else do
-          putStrLn $ file ++ ": OK"
-          exitSuccess
+          $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
+          liftIO exitSuccess
 
-cmdEmit :: FilePath -> IO ()
+cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do
-  result <- parseScriptFile file
+  result <- liftIO $ parseScriptFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
     Right script -> do
-      TIO.putStr $ emitConfigFunction (scriptSchema script)
+      liftIO $ TIO.putStr $ emitConfigFunction (scriptSchema script)
 
 -- | Check embedded bash scripts in Nix files
-cmdNix :: FilePath -> IO ()
+cmdNix :: FilePath -> AppM ()
 cmdNix file = do
-  result <- Nix.extractBashScripts file
+  result <- liftIO $ Nix.extractBashScripts file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right scripts -> do
-      putStrLn $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
+      $(logTM) InfoS $ logStr $ T.pack $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
       totalErrors <- sum <$> mapM checkScript scripts
       if totalErrors > 0
         then do
-          putStrLn $ "\n" ++ show totalErrors ++ " total error(s)"
-          exitFailure
+          $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " total error(s)"
+          liftIO exitFailure
         else do
-          putStrLn $ file ++ ": OK"
-          exitSuccess
+          $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
+          liftIO exitSuccess
   where
-    checkScript :: Nix.BashScript -> IO Int
+    checkScript :: Nix.BashScript -> AppM Int
     checkScript bs = do
-      putStrLn $ "\n=== " ++ T.unpack (Nix.bsName bs) ++ " ==="
+      $(logTM) InfoS $ logStr $ "\n=== " <> Nix.bsName bs <> " ==="
       -- Parse and check the bash content
       case parseBash (Nix.bsContent bs) of
         Left err -> do
-          TIO.putStrLn $ "  Parse error: " <> err
+          $(logTM) ErrorS $ logStr $ "  Parse error: " <> err
           return 1
         Right ast -> do
           -- Check for forbidden constructs
           let violations = findViolations ast
           unless (null violations) $ do
             let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-            TIO.putStr $ formatViolationsAt srcLabel violations
+            $(logTM) ErrorS $ logStr $ formatViolationsAt srcLabel violations
           
           -- Check for non-store-path interpolations
           let badInterps = filter (not . Nix.intIsStorePath) (Nix.bsInterpolations bs)
           unless (null badInterps) $ do
-            putStrLn "  Non-store-path interpolations (may need verification):"
-            mapM_ (\i -> putStrLn $ "    ${" ++ T.unpack (Nix.intExpr i) ++ "}") badInterps
+            $(logTM) WarningS $ logStr "  Non-store-path interpolations (may need verification):"
+            liftIO $ mapM_ (\i -> putStrLn $ "    ${" ++ T.unpack (Nix.intExpr i) ++ "}") badInterps
           
           -- Type inference and policy checks
           let facts = extractFacts ast
           let constraints = factsToConstraints facts
           _subst <- case solve constraints of
             Left err -> do
-              TIO.putStrLn $ "  Type error: " <> T.pack (show err)
+              $(logTM) ErrorS $ logStr $ "  Type error: " <> T.pack (show err)
               return (length violations + 1)
             Right s -> pure (Map.size s)
 
@@ -313,30 +311,30 @@ cmdNix file = do
           let dynCount = length dynFacts
 
           unless (null bareFacts) $ do
-            putStrLn "  Bare commands (external commands must use store paths; shell builtins allowed):"
+            $(logTM) ErrorS $ logStr "  Bare commands (external commands must use store paths; shell builtins allowed):"
             let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-            mapM_ (TIO.putStr . indentBlock "  " . formatBareCommand srcLabel) bareFacts
+            liftIO $ mapM_ (TIO.putStr . indentBlock "  " . formatBareCommand srcLabel) bareFacts
 
           unless (null dynFacts) $ do
-            putStrLn "  Dynamic commands (cannot analyze):"
+            $(logTM) ErrorS $ logStr "  Dynamic commands (cannot analyze):"
             let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-            mapM_ (TIO.putStr . indentBlock "  " . formatDynamicCommand srcLabel) dynFacts
+            liftIO $ mapM_ (TIO.putStr . indentBlock "  " . formatDynamicCommand srcLabel) dynFacts
 
           let errorCount = length violations + bareCount + dynCount
           if errorCount == 0
-            then putStrLn "  OK"
-            else putStrLn $ "  " ++ show errorCount ++ " error(s)"
+            then $(logTM) InfoS "  OK"
+            else $(logTM) ErrorS $ logStr $ T.pack $ "  " ++ show errorCount ++ " error(s)"
           return errorCount
 
 -- | Recursively type check a directory or single file in parallel
-cmdTypeCheck :: FilePath -> IO ()
+cmdTypeCheck :: FilePath -> AppM ()
 cmdTypeCheck path = do
-  isDir <- doesDirectoryExist path
+  isDir <- liftIO $ doesDirectoryExist path
   files <- if isDir 
-           then findAllNixFiles path
+           then liftIO $ findAllNixFiles path
            else return [path]
   
-  TIO.putStrLn $ T.unlines
+  $(logTM) InfoS $ logStr $ T.unlines
     [ ""
     , "================================================================"
     , "  nix-compile typecheck"
@@ -345,16 +343,18 @@ cmdTypeCheck path = do
     , ""
     ]
   
-  -- Lock for synchronized output
-  outLock <- newMVar ()
-  let logFn msg = withMVar outLock $ \_ -> TIO.putStrLn msg
+  -- We don't use MVar for logging anymore, we use Katip
+  -- But we need to pass the logging environment to the threads
+  env <- getLogEnv
+  ctx <- getKatipContext
+  ns <- getKatipNamespace
   
-  results <- mapConcurrently (checkFile logFn) files
+  results <- liftIO $ mapConcurrently (checkFileWrapper (env, ctx, ns)) files
   let okCount = length [() | r <- results, r == TCOk]
   let skipCount = length [() | r <- results, r == TCSkip]
   let failCount = length [() | r <- results, r == TCFail]
   
-  TIO.putStrLn $ T.unlines
+  $(logTM) InfoS $ logStr $ T.unlines
     [ ""
     , "================================================================"
     , "  Summary"
@@ -366,8 +366,8 @@ cmdTypeCheck path = do
     ]
   
   if failCount == 0
-    then exitSuccess
-    else exitFailure
+    then liftIO exitSuccess
+    else liftIO exitFailure
   where
     findAllNixFiles :: FilePath -> IO [FilePath]
     findAllNixFiles dir = do
@@ -384,13 +384,16 @@ cmdTypeCheck path = do
               else return [fullPath | takeExtension fullPath == ".nix"]
       return (concat paths)
 
-    checkFile :: (T.Text -> IO ()) -> FilePath -> IO TCResult
-    checkFile logFn file = do
+    checkFileWrapper :: (LogEnv, LogContexts, Namespace) -> FilePath -> IO TCResult
+    checkFileWrapper (le, ctx, ns) file = runKatipContextT le ctx ns (checkFile file)
+
+    checkFile :: FilePath -> AppM TCResult
+    checkFile file = do
       -- First check if file uses unsupported constructs
-      parseRes <- Nix.parseNixFile file
+      parseRes <- liftIO $ Nix.parseNixFile file
       case parseRes of
         Left err -> do
-          logFn $ T.unlines
+          $(logTM) ErrorS $ logStr $ T.unlines
             [ ""
             , "━━━ " <> cross <> " " <> T.pack file <> " ━━━"
             , ""
@@ -402,17 +405,17 @@ cmdTypeCheck path = do
           case detectUnsupported expr of
             Just reason -> do
               -- Skip files with unsupported constructs
-              logFn $ skip <> " " <> T.pack file <> " (unsupported: " <> reason <> ")"
+              $(logTM) InfoS $ logStr $ skip <> " " <> T.pack file <> " (unsupported: " <> reason <> ")"
               return TCSkip
             Nothing -> do
               -- Type check the file
-              result <- try $ case NixCompile.Nix.Infer.inferExpr expr of
+              result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expr of
                 Left err -> return $ Left err
                 Right (t, _) -> return $ Right (NixCompile.Nix.Types.prettyType t)
                 
               case result of
                 Left (e :: SomeException) -> do
-                  logFn $ T.unlines
+                  $(logTM) ErrorS $ logStr $ T.unlines
                     [ ""
                     , "━━━ " <> cross <> " " <> T.pack file <> " ━━━"
                     , ""
@@ -422,7 +425,7 @@ cmdTypeCheck path = do
                     ]
                   return TCFail
                 Right (Left err) -> do
-                  logFn $ T.unlines
+                  $(logTM) ErrorS $ logStr $ T.unlines
                     [ ""
                     , "━━━ " <> cross <> " " <> T.pack file <> " ━━━"
                     , ""
@@ -431,7 +434,7 @@ cmdTypeCheck path = do
                     ]
                   return TCFail
                 Right (Right _t) -> do
-                  logFn $ check <> " " <> T.pack file
+                  $(logTM) InfoS $ logStr $ check <> " " <> T.pack file
                   return TCOk
       where
         check = "[OK]"
@@ -480,35 +483,35 @@ cmdTypeCheck path = do
           Inherit _ _ _ -> Nothing
 
 -- | Format a Nix file with type annotations
-cmdFmt :: FilePath -> IO ()
+cmdFmt :: FilePath -> AppM ()
 cmdFmt file = do
-  result <- NixFmt.formatFile file
+  result <- liftIO $ NixFmt.formatFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
     Right formatted -> do
-      TIO.putStr formatted
+      liftIO $ TIO.putStr formatted
 
 -- | Analyze a flake
-cmdFlake :: FilePath -> IO ()
+cmdFlake :: FilePath -> AppM ()
 cmdFlake dir = do
-  result <- Flake.parseFlakeDir dir
+  result <- liftIO $ Flake.parseFlakeDir dir
   case result of
     Left err -> do
-      TIO.putStrLn $ "Error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
     Right flake -> do
-      putStrLn "=== Flake ==="
-      putStrLn $ "Path: " ++ Flake.flakePath flake
-      TIO.putStrLn $ "Description: " <> maybe "(none)" id (Flake.flakeDescription flake)
+      liftIO $ putStrLn "=== Flake ==="
+      liftIO $ putStrLn $ "Path: " ++ Flake.flakePath flake
+      liftIO $ TIO.putStrLn $ "Description: " <> maybe "(none)" id (Flake.flakeDescription flake)
       
-      putStrLn "\n=== Inputs ==="
-      mapM_ printInput (Map.toList $ Flake.flakeInputs flake)
+      liftIO $ putStrLn "\n=== Inputs ==="
+      liftIO $ mapM_ printInput (Map.toList $ Flake.flakeInputs flake)
       
-      putStrLn "\n=== Inferred Type ==="
+      liftIO $ putStrLn "\n=== Inferred Type ==="
       let types = Flake.inferFlake flake
-      TIO.putStrLn $ "outputs : " <> prettyType (Flake.ftOutputsType types)
+      liftIO $ TIO.putStrLn $ "outputs : " <> prettyType (Flake.ftOutputsType types)
   where
     printInput (name, input) = do
       TIO.putStr $ "  " <> name <> " : FlakeInput"
@@ -521,23 +524,23 @@ cmdFlake dir = do
     prettyType = NixCompile.Nix.Types.prettyType
 
 -- | Show module dependency graph
-cmdGraph :: FilePath -> Bool -> IO ()
+cmdGraph :: FilePath -> Bool -> AppM ()
 cmdGraph dir asDot = do
-  result <- Mod.buildModuleGraphFromFlake dir
+  result <- liftIO $ Mod.buildModuleGraphFromFlake dir
   case result of
     Left err -> do
-      TIO.putStrLn $ "Error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
     Right graph -> do
       let rootDir = takeDirectory (Mod.mgRoot graph)
       if asDot
-        then printDot rootDir graph
+        then liftIO $ printDot rootDir graph
         else do
-          printGraph rootDir graph
+          liftIO $ printGraph rootDir graph
           -- Exit with failure if there are any violations
           if Mod.hasViolations graph
-            then exitFailure
-            else exitSuccess
+            then liftIO exitFailure
+            else liftIO exitSuccess
   where
     printGraph :: FilePath -> Mod.ModuleGraph -> IO ()
     printGraph rootDir graph = do
@@ -679,40 +682,40 @@ cmdGraph dir asDot = do
         putStrLn $ "  \"" ++ path ++ "\" -> \"" ++ impPath ++ "\";") (Mod.modImports m)
 
 -- | Show scope graph for a Nix file
-cmdScope :: FilePath -> IO ()
+cmdScope :: FilePath -> AppM ()
 cmdScope file = do
-  result <- Nix.parseNixFile file
+  result <- liftIO $ Nix.parseNixFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right expr -> do
       let sg = Scope.fromNixFile file expr
-      printScopeGraph sg
+      liftIO $ printScopeGraph sg
 
 -- | Emit scope graph as JSON (for zeitschrift)
-cmdScopeJSON :: FilePath -> IO ()
+cmdScopeJSON :: FilePath -> AppM ()
 cmdScopeJSON file = do
-  result <- Nix.parseNixFile file
+  result <- liftIO $ Nix.parseNixFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right expr -> do
       let sg = Scope.fromNixFile file expr
-      BL.putStrLn $ encode sg
+      liftIO $ BL.putStrLn $ encode sg
 
 -- | Emit scope graph as Dhall (for zeitschrift)
-cmdScopeDhall :: FilePath -> IO ()
+cmdScopeDhall :: FilePath -> AppM ()
 cmdScopeDhall file = do
-  result <- Nix.parseNixFile file
+  result <- liftIO $ Nix.parseNixFile file
   case result of
     Left err -> do
-      TIO.putStrLn $ "Parse error: " <> err
-      exitFailure
+      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      liftIO exitFailure
     Right expr -> do
       let sg = Scope.fromNixFile file expr
-      TIO.putStrLn $ Scope.toDhall sg
+      liftIO $ TIO.putStrLn $ Scope.toDhall sg
 
 printScopeGraph :: Scope.ScopeGraph -> IO ()
 printScopeGraph sg = do
