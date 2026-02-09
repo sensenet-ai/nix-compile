@@ -1,0 +1,4 @@
+Violations:
+NixViolation {nvType = VRec, nvSpan = Span {spanStart = Loc {locLine = 11, locCol = 1}, spanEnd = Loc {locLine = 70, locCol = 2}, spanFile = Just "test/fixtures/nix/qemu-common.nix"}, nvContext = "rec { ... }"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 20, locCol = 8}, spanEnd = Loc {locLine = 20, locCol = 85}, spanFile = Just "test/fixtures/nix/qemu-common.nix"}, nvContext = "with pkgs.\8229;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 22, locCol = 13}, spanEnd = Loc {locLine = 22, locCol = 64}, spanFile = Just "test/fixtures/nix/qemu-common.nix"}, nvContext = "with pkgs.\8229;"}

@@ -1,0 +1,1 @@
+[2026-02-07 03:56:36][nix-compile.main][Error][ultraviolence][PID 2489992][ThreadId 1][nix-compile-0.1.0.0-ALK9zxMsu3TK55awpvB2Id-nix-compile:Main app/nix-compile.hs:163:8] Parse error: Parse errors: 6

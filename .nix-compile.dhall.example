@@ -1,0 +1,26 @@
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                       // .nix-compile.dhall
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+-- Project lint configuration.
+-- Copy this to your project root and customize.
+--
+
+let NixCompile = ./config/package.dhall
+
+let Severity = NixCompile.Severity
+
+in  NixCompile.Config::{
+    , profile = "standard"
+    , extra-ignores =
+      [ "vendor/**"
+      , "third-party/**"
+      , ".direnv/**"
+      ]
+    , overrides =
+      [ -- Example: downgrade rec-anywhere to info
+        NixCompile.override "rec-anywhere" Severity.Info
+        -- Example: enable lisp-case for this project
+        -- , NixCompile.override "non-lisp-case" Severity.Warning
+      ]
+    }

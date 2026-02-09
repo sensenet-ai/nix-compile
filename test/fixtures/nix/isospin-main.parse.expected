@@ -1,0 +1,14 @@
+Violations:
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 572, locCol = 15}, spanEnd = Loc {locLine = 614, locCol = 17}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 671, locCol = 31}, spanEnd = Loc {locLine = 678, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VRec, nvSpan = Span {spanStart = Loc {locLine = 694, locCol = 22}, spanEnd = Loc {locLine = 1713, locCol = 12}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "rec { ... }"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 802, locCol = 31}, spanEnd = Loc {locLine = 811, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 939, locCol = 31}, spanEnd = Loc {locLine = 944, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1000, locCol = 31}, spanEnd = Loc {locLine = 1004, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1030, locCol = 31}, spanEnd = Loc {locLine = 1035, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1058, locCol = 31}, spanEnd = Loc {locLine = 1061, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1112, locCol = 31}, spanEnd = Loc {locLine = 1115, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1164, locCol = 31}, spanEnd = Loc {locLine = 1171, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1267, locCol = 31}, spanEnd = Loc {locLine = 1272, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1377, locCol = 31}, spanEnd = Loc {locLine = 1386, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
+NixViolation {nvType = VWith, nvSpan = Span {spanStart = Loc {locLine = 1593, locCol = 31}, spanEnd = Loc {locLine = 1601, locCol = 16}, spanFile = Just "test/fixtures/nix/isospin-main.nix"}, nvContext = "with pkgs;"}
