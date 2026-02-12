@@ -2,10 +2,10 @@
 #                                                      // nix-compile // module
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
-#     "The matrix has its roots in primitive arcade games, in early graphics
-#      programs and military experimentation with cranial jacks."
+#     "They built the first computers to crack German ice, right? Codebreakers.
+#      So there was ice before computers, you wanna look at it that way."
 #
-#                                                                  — Neuromancer
+#                                                                  — Count Zero
 #
 # Flake-parts module for nix-compile static analysis.
 #
@@ -32,12 +32,15 @@
 #   }
 #
 
-{ lib, flake-parts-lib, ... }:
+{ lib, inputs, self, config, ... }:
 
 let
   inherit (lib) mkOption mkEnableOption types mkIf;
+  cfg = config.nix-compile;
 in
 {
+  _class = "flake";
+
   options.nix-compile = {
     enable = mkEnableOption "nix-compile static analysis";
 
@@ -77,87 +80,84 @@ in
     pre-commit.enable = mkEnableOption "git pre-commit hook installation";
   };
 
-  config = { config, inputs, self, ... }:
-    let
-      cfg = config.nix-compile;
-    in
-    mkIf cfg.enable {
-      perSystem = { pkgs, system, ... }:
-        let
-          nix-compile = inputs.nix-compile.packages.${system}.default or
-            (throw "nix-compile.packages.${system}.default not found in inputs");
+  config = mkIf cfg.enable {
+    perSystem = { pkgs, system, ... }:
+      let
+        nix-compile = inputs.nix-compile.packages.${system}.default or
+          self.packages.${system}.default or
+          (throw "nix-compile.packages.${system}.default not found in inputs or self");
 
-          pathArgs = lib.escapeShellArgs cfg.paths;
-          layoutArg = if cfg.layout == "none" then "" else "-l ${cfg.layout}";
+        path-args = lib.escapeShellArgs cfg.paths;
+        layout-arg = if cfg.layout == "none" then "" else "-l ${cfg.layout}";
 
-          # ── check derivation ──────────────────────────────────────────────
-          check = pkgs.runCommand "nix-compile" {
-            nativeBuildInputs = [ nix-compile ];
-          } ''
-            cd ${self}
-            nix-compile -p ${cfg.profile} ${layoutArg} ${pathArgs}
-            touch $out
-          '';
+        # ── check derivation ──────────────────────────────────────────────
+        check = pkgs.runCommand "nix-compile" {
+          nativeBuildInputs = [ nix-compile ];
+        } ''
+          cd ${self}
+          nix-compile -p ${cfg.profile} ${layout-arg} ${path-args}
+          touch $out
+        '';
 
-          # ── pre-commit hook ───────────────────────────────────────────────
-          hook = pkgs.writeShellApplication {
-            name = "nix-compile-hook";
-            runtimeInputs = [ nix-compile pkgs.git ];
-            text = ''
-              # nix-compile pre-commit hook
-              # Profile: ${cfg.profile}
-              # Layout: ${cfg.layout}
+        # ── pre-commit hook ───────────────────────────────────────────────
+        hook = pkgs.writeShellApplication {
+          name = "nix-compile-hook";
+          runtimeInputs = [ nix-compile pkgs.git ];
+          text = ''
+            # nix-compile pre-commit hook
+            # Profile: ${cfg.profile}
+            # Layout: ${cfg.layout}
 
-              staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(nix|sh|bash)$' || true)
+            staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(nix|sh|bash)$' || true)
 
-              if [ -z "$staged" ]; then
-                exit 0
-              fi
+            if [ -z "$staged" ]; then
+              exit 0
+            fi
 
-              echo "nix-compile: checking staged files..."
+            echo "nix-compile: checking staged files..."
 
-              # shellcheck disable=SC2086
-              if nix-compile -p ${cfg.profile} ${layoutArg} $staged; then
-                echo "nix-compile: ✓ clean"
-              else
-                echo ""
-                echo "nix-compile: ✗ blocked"
-                echo "Use --no-verify to bypass."
-                exit 1
-              fi
-            '';
-          };
-
-          # ── shell hook ────────────────────────────────────────────────────
-          shellHook = ''
-            if [ -d .git ]; then
-              mkdir -p .git/hooks
-              cat > .git/hooks/pre-commit << 'HOOK'
-            #!/usr/bin/env bash
-            set -euo pipefail
-            if command -v nix-compile-hook &>/dev/null; then
-              exec nix-compile-hook
-            elif command -v nix-compile &>/dev/null; then
-              exec nix-compile -p ${cfg.profile} ${pathArgs}
+            # shellcheck disable=SC2086
+            if nix-compile -p ${cfg.profile} ${layout-arg} $staged; then
+              echo "nix-compile: ✓ clean"
             else
-              echo "warn: nix-compile not in PATH, skipping check"
-            fi
-            HOOK
-              chmod +x .git/hooks/pre-commit
+              echo ""
+              echo "nix-compile: ✗ blocked"
+              echo "Use --no-verify to bypass."
+              exit 1
             fi
           '';
-
-        in
-        {
-          checks.nix-compile = check;
-
-          packages.nix-compile-hook = hook;
-
-          devShells.nix-compile = pkgs.mkShell {
-            name = "nix-compile";
-            packages = [ nix-compile hook ];
-            shellHook = lib.optionalString cfg.pre-commit.enable shellHook;
-          };
         };
-    };
+
+        # ── shell hook ────────────────────────────────────────────────────
+        shellHook = ''
+          if [ -d .git ]; then
+            mkdir -p .git/hooks
+            cat > .git/hooks/pre-commit << 'HOOK'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if command -v nix-compile-hook &>/dev/null; then
+            exec nix-compile-hook
+          elif command -v nix-compile &>/dev/null; then
+            exec nix-compile -p ${cfg.profile} ${path-args}
+          else
+            echo "warn: nix-compile not in PATH, skipping check"
+          fi
+          HOOK
+            chmod +x .git/hooks/pre-commit
+          fi
+        '';
+
+      in
+      {
+        checks.nix-compile = check;
+
+        packages.nix-compile-hook = hook;
+
+        devShells.nix-compile = pkgs.mkShell {
+          name = "nix-compile";
+          packages = [ nix-compile hook ];
+          shellHook = lib.optionalString cfg.pre-commit.enable shellHook;
+        };
+      };
+  };
 }

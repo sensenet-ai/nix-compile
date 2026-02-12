@@ -90,7 +90,7 @@
     , paths ? [ "." ]
     }:
     let
-      pathsStr = lib.escapeShellArgs paths;
+      paths-str = lib.escapeShellArgs paths;
     in ''
       # nix-compile pre-commit hook installation
       if [ -d .git ] && [ ! -x .git/hooks/pre-commit ]; then
@@ -121,13 +121,13 @@
     , paths ? [ "." ]
     }:
     let
-      pathsStr = lib.escapeShellArgs paths;
+      paths-str = lib.escapeShellArgs paths;
 
       check = pkgs.runCommand "nix-compile" {
         nativeBuildInputs = [ nix-compile ];
       } ''
         cd ${src}
-        nix-compile -p ${profile} ${pathsStr}
+        nix-compile -p ${profile} ${paths-str}
         touch $out
       '';
 

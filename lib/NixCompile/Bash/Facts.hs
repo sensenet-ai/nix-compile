@@ -50,7 +50,22 @@ localFacts scId inner = do
     -- Simple command: check for config.* or commands
     SA.Inner_T_SimpleCommand _assigns wrds ->
       commandFacts sp wrds
+    -- Variable reference: ${VAR} or $VAR in any other context
+    -- We catch this to ensure all used variables appear in the schema
+    SA.Inner_T_DollarBraced _ _ ->
+      variableReferenceFacts sp inner
     _ -> pure []
+
+-- | Facts from a standalone variable reference
+variableReferenceFacts :: Span -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Fact]
+variableReferenceFacts sp inner = do
+  let text = innerToText inner
+  case extractVarRef text of
+    Just var ->
+      -- We register the variable as Observed so it appears in the schema.
+      -- This does not constrain its type or make it required.
+      pure [Observed var sp]
+    Nothing -> pure []
 
 -- | Facts from an assignment
 assignmentFacts :: Span -> Text -> SA.Token -> [Fact]
@@ -486,5 +501,6 @@ mkSpan scId = do
         (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
         (Just (posFile start))
     Nothing ->
-      let (SA.Id n) = scId
-       in pure $ Span (Loc n 0) (Loc n 0) Nothing
+      -- Fallback: use sentinel position (0,0) when ID not found
+      -- This is semantically correct - line 0 indicates unknown position
+      pure $ Span (Loc 0 0) (Loc 0 0) Nothing

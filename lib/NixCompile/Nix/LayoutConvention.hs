@@ -144,7 +144,7 @@ data LayoutError = LayoutError
 straylight :: Convention
 straylight = Convention
   { convName = "straylight"
-  , convDescription = "Straylight/aleph: everything is a flake module, kebab-case everywhere"
+  , convDescription = "Straylight/aleph: module layout with kebab-case everywhere"
   , convRules =
       [ ConventionRule
           { ruleKind = FlakeModule
@@ -160,7 +160,10 @@ straylight = Convention
           }
       , ConventionRule
           { ruleKind = HomeModule
-          , rulePattern = Prefix ["nix", "modules", "home"]
+          , rulePattern = AnyOf
+              [ Prefix ["nix", "modules", "home"]
+              , Prefix ["nix", "modules", "home-manager"]
+              ]
           , ruleForbidden = [Prefix ["nix", "packages"]]
           , ruleExportName = Just "flake.homeModules"
           }
@@ -204,7 +207,7 @@ straylight = Convention
   , convFileNaming = KebabCase
   , convAttrNaming = KebabCase
   , convIdentNaming = KebabCase
-  , convRequireFlakeMod = True  -- Everything must be a flake module
+  , convRequireFlakeMod = False
   }
 
 -- ══════════════════════════════════════════════════════════════════════════════

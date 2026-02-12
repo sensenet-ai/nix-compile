@@ -59,6 +59,9 @@ buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
       -- Command positional argument: infer type from builtin database
       CmdPositional _ _ var sp ->
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
+      -- Observed variable: register in env but not required
+      Observed var sp ->
+        [(var, EnvSpec (resolveType subst var) False Nothing sp)]
       _ -> []
 
 -- | Merge two env specs (prefer required, keep first default)

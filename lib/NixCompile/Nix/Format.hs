@@ -30,7 +30,7 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixFileLoc, parseNixTextLoc)
 import qualified Nix.Utils as Nix
 import NixCompile.Nix.Infer (inferExpr, InferResult(..))
-import NixCompile.Nix.Pretty (annotateSource)
+import NixCompile.Nix.Annotate (annotateSource)
 
 -- ============================================================================
 -- Formatting

@@ -80,9 +80,11 @@ localViolations scId inner = do
     -- Backticks: `cmd`
     SA.Inner_T_Backticked {} ->
       pure [Violation VBacktick sp "backticks (`...`)"]
-    -- Simple command: check for eval
-    SA.Inner_T_SimpleCommand _ wrds ->
-      checkForEval scId wrds
+    -- Simple command: check for eval or dangerous source
+    SA.Inner_T_SimpleCommand _ wrds -> do
+      evals <- checkForEval scId wrds
+      sources <- checkForSource scId wrds
+      pure (evals ++ sources)
     _ -> pure []
 
 -- | Check if a command is 'eval'
@@ -92,6 +94,35 @@ checkForEval scId wrds
       sp <- mkSpan scId
       pure [Violation VEval sp "eval"]
   | otherwise = pure []
+
+-- | Check for dangerous 'source' invocations (eval equivalents)
+--   - source /dev/stdin
+--   - source <(...)
+--   - . /dev/stdin
+checkForSource :: SA.Id -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Violation]
+checkForSource scId wrds = case wrds of
+  (cmd : arg : _) | isSource (tokenToText cmd) -> do
+    if isDangerousSourceArg arg
+      then do
+        sp <- mkSpan scId
+        pure [Violation VEval sp "source /dev/stdin (eval equivalent)"]
+      else pure []
+  _ -> pure []
+  where
+    isSource t = t == "source" || t == "." || t == "builtin source" || t == "command source"
+    
+    isDangerousSourceArg :: SA.Token -> Bool
+    isDangerousSourceArg tok = 
+      let t = tokenToText tok
+      in t == "/dev/stdin" || containsProcSub tok
+
+    -- | Check if token contains a process substitution (recursively)
+    containsProcSub :: SA.Token -> Bool
+    containsProcSub (SA.OuterToken _ inner) = case inner of
+      SA.Inner_T_ProcSub {} -> True
+      SA.Inner_T_NormalWord parts -> any containsProcSub parts
+      SA.Inner_T_DoubleQuoted parts -> any containsProcSub parts
+      _ -> False
 
 -- | Detect eval in common "escape hatch" forms.
 --

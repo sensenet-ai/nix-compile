@@ -182,9 +182,18 @@ isExempt ident = ident `elem` exemptList || T.isPrefixOf "_" ident
       , "passthru", "overrideAttrs", "override"
         -- flake-parts
       , "perSystem", "flake", "withSystem"
+      , "inputsFrom"
         -- home-manager / NixOS
       , "enable", "package", "extraConfig", "extraOptions"
       , "systemd", "services", "programs", "environment"
+        -- Common functions
+      , "mkShell", "writeShellApplication", "mkDerivation", "mkOption", "mkEnableOption"
+      , "shellHook", "runtimeInputs"
+      , "haskellPackages"
+      , "mkCheck", "mkHook", "mkPreCommitHook", "mkIntegration"
+        -- Flake outputs
+      , "packages", "checks", "devShells", "apps", "overlays"
+      , "nixosModules", "homeModules", "flakeModules"
         -- Special
       , "true", "false", "null", "or", "if", "then", "else"
       , "let", "in", "with", "rec", "assert", "inherit"

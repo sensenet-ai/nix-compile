@@ -235,6 +235,8 @@ data Fact
     BareCommand !Text !Span
   | -- | Dynamic command ($VAR as command)
     DynamicCommand !Text !Span
+  | -- | Observed variable usage (e.g. read access)
+    Observed !Text !Span
   deriving stock (Eq, Show, Generic)
 
 instance FromJSON Fact

@@ -43,6 +43,8 @@ module NixCompile.Nix.Types
     -- * Pretty printing
     prettyType,
     prettyScheme,
+    prettyTypeDoc,
+    prettySchemeDoc,
   )
 where
 
@@ -54,6 +56,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
+import NixCompile.Pretty
 
 -- ============================================================================
 -- Types
@@ -166,53 +169,77 @@ freeTypeVarsScheme (Forall vars t) =
 
 -- | Pretty print a type using normalized variable names (a, b, c...)
 prettyType :: NixType -> Text
-prettyType t = prettyTypeWith mapping t
+prettyType t = toText (prettyTypeDoc t)
+
+-- | Pretty print a type scheme
+prettyScheme :: Scheme -> Text
+prettyScheme s = toText (prettySchemeDoc s)
+
+-- | Pretty print a type (as Doc)
+prettyTypeDoc :: NixType -> Doc AnsiStyle
+prettyTypeDoc t = prettyTypeWith mapping t
   where
     vars = Set.toAscList (freeTypeVars t)
     names = map T.singleton ['a'..'z'] ++ [ "t" <> T.pack (show i) | i <- [1..] :: [Int] ]
     mapping = Map.fromList $ zip vars names
 
--- | Pretty print a type scheme
-prettyScheme :: Scheme -> Text
-prettyScheme (Forall [] t) = prettyType t
-prettyScheme (Forall vars t) =
+-- | Pretty print a scheme (as Doc)
+prettySchemeDoc :: Scheme -> Doc AnsiStyle
+prettySchemeDoc (Forall [] t) = prettyTypeDoc t
+prettySchemeDoc (Forall vars t) =
   let
-    -- Combine bound variables and free variables (if any)
     free = Set.toAscList (freeTypeVars t `Set.difference` Set.fromList vars)
     allVars = vars ++ free
     names = map T.singleton ['a'..'z'] ++ [ "t" <> T.pack (show i) | i <- [1..] :: [Int] ]
     mapping = Map.fromList $ zip allVars names
 
-    prettyVar v = Map.findWithDefault "?" v mapping
+    prettyVar v = pretty (Map.findWithDefault "?" v mapping)
   in
-    "forall " <> T.intercalate " " (map prettyVar vars) <> ". " <> prettyTypeWith mapping t
+    styleKeyword "forall" <+> hsep (map prettyVar vars) <> "." <+> prettyTypeWith mapping t
 
 -- | Internal helper: pretty print with variable mapping
-prettyTypeWith :: Map TypeVar Text -> NixType -> Text
+prettyTypeWith :: Map TypeVar Text -> NixType -> Doc AnsiStyle
 prettyTypeWith mapping = go
   where
     go = \case
-      TVar v -> Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
-      TInt -> "Int"
-      TFloat -> "Float"
-      TBool -> "Bool"
-      TString -> "String"
-      TStrLit s -> "\"" <> s <> "\""
-      TPath -> "Path"
-      TNull -> "Null"
-      TList t -> "[" <> go t <> "]"
+      TVar v -> styleVar $ pretty (Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping)
+      TInt -> styleType "Int"
+      TFloat -> styleType "Float"
+      TBool -> styleType "Bool"
+      TString -> styleType "String"
+      TStrLit s -> styleString ("\"" <> pretty s <> "\"")
+      TPath -> styleType "Path"
+      TNull -> styleType "Null"
+      TList t -> list [go t]
       TAttrs m -> prettyAttrs m
-      TAttrsOpen m -> prettyAttrs m <> " | ..."
-      TFun a b -> prettyArg a <> " -> " <> go b
-      TDerivation -> "Derivation"
-      TUnion ts -> T.intercalate " | " (map go ts)
-      TAny -> "Any"
-
-    prettyArg t@(TFun _ _) = "(" <> go t <> ")"
-    prettyArg t = go t
+      TAttrsOpen m -> prettyAttrsOpen m
+      TFun a b -> 
+        let aDoc = case a of
+              TFun _ _ -> parens (go a)
+              _ -> go a
+        in aDoc <+> "->" <+> go b
+      TDerivation -> styleType "Derivation"
+      TUnion ts -> align $ sep (punctuate " |" (map go ts))
+      TAny -> styleType "Any"
 
     prettyAttrs m 
       | Map.null m = "{}"
-      | otherwise = "{ " <> T.intercalate ", " (map prettyField (Map.toList m)) <> " }"
+      | otherwise = 
+          group $ vsep
+            [ "{"
+            , indent 2 (vsep (punctuate comma (map prettyField (Map.toList m))))
+            , "}"
+            ]
+            
+    prettyAttrsOpen m
+      | Map.null m = "{ ... }"
+      | otherwise =
+          group $ vsep
+            [ "{"
+            , indent 2 (vsep (punctuate comma (map prettyField (Map.toList m) ++ ["..."])))
+            , "}"
+            ]
     
-    prettyField (k, (v, opt)) = k <> (if opt then "?" else "") <> " : " <> go v
+    prettyField (k, (v, opt)) = 
+      let key = if opt then pretty k <> "?" else pretty k
+      in styleVar key <+> ":" <+> go v

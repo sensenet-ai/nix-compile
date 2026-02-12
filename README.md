@@ -2,32 +2,34 @@
 #                                                                // nix-compile
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-#     "Get just right, and I'll cut the ice; get it wrong, and it's the death
-#      of ten thousand Turing cops."
+#     "people who were genuinely dangerous might not need to exhibit the fact 
+#      at all, and that the ability to conceal a threat made them even more 
+#      dangerous."
 #
-#                                                                  — Neuromancer
-
-Compile-time static analysis for Nix expressions and embedded bash scripts.
+#                                                                  — Count Zero
 
 Nix is dynamically typed. Bash is worse. Together they form the substrate of
 modern infrastructure — and together they resist verification at every turn.
 
-`nix-compile` brings Hindley-Milner type inference to both, with cross-language
-unification that lets bash command semantics constrain Nix expression types.
+`nix-compile` brings Hindley-Milner type inference to both. The trick is
+cross-language unification: bash command semantics constrain Nix expression
+types, so when you interpolate `${config.timeout}` into `curl --connect-timeout`,
+we know it's an integer without you telling us.
+
+~5k lines of Haskell. No runtime dependencies beyond what's already in nixpkgs.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                                   // features
+#                                                          // what it actually does
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-## // type // inference
+## type inference for nix
 
-Hindley-Milner with row polymorphism for Nix. Constraint-based inference for
-bash.
+Hindley-Milner with row polymorphism. String literal types, not just `String`.
 
 ```nix
-# input: kernel.nix
+# before
 { lib }:
 {
   yes = { tristate = "y"; optional = false; };
@@ -37,7 +39,7 @@ bash.
 ```
 
 ```nix
-# output: nix-compile fmt kernel.nix
+# after: nix-compile fmt kernel.nix
 { lib }:
 {
   # :: { optional : Bool, tristate : "y" }
@@ -49,47 +51,31 @@ bash.
 }
 ```
 
-n.b. string literal types — `"y"`, `"n"`, `"m"` — not merely `String`.
+Those are literal types — `"y"`, `"n"`, `"m"` — which means if you pass a
+`tristate = "yes"` somewhere expecting `"y"`, we catch it.
 
 
-## // bash // schema // extraction
+## bash schema extraction
 
-Environment variables, config structure, command dependencies — extracted
-statically from bash scripts without execution.
+Environment variables, config structure, command dependencies — pulled out
+statically without running the script.
 
 ```bash
 #!/usr/bin/env bash
 PORT="${PORT:-8080}"
 HOST="${HOST:?HOST is required}"
-config.server.port=$PORT
-config.server.host="$HOST"
 curl --connect-timeout "$TIMEOUT" "$URL"
 ```
 
-```json
-{
-  "env": {
-    "PORT": { "type": "TInt", "required": false, "default": 8080 },
-    "HOST": { "type": "TString", "required": true },
-    "TIMEOUT": { "type": "TInt", "required": false }
-  },
-  "config": {
-    "server": {
-      "port": { "type": "TInt", "source": "PORT" },
-      "host": { "type": "TString", "source": "HOST", "quoted": true }
-    }
-  },
-  "commands": ["curl"]
-}
-```
-
-n.b. `TIMEOUT` inferred as `TInt` from `curl --connect-timeout` semantics.
+We infer `TIMEOUT` is an integer because `curl --connect-timeout` takes one.
+`HOST` is required (the `:?` syntax). `PORT` defaults to 8080. This becomes
+a typed schema you can use for validation, documentation, or codegen.
 
 
-## // cross-language // inference
+## the distinctive thing: cross-language inference
 
-The distinctive capability. Nix interpolations in `writeShellScript` bodies
-have their types constrained by bash command argument positions.
+When you write `writeShellApplication` in Nix with interpolated values, we
+trace those interpolations into bash and figure out their types from context:
 
 ```nix
 pkgs.writeShellApplication {
@@ -103,19 +89,20 @@ pkgs.writeShellApplication {
 }
 ```
 
-Inferred constraints flow back to Nix:
+From this we infer:
+- `config.timeout` is `TInt` (curl's `--connect-timeout` takes integers)
+- `config.retries` is `TInt` (curl's `--retry` takes integers)  
+- `config.output` is `TPath` (curl's `-o` takes a file path)
+- `config.url` is `TString` (default, nothing more specific)
 
-```
-${config.timeout} :: TInt      # from curl --connect-timeout
-${config.retries} :: TInt      # from curl --retry
-${config.output}  :: TPath     # from curl -o
-${config.url}     :: TString   # default
-```
+These constraints flow back into the Nix type checker. If `config` comes from
+somewhere that provides `timeout = "fast"`, we flag it.
 
 
-## // policy // enforcement
+## policy enforcement
 
-Banned constructs. Store path requirements. Effect tracking.
+The boring but important stuff. Banned constructs, store path requirements,
+effect tracking.
 
 ```
 $ nix-compile check deployment.sh
@@ -127,442 +114,142 @@ Forbidden constructs:
 Bare commands (must use store paths):
   deployment.sh:12: curl
   deployment.sh:23: jq
-  deployment.sh:45: docker
 
-Policy violations: 5
+Policy violations: 4
 ```
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                                      // usage
+#                                                               // using it
 # ══════════════════════════════════════════════════════════════════════════════
-
-
-## // quick // start
 
 ```bash
 # check current directory
 nix-compile
 
-# check specific paths
+# check specific paths  
 nix-compile nix/ lib/
 
-# use strict profile (lisp-case, Dhall templating)
+# strict mode (lisp-case identifiers, full straylight conventions)
 nix-compile -p strict
 
-# use nixpkgs profile
+# nixpkgs contribution mode
 nix-compile -p nixpkgs pkgs/
 ```
 
-
-## // exit // codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Clean — no issues |
-| 1 | Issues found (errors, warnings, info, or parse failures) |
-
-Parse failures are not skipped. If we can't analyze a file, that's a failure.
+Exit 0 means clean. Exit 1 means issues (errors, warnings, or parse failures).
+We don't skip files we can't parse — if analysis fails, that's a failure.
 
 
-## // profiles
+## profiles
 
-| Profile | Description | `non-lisp-case` | `rec` | `with lib` |
-|---------|-------------|-----------------|-------|------------|
-| `strict` | Full aleph conventions | error | error | error |
-| `standard` | Sensible defaults | off | warning | error |
-| `minimal` | Essential safety only | off | off | warning |
-| `nixpkgs` | nixpkgs guidelines | off | off | warning |
-| `security` | Security-focused | off | off | error |
+**strict** — Full straylight conventions. Lisp-case identifiers, no `rec`, no
+`with lib`. For new projects where you control everything.
 
+**standard** — Sensible defaults. Most projects should use this.
 
-## // legacy // commands
+**minimal** — Essential safety only. For legacy codebases you're gradually
+improving.
 
-Single-file commands for specific tasks:
+**nixpkgs** — Matches nixpkgs contribution guidelines.
 
-```
-nix-compile lint <script.sh>       check for forbidden constructs
-nix-compile check <script.sh>      full analysis (lint + policy + types)
-nix-compile infer <script.sh>      infer types, emit schema as JSON
-nix-compile parse <script.sh>      show extracted facts
-nix-compile emit <script.sh>       generate emit-config bash function
-
-nix-compile nix <file.nix>         analyze embedded bash in Nix files
-nix-compile fmt <file.nix>         add type annotations to Nix
-nix-compile typecheck <path>       recursive type check (parallel)
-nix-compile flake [dir]            analyze flake structure
-nix-compile scope <file.nix>       scope graph analysis
-```
+**security** — Paranoid mode for critical infrastructure.
 
 
-## // examples
+## single-file commands
 
-### bash schema extraction
+For when you want to do one specific thing:
 
 ```bash
-$ nix-compile infer scripts/deploy.sh | jq .env
-{
-  "DEPLOY_ENV": {
-    "type": "TString",
-    "required": true,
-    "default": null
-  },
-  "REPLICAS": {
-    "type": "TInt",
-    "required": false,
-    "default": 3
-  }
-}
-```
-
-
-### nix type annotation
-
-```bash
-$ nix-compile fmt lib/kernel.nix > lib/kernel.nix.typed
-$ head -20 lib/kernel.nix.typed
-# :: { lib : a } -> { ... }
-{ lib }:
-let
-  # :: a -> a
-  inherit (lib) mkIf versionAtLeast versionOlder;
-in
-{
-  # :: { optional : Bool, tristate : "y" }
-  yes = { tristate = "y"; optional = false; };
-  ...
-```
-
-
-### embedded bash analysis
-
-```bash
-$ nix-compile nix nix/modules/scripts.nix
-
-Found 12 shell scripts in nix/modules/scripts.nix
-
-=== fetch-assets ===
-  Nix interpolation types inferred from bash context:
-    ${config.timeout} :: TInt
-    ${config.retries} :: TInt
-  OK
-
-=== deploy ===
-  Bare commands (must use store paths):
-    deploy:5: rsync
-    deploy:12: ssh
-  2 error(s)
+nix-compile lint script.sh      # forbidden constructs only
+nix-compile infer script.sh     # emit type schema as JSON
+nix-compile fmt file.nix        # add type annotations
+nix-compile scope file.nix      # dump scope graph
+nix-compile flake .             # analyze flake structure
 ```
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                              // type // system
+#                                                            // type system
 # ══════════════════════════════════════════════════════════════════════════════
 
+Bash types are simple: `TInt`, `TString`, `TBool`, `TPath`, plus unification
+variables. No subtyping — an int is not a string, even if bash doesn't care.
 
-## // bash // types
-
-```
-BashType ::= TInt          integers: -42, 0, 8080
-           | TString       string values
-           | TBool         true | false
-           | TPath         Nix store paths: /nix/store/...
-           | TVar α        unification variable
-```
-
-No subtyping relations between concrete types.
-
-
-## // nix // types
+Nix types are richer:
 
 ```
 NixType ::= TVar α                                unification variable
           | TInt | TFloat | TBool | TString       primitives
-          | TPath | TNull                         primitives cont.
+          | TPath | TNull
           | TStrLit "literal"                     string literal types
           | TList NixType                         homogeneous lists
           | TAttrs (Map Name (NixType, Bool))     closed attribute sets
-          | TAttrsOpen (Map Name (NixType, Bool)) open rows
+          | TAttrsOpen (Map Name (NixType, Bool)) open rows (extensible)
           | TFun NixType NixType                  functions
-          | TDerivation                           derivations
-          | TUnion [NixType]                      union types
-          | TAny                                  top type (escape hatch)
+          | TDerivation
+          | TUnion [NixType]
+          | TAny                                  escape hatch
 ```
 
-Row polymorphism distinguishes `TAttrs` (closed) from `TAttrsOpen` (extensible).
+Row polymorphism is why we distinguish `TAttrs` (closed, you can't add fields)
+from `TAttrsOpen` (extensible, used for module options and similar patterns).
 
-
-## // invariants
-
-| ID | Property | Statement |
-|----|----------|-----------|
-| INV-1 | Determinism | Identical input → identical output. No randomness. |
-| INV-2 | Soundness | If inference succeeds with type T, evaluation will not produce a type error. |
-| INV-3 | Principality | Inferred types are principal (most general). |
-| INV-4 | Composition | `apply (compose s1 s2) t = apply s1 (apply s2 t)` |
-| INV-5 | Satisfaction | If `solve(C) = σ`, then `∀(T1 ~ T2) ∈ C: apply σ T1 = apply σ T2` |
+The invariants we maintain: determinism (same input → same output), soundness
+(if we say it's type T, evaluation won't produce a type error), principality
+(inferred types are most general), and substitution composition behaves correctly.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                               // architecture
+#                                                             // architecture  
 # ══════════════════════════════════════════════════════════════════════════════
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                 nix-compile                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
-│  │   Nix.Parse  │    │  Bash.Parse  │    │  Bash.Facts  │                   │
-│  │   (hnix)     │    │ (shellcheck) │    │  extraction  │                   │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                   │
-│         │                   │                   │                           │
-│         ▼                   ▼                   ▼                           │
-│  ┌──────────────────────────────────────────────────────┐                   │
-│  │                    Infer.Constraint                   │                   │
-│  │              facts → type constraints                 │                   │
-│  └──────────────────────────┬───────────────────────────┘                   │
-│                             │                                               │
-│                             ▼                                               │
-│  ┌──────────────────────────────────────────────────────┐                   │
-│  │                     Infer.Unify                       │                   │
-│  │           Hindley-Milner unification                  │                   │
-│  └──────────────────────────┬───────────────────────────┘                   │
-│                             │                                               │
-│                             ▼                                               │
-│  ┌──────────────────────────────────────────────────────┐                   │
-│  │                    Schema.Build                       │                   │
-│  │        facts + substitution → typed schema            │                   │
-│  └──────────────────────────┬───────────────────────────┘                   │
-│                             │                                               │
-│         ┌───────────────────┼───────────────────┐                           │
-│         ▼                   ▼                   ▼                           │
-│  ┌────────────┐      ┌────────────┐      ┌────────────┐                     │
-│  │ Emit.Config│      │ Nix.Format │      │  Nix.Scope │                     │
-│  │ bash codegen│     │ type annot │      │ scope graph│                     │
-│  └────────────┘      └────────────┘      └────────────┘                     │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+                              nix-compile
+
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │   Nix.Parse  │    │  Bash.Parse  │    │  Bash.Facts  │
+  │   (hnix)     │    │ (shellcheck) │    │  extraction  │
+  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘
+         │                   │                   │
+         └───────────────────┼───────────────────┘
+                             ▼
+              ┌──────────────────────────────┐
+              │       Infer.Constraint       │
+              │      facts → constraints     │
+              └──────────────┬───────────────┘
+                             ▼
+              ┌──────────────────────────────┐
+              │         Infer.Unify          │
+              │   Hindley-Milner unification │
+              └──────────────┬───────────────┘
+                             ▼
+              ┌──────────────────────────────┐
+              │        Schema.Build          │
+              │  facts + subst → typed schema│
+              └──────────────┬───────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         ▼                   ▼                   ▼
+  ┌────────────┐      ┌────────────┐      ┌────────────┐
+  │Emit.Config │      │ Nix.Format │      │ Nix.Scope  │
+  │  bash gen  │      │ type annot │      │scope graph │
+  └────────────┘      └────────────┘      └────────────┘
 ```
 
+About 5k lines of Haskell across 35 modules. The heavy hitters are `Nix.Scope`
+(830 LOC for scope graph construction), `Nix.Infer` (770 LOC for type inference),
+and `Bash.Facts` (500 LOC for fact extraction). Everything else is plumbing.
 
-## // module // inventory
-
-```
-lib/NixCompile/
-├── Bash/
-│   ├── Builtins.hs      385 LOC   command argument type database
-│   ├── Facts.hs         402 LOC   fact extraction from AST
-│   ├── Parse.hs         142 LOC   shellcheck wrapper
-│   └── Patterns.hs      302 LOC   parameter expansion parsing
-├── Emit/
-│   └── Config.hs        332 LOC   bash config function codegen
-├── Infer/
-│   ├── Constraint.hs     62 LOC   facts → constraints
-│   └── Unify.hs         187 LOC   Hindley-Milner solver
-├── Lint/
-│   └── Forbidden.hs     198 LOC   banned construct detection
-├── Nix/
-│   ├── Effect.hs        156 LOC   coeffect tracking
-│   ├── Flake.hs         363 LOC   flake structure analysis
-│   ├── Format.hs        284 LOC   type annotation insertion
-│   ├── Infer.hs         768 LOC   Nix type inference
-│   ├── Layout.hs        167 LOC   directory/class validation
-│   ├── Lint.hs          143 LOC   rec/with detection
-│   ├── Module.hs        398 LOC   module system analysis
-│   ├── Parse.hs         378 LOC   hnix wrapper, bash extraction
-│   ├── Pretty.hs        112 LOC   type pretty-printing
-│   ├── Scope.hs         831 LOC   scope graph construction
-│   ├── Types.hs         245 LOC   Nix type definitions
-│   └── Utils.hs          89 LOC   shared utilities
-├── Schema/
-│   └── Build.hs         145 LOC   schema construction
-├── Log.hs                67 LOC   katip logging
-└── Types.hs             419 LOC   core type definitions
-
-                        ~6,923 LOC total
-```
+Dependencies: `hnix` for Nix parsing, `ShellCheck` for bash parsing, `megaparsec`
+for the fiddly bits, `katip` for logging. Nothing exotic.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                                     // build
+#                                                           // flake integration
 # ══════════════════════════════════════════════════════════════════════════════
 
-
-## // dependencies
-
-```cabal
-build-depends:
-    base >= 4.17
-  , aeson
-  , async
-  , bytestring
-  , containers
-  , directory
-  , filepath
-  , hnix >= 0.17
-  , katip
-  , megaparsec
-  , mtl
-  , ShellCheck >= 0.9
-  , text
-```
-
-
-## // nix // shell
-
-```bash
-nix develop
-cabal build
-cabal test
-```
-
-
-## // flake // usage
-
-```nix
-{
-  inputs.nix-compile.url = "github:straylight/nix-compile";
-
-  outputs = { nix-compile, ... }: {
-    devShells.default = pkgs.mkShell {
-      packages = [ nix-compile.packages.${system}.default ];
-    };
-  };
-}
-```
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                                                                    // testing
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-## // test // suites
-
-| Suite | LOC | Coverage |
-|-------|-----|----------|
-| `Fixtures.hs` | 396 | golden tests against expected outputs |
-| `MoreFixtures.hs` | 198 | cross-language inference, isospin corpus |
-| `FlakePartsTest.hs` | 97 | real-world flake-parts parsing |
-| `Props.hs` | 1026 | algebraic properties (QuickCheck) |
-| `Adversarial.hs` | 786 | security: injection, overflow, malformed input |
-
-
-## // run // tests
-
-```bash
-cabal test fixtures        # golden tests
-cabal test props           # property tests
-cabal test adversarial     # security tests
-cabal test flake-parts     # integration tests
-cabal test more-fixtures   # cross-language tests
-```
-
-
-## // bless // fixtures
-
-```bash
-cabal run fixtures -- --bless
-```
-
-Regenerates `.expected` files from current tool output.
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                                                             // specification
-# ══════════════════════════════════════════════════════════════════════════════
-
-See `SPECIFICATION.md` for the formal specification:
-
-- type system rules and subtyping
-- parameter expansion recognition table
-- literal parsing semantics
-- config assignment syntax
-- command allowlist policy
-- error code format (ALEPH-B00N)
-
-See `REVIEW.md` for:
-
-- post-patch adversarial review
-- bug fixes applied
-- spec deviations documented
-- Lean 4 port considerations
-- cross-language inference documentation
-
-See `rules/README.md` for:
-
-- AST-based lint rules for tree-sitter linters
-- Policy enforcement patterns
-- Derivation quality checks
-- Integration with nix-compile
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                                                              // external rules
-# ══════════════════════════════════════════════════════════════════════════════
-
-The `rules/` directory contains tree-sitter AST pattern rules for use with
-`ast-grep` or similar tools. These complement `nix-compile`'s built-in checks.
-
-
-## // profiles
-
-Rules are organized into profiles. `non-lisp-case` is **off by default** — 
-it's only enabled in `strict` mode for straylight projects.
-
-| Profile | Description | Recommended For |
-|---------|-------------|-----------------|
-| `strict` | Full aleph conventions (lisp-case) | New straylight projects |
-| `standard` | Sensible defaults | Most projects |
-| `minimal` | Essential safety only | Legacy codebases |
-| `nixpkgs` | nixpkgs guidelines | nixpkgs contributions |
-| `security` | Security-focused | Critical infrastructure |
-
-
-## // usage
-
-```bash
-# check current directory
-nix-compile
-
-# check specific paths
-nix-compile nix/ lib/
-
-# use a profile
-nix-compile -p strict
-nix-compile -p nixpkgs pkgs/
-```
-
-
-## // configuration
-
-Create `.nix-compile.dhall` in your project root:
-
-```dhall
-let NixCompile = ./config/package.dhall
-
-in  NixCompile.Config::{
-    , profile = "standard"
-    , extra-ignores = [ "vendor/**" ]
-    , overrides = [
-        NixCompile.override "rec-anywhere" NixCompile.Severity.Info
-      ]
-    }
-```
-
-See `config/README.md` for full documentation.
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                                                       // flake // integration
-# ══════════════════════════════════════════════════════════════════════════════
-
-Import correctness into your project. Checks run on `nix flake check` and
-commits are blocked if issues are found.
-
-
-## // with // flake-parts
+The point is to block commits that introduce issues. Here's the flake-parts way:
 
 ```nix
 {
@@ -579,7 +266,7 @@ commits are blocked if issues are found.
 
     nix-compile = {
       enable = true;
-      profile = "standard";  # or "strict", "minimal", "nixpkgs", "security"
+      profile = "standard";
       paths = [ "nix" "lib" ];
       pre-commit.enable = true;
     };
@@ -587,53 +274,8 @@ commits are blocked if issues are found.
 }
 ```
 
-This provides:
-
-| Output | Description |
-|--------|-------------|
-| `checks.${system}.nix-compile` | Runs on `nix flake check` |
-| `packages.${system}.nix-compile-hook` | Standalone pre-commit script |
-| `devShells.${system}.nix-compile` | Shell with hook auto-installed |
-
-
-## // without // flake-parts
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nix-compile.url = "github:straylight/nix-compile";
-  };
-
-  outputs = { self, nixpkgs, nix-compile, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      nc = nix-compile.lib;
-    in {
-      checks.${system}.nix-compile = nc.mkCheck {
-        inherit pkgs;
-        nix-compile = nix-compile.packages.${system}.default;
-        src = ./.;
-        profile = "standard";
-        paths = [ "nix" ];
-      };
-
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [ nix-compile.packages.${system}.default ];
-        shellHook = nc.mkPreCommitHook {
-          profile = "standard";
-          paths = [ "nix" ];
-        };
-      };
-    };
-}
-```
-
-
-## // pre-commit // behavior
-
-The hook checks only staged `.nix`, `.sh`, and `.bash` files:
+This gives you `checks.${system}.nix-compile` (runs on `nix flake check`) and
+auto-installs a pre-commit hook in dev shells. The hook only checks staged files:
 
 ```
 $ git commit -m "add feature"
@@ -645,152 +287,89 @@ nix-compile: ✗ blocked
 Use --no-verify to bypass.
 ```
 
-Fix the issues or bypass with `git commit --no-verify`.
+Fix the issues or `--no-verify` if you know what you're doing.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                       // layout // enforcement
+#                                                        // straylight conventions
 # ══════════════════════════════════════════════════════════════════════════════
 
-Enforce ironclad directory structure and file naming by detecting what each
-file IS (via parsing) and validating it's in the RIGHT PLACE.
+In strict mode, we enforce some opinions that won't suit everyone.
 
-```bash
-nix-compile -l straylight       # enforce straylight layout
-nix-compile -p strict -l straylight  # strict + layout
-```
+**Lisp-case identifiers.** `parseConfig` becomes `parse-config`. Why? It forces
+use of the straylight prelude, which provides type-safe wrappers. The dash acts
+as an escape hatch detector — if you're reaching for camelCase, you're probably
+bypassing the prelude.
 
-
-## // layout // conventions
-
-| Convention | Structure |
-|------------|-----------|
-| `straylight` | `nix/modules/{flake,nixos,home}/`, `nix/packages/`, `nix/overlays/` |
-| `flake-parts` | `modules/`, `packages/`, `overlays/` |
-| `nixpkgs` | `pkgs/by-name/XX/name/package.nix` |
-| `nixos` | `hosts/`, `modules/`, `users/` |
-| `none` | No enforcement (default) |
-
-
-## // module // kind // detection
-
-Files are parsed to determine their kind:
-
-| Kind | Detection |
-|------|-----------|
-| `NixOSModule` | Has `options` and `config` attrs, params include `config`, `lib` |
-| `Package` | Calls `mkDerivation`, has `pname`/`version`, params include `stdenv` |
-| `Overlay` | Two-argument function (`final: prev:` or `self: super:`) |
-| `FlakeModule` | flake-parts style module structure |
-| `Library` | Exports functions like `mkOption`, `mapAttrs` |
-| `Flake` | File is `flake.nix` |
-
-Then validated against convention:
-
-```
-$ nix-compile -l straylight
-error: [layout-E001] packages/foo.nix: File in wrong location for Package
-  (expected: nix/packages/...)
-
-error: [layout-E004] nix/lib/utils.nix: File name must be kebab-case
-  (expected: kebab-case: utils)
-```
-
-
-## // with // flake-parts
-
-```nix
-nix-compile = {
-  enable = true;
-  profile = "strict";
-  layout = "straylight";  # enforce directory structure
-  paths = [ "nix" ];
-  pre-commit.enable = true;
-};
-```
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                                                        // naming // enforcement
-# ══════════════════════════════════════════════════════════════════════════════
-
-In `strict` profile, all Nix identifiers must be kebab-case (lisp-case).
-
-```
-$ nix-compile -p strict
-warn: [naming] nix/lib/utils.nix:12: let binding 'parseConfig' should be 'parse-config'
-warn: [naming] nix/lib/utils.nix:15: attribute 'extraOptions' should be 'extra-options'
-```
-
-**Why lisp-case?** Forces use of the straylight prelude, which provides type-safe
-wrappers. `extraOptions` becomes `prelude.extra-options cfg`. The dash acts as
-an escape hatch detector.
-
-
-## // exempt // identifiers
-
-Standard Nix/NixOS/flake-parts names are exempt:
-
-```
-config, lib, pkgs, options, imports, stdenv, pname, version, src, meta,
-buildInputs, nativeBuildInputs, configurePhase, buildPhase, installPhase,
-perSystem, flake, enable, package, ...
-```
-
-Identifiers starting with `_` (like `_class`, `_module`) are also exempt.
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                                                // everything // is // a // module
-# ══════════════════════════════════════════════════════════════════════════════
-
-In the straylight convention, **everything is a flake-parts module**.
-
-| Traditional | Flake-parts module |
-|-------------|-------------------|
-| NixOS module | `flake.nixosModules.foo` |
-| Package | `perSystem.packages.foo` |
-| Overlay | `flake.overlays.foo` |
-| DevShell | `perSystem.devShells.foo` |
-| Library | `flake.lib.foo` |
-| home-manager | `flake.homeModules.foo` |
-
-This gives uniform structure: every file is `{ config, lib, ... }: { ... }`.
-Parse once, analyze everything.
-
-The `_class` attribute declares what kind of module it is:
+**Everything is a flake-parts module.** Packages, overlays, NixOS modules,
+devShells — all wrapped in `{ config, lib, ... }: { ... }`. Parse once, analyze
+everything. The `_class` attribute declares what kind:
 
 ```nix
 # nix/packages/my-tool.nix
 { config, lib, pkgs, ... }:
 {
   _class = "package";
-
-  perSystem.packages.my-tool = pkgs.writeShellApplication {
-    name = "my-tool";
-    text = ''
-      echo "hello"
-    '';
-  };
+  perSystem.packages.my-tool = pkgs.writeShellApplication { ... };
 }
 ```
 
-If `-l straylight` is set, modules without `_class` are flagged.
+**Layout enforcement.** With `-l straylight`, we check that packages live in
+`nix/packages/`, modules in `nix/modules/{flake,nixos,home}/`, and so on. Files
+are parsed to detect what they *are*, then validated against where they *should be*.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#                                                                    // license
+#                                                              // known holes
 # ══════════════════════════════════════════════════════════════════════════════
 
-BSD-3-Clause. See `LICENSE`.
+This tool finds CVEs, but it has blind spots. Things we don't catch:
+
+**No taint tracking for `builtins.import`.** We don't trace where dynamically
+imported code comes from. Arbitrary code execution paths aren't followed.
+
+**IFD not blocked.** Import-from-derivation means build-time code execution.
+Use `nix flake check --no-allow-import-from-derivation` alongside us.
+
+**Flake input URLs not validated.** Typosquatting attacks on inputs aren't
+detected. `github:nixos/nixpkgs` vs `github:nix0s/nixpkgs`.
+
+**No SRI verification.** We don't check that fetcher hashes are present or valid.
+
+**`__functor` abuse.** Attribute sets with `__functor` can hide computation.
+We don't trace this.
+
+Cross-language inference catches type mismatches but doesn't track data flow
+for security properties. It's static analysis, not a security scanner.
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#                                                                  // testing
+# ══════════════════════════════════════════════════════════════════════════════
+
+```bash
+cabal test fixtures        # golden tests against expected outputs
+cabal test props           # QuickCheck property tests (~1k LOC)
+cabal test adversarial     # security: injection, overflow, malformed input
+cabal test flake-parts     # real-world integration tests
+```
+
+To update golden files after intentional changes: `cabal run fixtures -- --bless`
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#                                                                   // license
+# ══════════════════════════════════════════════════════════════════════════════
+
+BSD-3-Clause.
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-#     "The matrix has its roots in primitive arcade games, in early graphics
-#      programs and military experimentation with cranial jacks."
+#     "They built the first computers to crack German ice, right? Codebreakers.
+#      So there was ice before computers, you wanna look at it that way."
 #
-#                                                                  — Neuromancer
+#                                                                  — Count Zero
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #                                                                 — b7r6 // 2026

@@ -65,6 +65,9 @@ factToLocatedConstraints = \case
   -- Dynamic command: no type constraint
   DynamicCommand _ _ ->
     []
+  -- Observed variable: no type constraint
+  Observed _ _ ->
+    []
 
 -- | Legacy API: Convert all facts to unlocated constraints
 factsToConstraints :: [Fact] -> [Constraint]

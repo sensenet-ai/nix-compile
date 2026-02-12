@@ -13,6 +13,7 @@ import qualified Data.Text as T
 import System.Exit (exitFailure, exitSuccess)
 import NixCompile.Emit.Config
 import NixCompile.Types
+import NixCompile.Pretty (toText)
 
 -- | Empty span for tests
 testSpan :: Span
@@ -99,7 +100,7 @@ testInvalidKeyDetection =
 -- The escape function must produce valid JSON when run
 testJsonEscapeInOutput :: Bool
 testJsonEscapeInOutput =
-  let func = emitConfigFunction testSchema
+  let func = toText (emitConfigFunction testSchema)
    in -- The generated bash should have the correct escape pattern
       -- s=${s//\"/\\\"} which replaces " with \"
       -- In Haskell literal: s=${s//\\\"/\\\\\\\"} (pattern: \" replacement: \\\")

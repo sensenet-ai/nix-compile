@@ -134,6 +134,7 @@ attachFileToFact mFile = \case
   UsesStorePath p sp -> UsesStorePath p (attachFileToSpan mFile sp)
   BareCommand c sp -> BareCommand c (attachFileToSpan mFile sp)
   DynamicCommand v sp -> DynamicCommand v (attachFileToSpan mFile sp)
+  Observed v sp -> Observed v (attachFileToSpan mFile sp)
 
 attachFileToSpan :: Maybe FilePath -> Span -> Span
 attachFileToSpan Nothing sp = sp

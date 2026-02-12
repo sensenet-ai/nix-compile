@@ -2,9 +2,10 @@
 --                                                                     // types
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
---     "The matrix has its roots in primitive arcade games."
+--     "Vodou isn't like that. It isn't concerned with notions of salvation 
+--      and transcendence. What it's about is getting things done."
 --
---                                                                — Neuromancer
+--                                                                — Count Zero
 --
 
 let Severity = < Error | Warning | Info | Off >

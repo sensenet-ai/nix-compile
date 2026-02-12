@@ -4,6 +4,8 @@
 # It is imported by the flake.nix at the repository root.
 { inputs, ... }:
 {
+  _class = "flake";
+
   perSystem =
     { pkgs, ... }:
     let
@@ -30,12 +32,12 @@
       devShells.default = pkgs.mkShell {
         name = "nix-compile-dev";
         inputsFrom = [ nix-compile.env ];
-        packages = with pkgs; [
-          cabal-install
-          haskell-language-server
-          hlint
-          ormolu
-          ghcid
+        packages = [
+          pkgs.cabal-install
+          pkgs.haskell-language-server
+          pkgs.hlint
+          pkgs.ormolu
+          pkgs.ghcid
         ];
         shellHook = ''
           echo ""
@@ -57,10 +59,12 @@
         default = {
           type = "app";
           program = "${nix-compile}/bin/nix-compile";
+          meta.description = "nix-compile CLI";
         };
         nix-compile = {
           type = "app";
           program = "${nix-compile}/bin/nix-compile";
+          meta.description = "nix-compile CLI";
         };
       };
     };

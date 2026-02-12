@@ -3,4 +3,5 @@
 # Currently empty - placeholder for future NixOS integration.
 { ... }:
 {
+  _class = "nixos";
 }

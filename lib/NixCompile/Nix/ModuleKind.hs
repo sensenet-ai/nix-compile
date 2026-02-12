@@ -31,6 +31,7 @@ module NixCompile.Nix.ModuleKind
     -- * Detection
   , detectKind
   , detectKindFromFile
+  , detectClassValue
 
     -- * Queries
   , isNixOSModule
@@ -43,7 +44,7 @@ import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (mapMaybe)
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -95,15 +96,62 @@ detectKindFromFile path = do
 -- | Detect module kind from parsed expression.
 detectKind :: FilePath -> NExprLoc -> Detection
 detectKind path expr =
-  let fileName = takeFileName path
-      -- Check filename first
-      fileHints = detectFromFileName fileName
-      -- Then check structure
-      structHints = detectFromStructure expr
-      -- Combine evidence
-      allHints = fileHints ++ structHints
-      -- Pick best match
-  in selectBest allHints
+  case detectClassValue expr of
+    Just cls ->
+      case classToKind cls of
+        Just kind -> Detection kind 100 ["_class = \"" <> cls <> "\""]
+        Nothing -> Detection Unknown 0 ["unknown _class = \"" <> cls <> "\""]
+    Nothing ->
+      let fileName = takeFileName path
+          -- Check filename first
+          fileHints = detectFromFileName fileName
+          -- Then check structure
+          structHints = detectFromStructure expr
+          -- Combine evidence
+          allHints = fileHints ++ structHints
+          -- Pick best match
+      in selectBest allHints
+
+-- | Extract the declared _class attribute, if present.
+detectClassValue :: NExprLoc -> Maybe Text
+detectClassValue = go
+  where
+    go (Fix (Compose (AnnUnit _ e))) = case e of
+      NSet _ bindings -> findInBindings bindings
+      NAbs _ body -> go body
+      NLet _ body -> go body
+      NWith _ body -> go body
+      _ -> Nothing
+
+    findInBindings bindings = listToMaybe (mapMaybe extractClass bindings)
+
+    extractClass :: Binding NExprLoc -> Maybe Text
+    extractClass = \case
+      NamedVar (StaticKey name :| []) valExpr _
+        | varNameText name == "_class" -> extractStringValue valExpr
+      _ -> Nothing
+
+    extractStringValue :: NExprLoc -> Maybe Text
+    extractStringValue (Fix (Compose (AnnUnit _ e))) = case e of
+      NStr (DoubleQuoted [Plain t]) -> Just t
+      NStr (Indented _ [Plain t]) -> Just t
+      _ -> Nothing
+
+    varNameText :: VarName -> Text
+    varNameText = coerce
+
+classToKind :: Text -> Maybe ModuleKind
+classToKind cls = case cls of
+  "flake" -> Just FlakeModule
+  "nixos" -> Just NixOSModule
+  "home" -> Just HomeModule
+  "homeManager" -> Just HomeModule
+  "darwin" -> Just DarwinModule
+  "package" -> Just Package
+  "overlay" -> Just Overlay
+  "lib" -> Just Library
+  "shell" -> Just Shell
+  _ -> Nothing
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                       // filename detection

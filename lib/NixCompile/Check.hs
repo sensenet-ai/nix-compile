@@ -41,12 +41,12 @@ module NixCompile.Check
 import Control.Exception (SomeException, try)
 import Control.Monad (forM)
 import Data.List (nub, sort)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, maybeToList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (doesFileExist, doesDirectoryExist, listDirectory, getCurrentDirectory)
-import System.FilePath ((</>), takeExtension, takeFileName)
+import System.FilePath ((</>), takeExtension, takeFileName, splitDirectories, normalise)
 import System.IO (hPutStrLn, stderr)
 
 import Shelly hiding (FilePath, (</>))
@@ -59,6 +59,7 @@ import qualified NixCompile.Nix.Lint as NixLint
 import qualified NixCompile.Nix.ModuleKind as MK
 import qualified NixCompile.Nix.LayoutConvention as LC
 import qualified NixCompile.Nix.Naming as Naming
+import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Types (Span(..), Loc(..))
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -152,6 +153,7 @@ ruleSev Strict = \case
   "no-substitute-all"            -> RError
   "missing-meta"                 -> RError
   "missing-description"          -> RError
+  "missing-class"                -> RError
   "cpp-using-namespace-header"   -> RError
   "cpp-raw-new-delete"           -> RError
   _                              -> RWarning
@@ -167,6 +169,7 @@ ruleSev Standard = \case
   "no-substitute-all"            -> ROff
   "missing-meta"                 -> RWarning
   "missing-description"          -> RInfo
+  "missing-class"                -> RError
   "cpp-using-namespace-header"   -> RError
   "cpp-raw-new-delete"           -> RWarning
   _                              -> ROff
@@ -176,6 +179,7 @@ ruleSev Minimal = \case
   "with-lib"                     -> RWarning
   "no-heredoc"                   -> RError
   "no-eval"                      -> RError
+  "missing-class"                -> RWarning
   "cpp-using-namespace-header"   -> RError
   _                              -> ROff
 
@@ -185,6 +189,7 @@ ruleSev Nixpkgs = \case
   "no-heredoc"                   -> RWarning
   "missing-meta"                 -> RError
   "missing-description"          -> RError
+  "missing-class"                -> RError
   _                              -> ROff
 
 ruleSev Security = \case
@@ -193,6 +198,7 @@ ruleSev Security = \case
   "no-eval"                      -> RError
   "no-substitute-all"            -> RWarning
   "with-lib"                     -> RError
+  "missing-class"                -> RError
   "cpp-raw-new-delete"           -> RError
   _                              -> ROff
 
@@ -224,7 +230,7 @@ analyzable :: FilePath -> Bool
 analyzable p = takeExtension p `elem` [".nix", ".sh", ".bash"]
 
 ignored :: String -> Bool
-ignored n = n `elem` [".git", "dist-newstyle", "result", "node_modules", ".direnv"]
+ignored n = n `elem` [".git", "dist-newstyle", "result", "node_modules", ".direnv", "fixtures", ".stack-work", "target", "build", "dist", ".cabal-sandbox", "_build", ".bloop", ".metals", ".idea", ".vscode"]
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                          // native analysis
@@ -261,7 +267,8 @@ analyzeNix cfg filePath content =
             _      -> Naming.NoConvention
           namingViolations = Naming.findNamingViolations namingConv expr
           namingIssues = map (namingToIssue cfg filePath) namingViolations
-      in pure $ lintIssues ++ namingIssues
+          classIssues = maybeToList (missingClassIssue cfg filePath expr)
+      in pure $ lintIssues ++ namingIssues ++ classIssues
 
 nixToIssue :: Config -> FilePath -> NixLint.NixViolation -> Maybe Issue
 nixToIssue cfg filePath v =
@@ -279,6 +286,63 @@ namingToIssue _cfg filePath v =
       msg = Naming.nvContext v <> " '" <> Naming.nvIdentifier v
           <> "' should be '" <> Naming.nvSuggestion v <> "'"
   in Issue filePath (Just line) "naming" Warning msg
+
+missingClassIssue :: Config -> FilePath -> NExprLoc -> Maybe Issue
+missingClassIssue cfg filePath expr =
+  case toSeverity $ ruleSev (cProfile cfg) "missing-class" of
+    Nothing -> Nothing
+    Just sev ->
+      if shouldCheckClass filePath
+        then case MK.detectClassValue expr of
+          Nothing -> Just $ Issue filePath Nothing "missing-class" sev (missingClassMessage filePath)
+          Just _ -> Nothing
+        else Nothing
+
+missingClassMessage :: FilePath -> Text
+missingClassMessage filePath =
+  case expectedClassForPath filePath of
+    Nothing -> "Module missing `_class` attribute"
+    Just expected -> "Module missing `_class` attribute; expected _class = \"" <> expected <> "\""
+
+expectedClassForPath :: FilePath -> Maybe Text
+expectedClassForPath filePath = do
+  comps <- modulePathComponents filePath
+  case comps of
+    ("flake":_) -> Just "flake"
+    ("nixos":_) -> Just "nixos"
+    ("home":_) -> Just "home"
+    ("home-manager":_) -> Just "homeManager"
+    ("darwin":_) -> Just "darwin"
+    _ -> Nothing
+
+shouldCheckClass :: FilePath -> Bool
+shouldCheckClass filePath =
+  case modulePathComponents filePath of
+    Nothing -> False
+    Just comps -> not (isIgnoredModuleFile comps)
+
+modulePathComponents :: FilePath -> Maybe [String]
+modulePathComponents filePath =
+  case dropWhile (/= "nix") (splitDirectories (normalise filePath)) of
+    ("nix":"modules":rest) -> Just rest
+    _ -> Nothing
+
+isIgnoredModuleFile :: [String] -> Bool
+isIgnoredModuleFile comps =
+  let fileName = case reverse comps of
+        (name:_) -> name
+        [] -> ""
+      ignoredNames =
+        [ "_index.nix"
+        , "options.nix"
+        , "toolchains.nix"
+        , "buckconfig.nix"
+        , "shell-hook.nix"
+        , "nimi-init.nix"
+        ]
+      isOptionsSchema = comps == ["flake", "options-schema.nix"]
+      isScriptsHelper = "scripts" `elem` comps
+  in fileName `elem` ignoredNames || isOptionsSchema || isScriptsHelper
 
 analyzeBash :: Config -> FilePath -> Text -> IO [Issue]
 analyzeBash cfg filePath content =

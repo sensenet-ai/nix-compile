@@ -18,7 +18,16 @@
 
       imports = [
         ./nix/modules/flake/local.nix
+        ./nix/modules/flake/default.nix
       ];
+
+      nix-compile = {
+        enable = true;
+        profile = "strict";
+        layout = "straylight";
+        paths = [ "nix" "lib" "app" "config" ];
+        pre-commit.enable = true;
+      };
 
       flake = {
         flakeModules.default = ./nix/modules/flake/default.nix;

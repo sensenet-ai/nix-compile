@@ -44,6 +44,7 @@ import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (unify, solve)
 import NixCompile.Schema.Build (buildSchema)
+import NixCompile.Pretty (toText)
 -- import NixCompile.Types hiding (TypeVar)
 -- import qualified NixCompile.Types as T
 
@@ -565,7 +566,7 @@ prop_store_path_no_traversal = forAll genTraversalPath $ \path ->
 prop_emit_no_heredoc :: [Fact] -> Bool
 prop_emit_no_heredoc facts =
   let schema = buildSchema facts emptySubst
-      output = emitConfigFunction schema
+      output = toText (emitConfigFunction schema)
   in not ("<<" `T.isInfixOf` output)
 
 -- | emitConfigFunction output contains no unescaped special chars in literals
@@ -573,7 +574,7 @@ prop_emit_escaped :: Property
 prop_emit_escaped = forAll genLiteral $ \lit ->
   let spec = ConfigSpec TString Nothing Nothing (Just lit) (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema { schemaConfig = Map.singleton ["test"] spec }
-      output = emitConfigFunction schema
+      output = toText (emitConfigFunction schema)
   in case lit of
        LitString s -> 
          -- If string contains special chars, they should be escaped

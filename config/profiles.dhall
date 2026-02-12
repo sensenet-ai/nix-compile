@@ -88,13 +88,14 @@ let strict
           }
         , { id = R.cpp-raw-new-delete
           , severity = Severity.Error
-          , reason = None Text
+          , reason = Some "Memory safety"
           }
-        , { id = R.cpp-ban-cuda-identifier
+        , { id = R.missing-class
           , severity = Severity.Error
-          , reason = None Text
+          , reason = Some "Module compatibility must be explicit"
           }
         ]
+
       , ignores = [] : List Text
       , files = None (List Text)
       }
@@ -163,6 +164,10 @@ let standard
           , severity = Severity.Info
           , reason = None Text
           }
+        , { id = R.missing-class
+          , severity = Severity.Error
+          , reason = None Text
+          }
         , { id = R.cpp-using-namespace-header
           , severity = Severity.Error
           , reason = None Text
@@ -197,6 +202,10 @@ let minimal
         , { id = R.no-heredoc-in-inline-bash
           , severity = Severity.Error
           , reason = Some "Almost always buggy"
+          }
+        , { id = R.missing-class
+          , severity = Severity.Warning
+          , reason = Some "Recommended for module safety"
           }
         , { id = R.cpp-using-namespace-header
           , severity = Severity.Error
@@ -233,6 +242,10 @@ let nixpkgs
         , { id = R.missing-description
           , severity = Severity.Error
           , reason = Some "Required by nixpkgs guidelines"
+          }
+        , { id = R.missing-class
+          , severity = Severity.Error
+          , reason = Some "Module compatibility must be explicit"
           }
         ]
       , ignores = [] : List Text

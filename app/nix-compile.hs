@@ -22,8 +22,14 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import NixCompile hiding (Severity)
 import NixCompile.Log
+import NixCompile.Pretty (renderStdOut)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Facts (extractFacts)
+import qualified NixCompile.LSP.Server as LSP
+import qualified NixCompile.Docs.Extract as Docs
+import qualified NixCompile.Docs.Search as Search
+import qualified NixCompile.Docs.Types as Docs
+import qualified NixCompile.Nix.Pretty as NixPretty
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Lint.Forbidden (findViolations, formatViolationsAt)
 import NixCompile.Infer.Constraint (factsToConstraints)
@@ -41,6 +47,7 @@ import qualified NixCompile.Nix.Scope as Scope
 import qualified NixCompile.Nix.Types
 import qualified Data.Map.Strict as Map
 import Control.Monad.IO.Class (MonadIO (..))
+import GHC.IO.Encoding (setLocaleEncoding, utf8)
 
 -- hnix imports for detectUnsupported function
 import Data.Fix (Fix(..))
@@ -49,7 +56,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated (AnnUnit(..), NExprLoc)
 import Control.Applicative ((<|>))
-import Control.Monad (forM, forM_, unless)
+import Control.Monad (forM, forM_, unless, void)
 import Control.Concurrent.Async (mapConcurrently)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath ((</>), takeExtension, makeRelative, takeDirectory)
@@ -59,43 +66,52 @@ data TCResult = TCOk | TCFail | TCSkip
   deriving (Eq, Show)
 
 main :: IO ()
-main = runLog InfoS $ do
-  args <- liftIO getArgs
-  case args of
-    -- Repository-wide check (the main command)
-    [] -> cmdRepoCheck Check.defaultConfig ["."]
-    ["--profile", p] -> cmdRepoCheck (withProfile p Check.defaultConfig) ["."]
-    ["-p", p] -> cmdRepoCheck (withProfile p Check.defaultConfig) ["."]
-    ["--layout", l] -> cmdRepoCheck (withLayout l Check.defaultConfig) ["."]
-    ["-l", l] -> cmdRepoCheck (withLayout l Check.defaultConfig) ["."]
-    ["--profile", p, "--layout", l] -> cmdRepoCheck (withLayout l $ withProfile p Check.defaultConfig) ["."]
-    ["-p", p, "-l", l] -> cmdRepoCheck (withLayout l $ withProfile p Check.defaultConfig) ["."]
-    ["--profile", p, path] -> cmdRepoCheck (withProfile p Check.defaultConfig) [path]
-    ["-p", p, path] -> cmdRepoCheck (withProfile p Check.defaultConfig) [path]
+main = do
+  setLocaleEncoding utf8
+  runLog InfoS $ do
+    args <- liftIO getArgs
+    case args of
+      -- Legacy single-file commands
+      ["lint", file] -> cmdLint file
+      ["check", file] -> cmdCheck file
+      ["infer", file] -> cmdInfer file
+      ["parse", file] -> cmdParse file
+      ["emit", file] -> cmdEmit file
+      ["nix", file] -> cmdNix file
+      ["fmt", file] -> cmdFmt file
+      ["annotate", file] -> cmdAnnotate file
+      ["lsp"] -> liftIO $ void LSP.run
+      ["search", query, file] -> cmdSearch (T.pack query) file
+      ["docs", file] -> cmdDocs file
+      ["typecheck", path] -> cmdTypeCheck path
+      ["flake"] -> cmdFlake "."
+      ["flake", dir] -> cmdFlake dir
+      ["graph"] -> cmdGraph "." False
+      ["graph", dir] -> cmdGraph dir False
+      ["graph", "--dot"] -> cmdGraph "." True
+      ["graph", "--dot", dir] -> cmdGraph dir True
+      ["graph", dir, "--dot"] -> cmdGraph dir True
+      ["scope", file] -> cmdScope file
+      ["scope", "--json", file] -> cmdScopeJSON file
+      ["scope", "--dhall", file] -> cmdScopeDhall file
+      ["--help"] -> liftIO usage
+      ["-h"] -> liftIO usage
 
-    -- Legacy single-file commands
-    ["lint", file] -> cmdLint file
-    ["check", file] -> cmdCheck file
-    ["infer", file] -> cmdInfer file
-    ["parse", file] -> cmdParse file
-    ["emit", file] -> cmdEmit file
-    ["nix", file] -> cmdNix file
-    ["fmt", file] -> cmdFmt file
-    ["typecheck", path] -> cmdTypeCheck path
-    ["flake"] -> cmdFlake "."
-    ["flake", dir] -> cmdFlake dir
-    ["graph"] -> cmdGraph "." False
-    ["graph", dir] -> cmdGraph dir False
-    ["graph", "--dot"] -> cmdGraph "." True
-    ["graph", "--dot", dir] -> cmdGraph dir True
-    ["graph", dir, "--dot"] -> cmdGraph dir True
-    ["scope", file] -> cmdScope file
-    ["scope", "--json", file] -> cmdScopeJSON file
-    ["scope", "--dhall", file] -> cmdScopeDhall file
-    ["--help"] -> liftIO usage
-    ["-h"] -> liftIO usage
-    -- Default: treat args as paths
-    paths -> cmdRepoCheck Check.defaultConfig paths
+      -- Repository-wide check (default)
+      _ -> do
+        let (paths, cfg) = parseConfigArgs Check.defaultConfig args
+        let paths' = if null paths then ["."] else paths
+        cmdRepoCheck cfg paths'
+
+parseConfigArgs :: Check.Config -> [String] -> ([FilePath], Check.Config)
+parseConfigArgs cfg [] = ([], cfg)
+parseConfigArgs cfg ("-p":p:rest) = parseConfigArgs (withProfile p cfg) rest
+parseConfigArgs cfg ("--profile":p:rest) = parseConfigArgs (withProfile p cfg) rest
+parseConfigArgs cfg ("-l":l:rest) = parseConfigArgs (withLayout l cfg) rest
+parseConfigArgs cfg ("--layout":l:rest) = parseConfigArgs (withLayout l cfg) rest
+parseConfigArgs cfg (x:xs) =
+  let (paths, newCfg) = parseConfigArgs cfg xs
+  in (x:paths, newCfg)
 
 withProfile :: String -> Check.Config -> Check.Config
 withProfile s cfg = cfg { Check.cProfile = readProfile s }
@@ -312,7 +328,7 @@ cmdEmit file = do
       $(logTM) ErrorS $ logStr $ "Error: " <> err
       liftIO exitFailure
     Right script -> do
-      liftIO $ TIO.putStr $ emitConfigFunction (scriptSchema script)
+      liftIO $ renderStdOut $ emitConfigFunction (scriptSchema script)
 
 -- | Check embedded bash scripts in Nix files
 cmdNix :: FilePath -> AppM ()
@@ -549,9 +565,21 @@ cmdTypeCheck path = do
           NamedVar _ expr _ -> detectUnsupported expr
           Inherit _ _ _ -> Nothing
 
--- | Format a Nix file with type annotations
+-- | Format a Nix file (pretty print AST)
 cmdFmt :: FilePath -> AppM ()
 cmdFmt file = do
+  result <- liftIO $ Nix.parseNixFile file
+  case result of
+    Left err -> do
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
+    Right expr -> do
+      let doc = NixPretty.prettyNix expr
+      liftIO $ renderStdOut doc
+
+-- | Add type annotations to a Nix file (legacy fmt)
+cmdAnnotate :: FilePath -> AppM ()
+cmdAnnotate file = do
   result <- liftIO $ NixFmt.formatFile file
   case result of
     Left err -> do
@@ -860,3 +888,35 @@ mapInterpTypesToNix schema interps =
       in case reads (T.unpack middle) of
            [(n, "")] -> Just n
            _ -> Nothing
+
+cmdSearch :: T.Text -> FilePath -> AppM ()
+cmdSearch query file = do
+  result <- liftIO $ Nix.parseNixFile file
+  case result of
+    Left err -> do
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
+    Right expr -> do
+      src <- liftIO $ TIO.readFile file
+      let sg = Scope.fromNixFile file expr
+      let docs = Docs.extractDocs sg src
+      let results = Search.search query docs
+      liftIO $ mapM_ printResult results
+  where
+    printResult item = do
+      TIO.putStrLn $ Docs.docName item
+      unless (T.null (Docs.docDescription item)) $
+        TIO.putStrLn $ "  " <> Docs.docDescription item
+
+cmdDocs :: FilePath -> AppM ()
+cmdDocs file = do
+  result <- liftIO $ Nix.parseNixFile file
+  case result of
+    Left err -> do
+      $(logTM) ErrorS $ logStr $ "Error: " <> err
+      liftIO exitFailure
+    Right expr -> do
+      src <- liftIO $ TIO.readFile file
+      let sg = Scope.fromNixFile file expr
+      let docs = Docs.extractDocs sg src
+      liftIO $ BL.putStrLn (encode docs)

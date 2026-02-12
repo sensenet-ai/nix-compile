@@ -20,8 +20,8 @@
 --
 --   lib.writeScript "name" ''...''
 --
--- Each interpolation ${...} is tracked with its source span and
--- the Nix expression it contains (for store path verification).
+--   Each interpolation ${...} is tracked with its source span and
+--   the Nix expression it contains (for store path verification).
 module NixCompile.Nix.Parse
   ( -- * Parsing
     parseNixFile,
@@ -46,6 +46,7 @@ where
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Read as TR
@@ -277,34 +278,72 @@ findShellScriptCalls = go
     go expr@(Fix (Compose (AnnUnit srcSpan e))) = case e of
       -- Function application: check if it's a shell script writer
       NApp _ _ -> case unwrapApp expr [] of
-        -- Pattern 1: writeShellScript "name" ''body''
-        Just (name, [nameArg, bodyArg])
-          | isPositionalShellFunc name ->
-              case extractStringLit nameArg of
-                Just scriptName ->
-                  [ ShellScriptCall
-                      { sscFunction = name,
-                        sscName = scriptName,
-                        sscBody = bodyArg,
-                        sscSpan = toSpan srcSpan Nothing
-                      }
-                  ]
-                Nothing -> recurse e
-        -- Pattern 2: writeShellApplication { name = "foo"; text = ''body''; }
-        Just (name, [recordArg])
-          | isRecordShellFunc name ->
-              case extractFromRecord recordArg of
-                Just (scriptName, body) ->
-                  [ ShellScriptCall
-                      { sscFunction = name,
-                        sscName = scriptName,
-                        sscBody = body,
-                        sscSpan = toSpan srcSpan Nothing
-                      }
-                  ]
-                Nothing -> recurse e
-        _ -> recurse e
+        Just (name, args) -> 
+          let matches = checkCall name args srcSpan
+          in if null matches then recurse e else matches
+        Nothing -> recurse e
       _ -> recurse e
+
+    -- Check if a function call is a shell script builder
+    -- Strategy:
+    -- 1. Check Function Name (Nominal Heuristic)
+    -- 2. Check Content (Semantic Inspection - shebang or strict mode)
+    checkCall :: Text -> [NExprLoc] -> SrcSpan -> [ShellScriptCall]
+    checkCall name args srcSpan = case args of
+      -- Pattern 1: func "name" ''body''
+      [nameArg, bodyArg] ->
+        let 
+           isNameMatch = isPositionalShellFunc name
+           maybeBody = extractStringLit bodyArg
+           isContentMatch = maybe False isContentBash maybeBody
+        in
+        if isNameMatch || isContentMatch
+        then [ ShellScriptCall
+                { sscFunction = name
+                , sscName = fromMaybe "script" (extractStringLit nameArg)
+                , sscBody = bodyArg
+                , sscSpan = toSpan srcSpan Nothing
+                }
+             ]
+        else []
+      
+      -- Pattern 2 & 3: Single argument (either string body or record)
+      [arg] ->
+        case extractStringLit arg of
+          Just body ->
+            let 
+               isNameMatch = isPositionalShellFunc name
+               isContentMatch = isContentBash body
+            in
+            if isNameMatch || isContentMatch
+            then [ ShellScriptCall
+                    { sscFunction = name
+                    , sscName = "script"
+                    , sscBody = arg
+                    , sscSpan = toSpan srcSpan Nothing
+                    }
+                 ]
+            else []
+          Nothing ->
+            -- Try treating it as a record { name = ...; text = ...; }
+            case extractFromRecord arg of
+              Just (scriptName, bodyExpr, maybeBodyText) ->
+                let 
+                   isRecNameMatch = isRecordShellFunc name
+                   isRecContentMatch = maybe False isContentBash maybeBodyText
+                in
+                if isRecNameMatch || isRecContentMatch
+                then [ ShellScriptCall
+                        { sscFunction = name
+                        , sscName = scriptName
+                        , sscBody = bodyExpr
+                        , sscSpan = toSpan srcSpan Nothing
+                        }
+                     ]
+                else []
+              Nothing -> []
+      
+      _ -> []
 
     -- Unwrap nested applications to find the function name and all arguments
     unwrapApp :: NExprLoc -> [NExprLoc] -> Maybe (Text, [NExprLoc])
@@ -318,26 +357,58 @@ findShellScriptCalls = go
     keyText (StaticKey k) = varNameText k
     keyText (DynamicKey _) = ""
 
+    -- Check if a string looks like a bash script based on content
+    isContentBash :: Text -> Bool
+    isContentBash t =
+      let 
+         hasShebang = "#!" `T.isPrefixOf` t
+         hasSet = "set -" `T.isInfixOf` t && ("e" `T.isInfixOf` t || "u" `T.isInfixOf` t || "o" `T.isInfixOf` t)
+      in hasShebang || hasSet
+
     -- Check if a function takes positional args: writeShellScript "name" ''body''
+    -- HEURISTIC: match function names that imply shell script generation or execution.
+    -- This is "bulletproofed" to catch common wrapper patterns in large codebases.
     isPositionalShellFunc :: Text -> Bool
     isPositionalShellFunc name =
-      name == "writeShellScript"
-        || name == "writeShellScriptBin"
-        || name == "writeScript"
-        || name == "writeScriptBin"
+      let n = T.toLower name
+      in 
+         -- 1. Strong signal keywords (anywhere in name)
+         "script" `T.isInfixOf` n 
+         || "shell" `T.isInfixOf` n
+         || "runcommand" `T.isInfixOf` n
+         || "entrypoint" `T.isInfixOf` n
+         || "wrapper" `T.isInfixOf` n
+         || "hook" `T.isInfixOf` n
+         || "phase" `T.isInfixOf` n
+         -- 2. Builder patterns (prefix + component)
+         -- Catches: mkBin, writeTool, buildService, createDaemon, etc.
+         || (("mk" `T.isPrefixOf` n || "write" `T.isPrefixOf` n || "build" `T.isPrefixOf` n || "create" `T.isPrefixOf` n) &&
+             ("app" `T.isInfixOf` n 
+              || "bin" `T.isInfixOf` n 
+              || "cli" `T.isInfixOf` n 
+              || "tool" `T.isInfixOf` n
+              || "service" `T.isInfixOf` n
+              || "daemon" `T.isInfixOf` n
+              || "image" `T.isInfixOf` n
+              || "job" `T.isInfixOf` n
+             ))
 
     -- Check if a function takes a record arg: writeShellApplication { ... }
+    -- Same heuristic logic as above.
     isRecordShellFunc :: Text -> Bool
-    isRecordShellFunc name = name == "writeShellApplication"
+    isRecordShellFunc name = 
+      isPositionalShellFunc name 
+      && not ("apply" `T.isInfixOf` (T.toLower name)) -- avoid false positives like "apply"
 
-    -- Extract name and text from a record: { name = "foo"; text = ''body''; }
-    extractFromRecord :: NExprLoc -> Maybe (Text, NExprLoc)
+    -- Extract name, body expr, and body text from a record
+    extractFromRecord :: NExprLoc -> Maybe (Text, NExprLoc, Maybe Text)
     extractFromRecord (Fix (Compose (AnnUnit _ e))) = case e of
       NSet _ bindings ->
         let nameVal = findBinding "name" bindings >>= extractStringLit
-            textVal = findBinding "text" bindings
-        in case (nameVal, textVal) of
-          (Just n, Just t) -> Just (n, t)
+            textExpr = findBinding "text" bindings
+            textVal = textExpr >>= extractStringLit
+        in case (nameVal, textExpr) of
+          (Just n, Just expr) -> Just (n, expr, textVal)
           _ -> Nothing
       _ -> Nothing
 
