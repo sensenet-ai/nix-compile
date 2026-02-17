@@ -233,6 +233,26 @@ unify' t1 t2 = case (t1, t2) of
   (TAttrsOpen m1, TAttrs m2) -> unifyAttrsClosedOpen m2 m1
   (TUnion ts, t) -> unifyUnion ts t
   (t, TUnion ts) -> unifyUnion ts t
+  -- __functor support: attrset with __functor can unify with function type
+  -- The __functor field has type: self -> args -> result
+  -- We extract the inner function type (args -> result) and unify with that
+  -- Note: we skip unifying 'self' to avoid infinite types from recursive structures
+  (TFun argT retT, TAttrs m) -> case Map.lookup "__functor" m of
+    Just (TFun _ innerT, _) -> unify innerT (TFun argT retT)
+    Just _ -> pure () -- functor exists but has unexpected type, be lenient
+    Nothing -> throwTypeError $ "type mismatch: expected " <> prettyType t1 <> ", got " <> prettyType t2
+  (TFun argT retT, TAttrsOpen m) -> case Map.lookup "__functor" m of
+    Just (TFun _ innerT, _) -> unify innerT (TFun argT retT)
+    Just _ -> pure ()
+    Nothing -> throwTypeError $ "type mismatch: expected " <> prettyType t1 <> ", got " <> prettyType t2
+  (TAttrs m, TFun argT retT) -> case Map.lookup "__functor" m of
+    Just (TFun _ innerT, _) -> unify innerT (TFun argT retT)
+    Just _ -> pure ()
+    Nothing -> throwTypeError $ "type mismatch: expected " <> prettyType t1 <> ", got " <> prettyType t2
+  (TAttrsOpen m, TFun argT retT) -> case Map.lookup "__functor" m of
+    Just (TFun _ innerT, _) -> unify innerT (TFun argT retT)
+    Just _ -> pure ()
+    Nothing -> throwTypeError $ "type mismatch: expected " <> prettyType t1 <> ", got " <> prettyType t2
   _ -> throwTypeError $ "type mismatch: expected " <> prettyType t1 <> ", got " <> prettyType t2
 
 bindVar :: TypeVar -> NixType -> Infer ()
