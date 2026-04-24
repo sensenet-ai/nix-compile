@@ -312,7 +312,12 @@ unifyUnion :: [NixType] -> NixType -> Infer ()
 unifyUnion ts t = case ts of
   [] -> pure ()
   [t'] -> unify t' t
-  _ -> pure () -- Can't easily unify with unions, be lenient
+  _ -> do
+    t' <- applyCurrentSubst t
+    case t' of
+      TVar _ -> pure ()  -- Variable can unify with union members later
+      _ | t' `elem` ts -> pure ()
+        | otherwise -> throwTypeError $ "type mismatch: expected one of " <> T.intercalate " | " (map prettyType ts) <> ", got " <> prettyType t'
 
 -- | Merge two types (compute Least Upper Bound)
 -- Used for if/else branches and list elements
@@ -491,9 +496,8 @@ inferBinary env op left right = do
     NOr -> unify leftT TBool >> unify rightT TBool >> pure TBool
     NImpl -> unify leftT TBool >> unify rightT TBool >> pure TBool
     NPlus -> do
-      -- Could be int+int, string+string, path+string, list+list
-      resultT <- freshVar
-      pure resultT -- Be lenient
+      unify leftT rightT
+      applyCurrentSubst leftT
     NMinus -> unify leftT TInt >> unify rightT TInt >> pure TInt
     NMult -> unify leftT TInt >> unify rightT TInt >> pure TInt
     NDiv -> unify leftT TInt >> unify rightT TInt >> pure TInt
@@ -691,7 +695,17 @@ collectFreeVars (Fix (Compose (AnnUnit _ expr))) = case expr of
   NIf c t f -> collectFreeVars c ++ collectFreeVars t ++ collectFreeVars f
   NWith s b -> collectFreeVars s ++ collectFreeVars b
   NAssert c b -> collectFreeVars c ++ collectFreeVars b
-  NAbs _params b -> collectFreeVars b
+  NAbs params b ->
+      let bound = case params of
+            Param name -> [varNameText name]
+            ParamSet mName _ formals ->
+              let formalNames = map (varNameText . fst) formals
+               in formalNames ++ maybe [] (pure . varNameText) mName
+          paramFreeVars = case params of
+            Param _ -> []
+            ParamSet _ _ formals ->
+              concat [collectFreeVars e | (_, Just e) <- formals]
+       in paramFreeVars ++ filter (`notElem` bound) (collectFreeVars b)
   NApp f a -> collectFreeVars f ++ collectFreeVars a
   NSelect _ b _ -> collectFreeVars b
   NHasAttr b _ -> collectFreeVars b

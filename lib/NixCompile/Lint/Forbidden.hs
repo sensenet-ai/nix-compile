@@ -125,9 +125,7 @@ mkSpan scId = do
         (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
         (Just (posFile start))
     Nothing ->
-      -- Fallback if ID not found (shouldn't happen for valid AST nodes)
-      let (SA.Id n) = scId
-       in pure $ Span (Loc n 0) (Loc n 0) Nothing
+      pure $ Span (Loc 0 0) (Loc 0 0) Nothing
 
 -- | Format a single violation for display.
 formatViolationAt :: Text -> Violation -> Text

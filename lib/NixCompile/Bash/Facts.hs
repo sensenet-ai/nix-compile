@@ -275,7 +275,6 @@ shellBuiltins =
   , "getopts", "shift"
   , "times", "ulimit", "umask"
   , "history", "fc"
-  , "eval"  -- Builtin (but also forbidden construct - caught by lint)
   ]
 
 -- NOTE: The previous commonUtilities list has been REMOVED.
@@ -391,5 +390,4 @@ mkSpan scId = do
         (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
         (Just (posFile start))
     Nothing ->
-      let (SA.Id n) = scId
-       in pure $ Span (Loc n 0) (Loc n 0) Nothing
+      pure $ Span (Loc 0 0) (Loc 0 0) Nothing

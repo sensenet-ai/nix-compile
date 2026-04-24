@@ -47,10 +47,11 @@ import Data.List.NonEmpty (NonEmpty(..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated (AnnUnit(..), NExprLoc)
 import Control.Applicative ((<|>))
-import Control.Monad (forM, forM_, unless)
+import Control.Monad (forM, forM_, foldM, unless)
 import Control.Concurrent.Async (mapConcurrently)
-import System.Directory (doesDirectoryExist, listDirectory)
+import System.Directory (doesDirectoryExist, listDirectory, canonicalizePath)
 import System.FilePath ((</>), takeExtension, makeRelative, takeDirectory)
+import qualified Data.Set as Set
 import Control.Exception (SomeException, try)
 
 data TCResult = TCOk | TCFail | TCSkip
@@ -370,19 +371,27 @@ cmdTypeCheck path = do
     else liftIO exitFailure
   where
     findAllNixFiles :: FilePath -> IO [FilePath]
-    findAllNixFiles dir = do
-      entries <- listDirectory dir
-      paths <- forM entries $ \entry -> do
-        let fullPath = dir </> entry
-        -- Skip excluded directories
-        if entry `elem` [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
-          then return []
-          else do
-            isD <- doesDirectoryExist fullPath
-            if isD
-              then findAllNixFiles fullPath
-              else return [fullPath | takeExtension fullPath == ".nix"]
-      return (concat paths)
+    findAllNixFiles root = do
+      canonRoot <- canonicalizePath root
+      let go found _ [] = return found
+          go found visited (d : worklist) = do
+            canon <- canonicalizePath d
+            if canon `Set.member` visited
+              then go found visited worklist
+              else do
+                entries <- listDirectory d
+                (nixFiles, subdirs) <- foldM (\(fs, ds) entry -> do
+                  let fullPath = d </> entry
+                  if entry `elem` [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
+                    then return (fs, ds)
+                    else do
+                      isD <- doesDirectoryExist fullPath
+                      if isD
+                        then return (fs, fullPath : ds)
+                        else return (if takeExtension fullPath == ".nix" then fullPath : fs else fs, ds)
+                  ) ([], []) entries
+                go (nixFiles ++ found) (Set.insert canon visited) (subdirs ++ worklist)
+      go [] Set.empty [root]
 
     checkFileWrapper :: (LogEnv, LogContexts, Namespace) -> FilePath -> IO TCResult
     checkFileWrapper (le, ctx, ns) file = runKatipContextT le ctx ns (checkFile file)
@@ -471,7 +480,9 @@ cmdTypeCheck path = do
             detectUnsupported left <|> detectUnsupported right
           NUnary _ arg -> detectUnsupported arg
           NSelect _ base _ -> detectUnsupported base
-          NHasAttr base _ -> detectUnsupported base
+          NHasAttr base path -> 
+            if hasDynamicKey path then Just "dynamic attribute test"
+            else detectUnsupported base
           NApp fun arg -> detectUnsupported fun <|> detectUnsupported arg
           NIf cond t f -> detectUnsupported cond <|> detectUnsupported t <|> detectUnsupported f
           NAssert cond body -> detectUnsupported cond <|> detectUnsupported body
@@ -481,6 +492,12 @@ cmdTypeCheck path = do
         detectUnsupportedBinding binding = case binding of
           NamedVar _ expr _ -> detectUnsupported expr
           Inherit _ _ _ -> Nothing
+
+        hasDynamicKey :: NAttrPath NExprLoc -> Bool
+        hasDynamicKey = any isDynamicKey
+          where
+            isDynamicKey (DynamicKey _) = True
+            isDynamicKey _ = False
 
 -- | Format a Nix file with type annotations
 cmdFmt :: FilePath -> AppM ()

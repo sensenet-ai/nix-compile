@@ -192,7 +192,10 @@ parseConfigDotSyntax line = do
 --   config[.a]=...
 validConfigPath :: [Text] -> Bool
 validConfigPath parts =
-  not (null parts) && all (not . T.null) parts
+  not (null parts) && all (\p -> not (T.null p) && T.all isSafeConfigChar p) parts
+
+isSafeConfigChar :: Char -> Bool
+isSafeConfigChar c = c == '_' || c == '-' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 
 parseConfigValue :: Text -> Maybe (Either Text Literal, Quoted)
 parseConfigValue t

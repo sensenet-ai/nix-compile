@@ -67,7 +67,8 @@ import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types
 import NixCompile.Types (Span (..), Loc (..))
 import System.Directory (doesFileExist, canonicalizePath)
-import System.FilePath ((</>), takeDirectory, normalise)
+import System.FilePath ((</>), takeDirectory, normalise, pathSeparator)
+import Data.List (isPrefixOf)
 
 -- ============================================================================
 -- Types
@@ -139,7 +140,8 @@ data BuildState = BuildState
 buildModuleGraph :: FilePath -> IO (Either Text ModuleGraph)
 buildModuleGraph rootPath = do
   canonRoot <- canonicalizePath rootPath
-  finalState <- buildModules canonRoot Set.empty (BuildState Map.empty [] [] [])
+  let rootDir = takeDirectory canonRoot
+  finalState <- buildModules rootDir canonRoot Set.empty (BuildState Map.empty [] [] [])
   let order = computeOrder canonRoot (bsModules finalState)
   pure $ Right $ ModuleGraph
     { mgModules = bsModules finalState
@@ -161,8 +163,8 @@ buildModuleGraphFromFlake dir = do
 
 -- | Recursively build modules
 -- Tolerant: skips files that fail to parse, continues with others
-buildModules :: FilePath -> Set FilePath -> BuildState -> IO BuildState
-buildModules path visited state
+buildModules :: FilePath -> FilePath -> Set FilePath -> BuildState -> IO BuildState
+buildModules rootDir path visited state
   | path `Set.member` visited = pure state  -- Already processed
   | otherwise = do
       exists <- doesFileExist path
@@ -210,18 +212,20 @@ buildModules path visited state
               let visited' = Set.insert path visited
               
               -- Recursively process imports
-              foldM (processImport visited') state''' imports
+              foldM (processImport rootDir visited') state''' imports
 
--- | Process a single import
-processImport :: Set FilePath -> BuildState -> Import -> IO BuildState
-processImport visited state imp = do
+-- | Process a single import, checking for path traversal
+processImport :: FilePath -> Set FilePath -> BuildState -> Import -> IO BuildState
+processImport rootDir visited state imp = do
   exists <- doesFileExist (impPath imp)
-  if exists
-    then do
-      -- Canonicalize the path to resolve ../.. sequences
+  if not exists
+    then pure state  -- Skip non-existent imports
+    else do
       canonPath <- canonicalizePath (impPath imp)
-      buildModules canonPath visited state
-    else pure state  -- Skip non-existent imports
+      let rootPrefix = rootDir ++ [pathSeparator]
+      if rootPrefix `isPrefixOf` canonPath || canonPath == rootDir
+        then buildModules rootDir canonPath visited state
+        else pure state  -- Path traversal blocked silently
 
 -- ============================================================================
 -- Import Finding

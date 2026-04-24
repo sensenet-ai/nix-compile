@@ -57,10 +57,12 @@ buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
       _ -> []
 
 -- | Merge two env specs (prefer required, keep first default)
+-- Both entries share the same resolved type via 'resolveType subst var',
+-- so taking the first type is deterministic and correct.
 mergeEnvSpec :: EnvSpec -> EnvSpec -> EnvSpec
 mergeEnvSpec e1 e2 =
   EnvSpec
-    { envType = envType e1, -- take first (arbitrary)
+    { envType = envType e1,
       envRequired = envRequired e1 || envRequired e2,
       envDefault = envDefault e1 <|> envDefault e2,
       envSpan = envSpan e1
