@@ -41,7 +41,6 @@ import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Schema.Build (buildSchema)
 import System.Exit (exitFailure, exitSuccess)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 import Test.QuickCheck
 import Test.QuickCheck.Monadic (assert, monadicIO, run)
@@ -433,7 +432,10 @@ prop_constraints_deterministic facts =
 -- | PROP-8: Schema building is deterministic
 prop_schema_deterministic :: [Fact] -> Bool
 prop_schema_deterministic facts =
-  let s = emptySubst
+  let constraints = factsToConstraints facts
+      s = case solve constraints of
+        Right subst -> subst
+        Left _ -> emptySubst
    in buildSchema facts s == buildSchema facts s
 
 -- ============================================================================
@@ -683,9 +685,9 @@ prop_stress_chain =
 -- | Parsing completes in bounded time (1 second)
 prop_bounded_time :: Property
 prop_bounded_time = forAll (resize 50 genBashScript) $ \script ->
-  unsafePerformIO $ do
-    result <- timeout 1000000 $ evaluate $ parseBash script
-    return $ isJust result
+  monadicIO $ do
+    result <- run $ timeout 1000000 $ evaluate $ parseBash script
+    assert $ isJust result
 
 -- | Parsing uses bounded memory (best effort - checks for obvious blow-ups)
 prop_no_memory_bomb :: Property

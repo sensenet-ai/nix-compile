@@ -49,25 +49,7 @@
           };
 
           checks = {
-            nix-compile-test = pkgs.stdenv.mkDerivation {
-              name = "nix-compile-test";
-              src = ./.;
-              nativeBuildInputs = [
-                nix-compile
-                haskellPackages.ghc
-              ];
-              buildPhase = ''
-                runHook preBuild
-                # Run the test suite
-                ${nix-compile}/bin/nix-compile --help > /dev/null
-                runHook postBuild
-              '';
-              installPhase = ''
-                runHook preInstall
-                touch $out
-                runHook postInstall
-              '';
-            };
+            nix-compile-test = pkgs.haskell.lib.doCheck nix-compile;
           };
 
           devShells.default = pkgs.mkShell {

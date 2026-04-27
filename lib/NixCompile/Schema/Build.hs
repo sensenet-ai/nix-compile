@@ -11,6 +11,7 @@
 module NixCompile.Schema.Build
   ( buildSchema,
     resolveType,
+    wasDefaulted,
   )
 where
 
@@ -25,14 +26,17 @@ import NixCompile.Types
 -- | Build schema from facts and type substitution
 buildSchema :: [Fact] -> Subst -> Schema
 buildSchema facts subst =
-  Schema
-    { schemaEnv = buildEnvSchema facts subst,
-      schemaConfig = buildConfigSchema facts subst,
-      schemaCommands = buildCommandSchema facts,
-      schemaStorePaths = collectStorePaths facts,
-      schemaBareCommands = collectBareCommands facts,
-      schemaDynamicCommands = collectDynamicCommands facts
-    }
+  let envSchema = buildEnvSchema facts subst
+      defaulted = filter (wasDefaulted subst) (Map.keys envSchema)
+   in Schema
+        { schemaEnv = envSchema,
+          schemaConfig = buildConfigSchema facts subst,
+          schemaCommands = buildCommandSchema facts,
+          schemaStorePaths = collectStorePaths facts,
+          schemaBareCommands = collectBareCommands facts,
+          schemaDynamicCommands = collectDynamicCommands facts,
+          schemaDefaultedVars = defaulted
+        }
 
 -- | Build environment variable schema
 buildEnvSchema :: [Fact] -> Subst -> Map Text EnvSpec
@@ -98,14 +102,24 @@ collectBareCommands facts = [cmd | BareCommand cmd _ <- facts]
 collectDynamicCommands :: [Fact] -> [Text]
 collectDynamicCommands facts = [var | DynamicCommand var _ <- facts]
 
--- | Resolve a variable's type from substitution
+-- | Resolve a variable's type from substitution.
+-- Returns the resolved type and whether a default was applied (TVar -> TString).
 resolveType :: Subst -> Text -> Type
 resolveType subst var =
   applyDefaults (applySubst subst (TVar (TypeVar var)))
 
--- | Apply defaults: TNumeric -> TInt, TVar -> TString
+-- | Check whether a variable's type was defaulted (unresolved TVar -> TString).
+wasDefaulted :: Subst -> Text -> Bool
+wasDefaulted subst var =
+  case applySubst subst (TVar (TypeVar var)) of
+    TVar _ -> True
+    _ -> False
+
+-- | Apply defaults: TNumeric -> TInt, TVar -> TString.
+-- Unresolved type variables become TString as a conservative default.
+-- Use 'wasDefaulted' to detect when this occurs.
 applyDefaults :: Type -> Type
 applyDefaults = \case
   TNumeric -> TInt
-  TVar _ -> TString -- unresolved becomes string
+  TVar _ -> TString -- unresolved becomes string (conservative)
   t -> t

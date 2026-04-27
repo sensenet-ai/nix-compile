@@ -169,15 +169,17 @@ configFactsFromParts sp parts =
         _ -> []
 
 -- | Find value tokens and determine if quoted
--- Returns the tokens representing the value and whether it was quoted
+-- Returns the tokens representing the value and whether it was quoted.
+-- Detects '=' anywhere in a literal token (not just suffix), handling
+-- cases where ShellCheck tokenizes "key=" or "=" as separate tokens.
 findValueTokens :: [SA.Token] -> ([SA.Token], Quoted)
 findValueTokens parts = loop parts False
   where
     loop [] _ = ([], Unquoted)
     loop (t@(SA.OuterToken _ inner) : rest) seenEq = case inner of
       SA.Inner_T_Literal s
-        | "=" `T.isSuffixOf` (T.pack s) ->
-            -- We've hit the "=" in "config.x.y=", value starts next
+        | not seenEq && "=" `T.isInfixOf` (T.pack s) ->
+            -- Token contains "=" — we've hit or passed the assignment operator
             loop rest True
       SA.Inner_T_DoubleQuoted _
         | seenEq ->

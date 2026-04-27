@@ -30,7 +30,6 @@ module NixCompile.Nix.Flake
   )
 where
 
-import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
@@ -45,6 +44,7 @@ import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
 import NixCompile.Nix.Types
+import NixCompile.Nix.Utils (varNameText)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
@@ -408,7 +408,3 @@ extractBoolLit :: NExprLoc -> Maybe Bool
 extractBoolLit expr = case unwrapExpr expr of
   NConstant (NBool b) -> Just b
   _ -> Nothing
-
--- | Extract text from VarName
-varNameText :: VarName -> Text
-varNameText = coerce

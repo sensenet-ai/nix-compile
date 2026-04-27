@@ -336,7 +336,10 @@ data Schema = Schema
     schemaCommands :: ![CommandSpec],
     schemaStorePaths :: !(Set StorePath),
     schemaBareCommands :: ![Text],
-    schemaDynamicCommands :: ![Text]
+    schemaDynamicCommands :: ![Text],
+    -- | Variables whose types were unresolved and defaulted to TString.
+    -- Non-empty indicates the solver had insufficient constraints.
+    schemaDefaultedVars :: ![Text]
   }
   deriving stock (Eq, Show, Generic)
 
@@ -352,7 +355,8 @@ emptySchema =
       schemaCommands = [],
       schemaStorePaths = Set.empty,
       schemaBareCommands = [],
-      schemaDynamicCommands = []
+      schemaDynamicCommands = [],
+      schemaDefaultedVars = []
     }
 
 -- | Merge two schemas (for composition)
@@ -364,7 +368,8 @@ mergeSchemas s1 s2 =
       schemaCommands = schemaCommands s1 ++ schemaCommands s2,
       schemaStorePaths = schemaStorePaths s1 `Set.union` schemaStorePaths s2,
       schemaBareCommands = schemaBareCommands s1 ++ schemaBareCommands s2,
-      schemaDynamicCommands = schemaDynamicCommands s1 ++ schemaDynamicCommands s2
+      schemaDynamicCommands = schemaDynamicCommands s1 ++ schemaDynamicCommands s2,
+      schemaDefaultedVars = schemaDefaultedVars s1 ++ schemaDefaultedVars s2
     }
 
 -- ============================================================================

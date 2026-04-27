@@ -317,15 +317,76 @@ fromNixExpr mpath expr =
 fromNixFile :: FilePath -> NExprLoc -> ScopeGraph
 fromNixFile = fromNixExpr . Just
 
--- | Build scope graph from an already-built module graph.
+-- | Build a unified scope graph from an already-built module graph.
+-- Each file gets its own scope graph, then we merge all scopes into a single
+-- graph with import edges connecting file roots.
 fromModuleGraph :: Map FilePath NExprLoc -> ScopeGraph
-fromModuleGraph modules =
-  -- TODO: Build a unified scope graph with import edges between files
-  -- For now, just process each file independently
-  let graphs = Map.mapWithKey fromNixFile modules
-   in case Map.elems graphs of
-        [] -> empty
-        (g : _) -> g -- Return first for now
+fromModuleGraph modules
+  | Map.null modules = empty
+  | otherwise =
+      let fileGraphs = Map.mapWithKey fromNixFile modules
+          -- Merge all file scope graphs, remapping IDs to avoid collisions
+          (merged, fileRoots) = mergeGraphs (Map.elems fileGraphs)
+          -- Add import edges between file roots
+          withImports = addImportEdges merged fileRoots
+       in withImports
+
+-- | Merge multiple scope graphs into one, remapping scope IDs.
+-- Returns the merged graph and the list of root scope IDs (one per file).
+mergeGraphs :: [ScopeGraph] -> (ScopeGraph, [ScopeId])
+mergeGraphs [] = (empty, [])
+mergeGraphs graphs =
+  let (finalGraph, _, roots) = foldl mergeOne (empty, sgNextId empty, []) graphs
+   in (finalGraph, reverse roots)
+  where
+    mergeOne (acc, nextId, roots) sg =
+      let offset = nextId - unScopeId (sgRoot sg)
+          remap sid = ScopeId (unScopeId sid + offset)
+          remappedScopes =
+            Map.fromList
+              [ (remap sid, remapScope remap scope)
+              | (sid, scope) <- Map.toList (sgScopes sg)
+              ]
+          newRoot = remap (sgRoot sg)
+          maxId =
+            if Map.null remappedScopes
+              then nextId
+              else maximum (map (unScopeId . fst) (Map.toList remappedScopes)) + 1
+          acc' =
+            acc
+              { sgScopes = Map.union (sgScopes acc) remappedScopes,
+                sgNextId = maxId,
+                sgFile = sgFile acc <|> sgFile sg
+              }
+       in (acc', maxId, newRoot : roots)
+
+    remapScope remap s =
+      s
+        { scopeId = remap (scopeId s),
+          scopeDeclarations = map (remapDecl remap) (scopeDeclarations s),
+          scopeReferences = map (remapRef remap) (scopeReferences s),
+          scopeEdges = map (remapEdge remap) (scopeEdges s)
+        }
+    remapDecl remap d = d {declScope = remap (declScope d), declAssocScope = fmap remap (declAssocScope d)}
+    remapRef remap r = r {refScope = remap (refScope r)}
+    remapEdge remap e = e {edgeSource = remap (edgeSource e), edgeTarget = remap (edgeTarget e)}
+
+    (<|>) Nothing b = b
+    (<|>) a _ = a
+
+-- | Add import edges from a global root to each file's root scope.
+addImportEdges :: ScopeGraph -> [ScopeId] -> ScopeGraph
+addImportEdges sg [] = sg
+addImportEdges sg [single] = sg {sgRoot = single}
+addImportEdges sg fileRoots =
+  -- Create a global root that connects to all file roots via Import edges
+  let globalRoot = ScopeId (sgNextId sg)
+      globalScope = Scope globalRoot [] [] (map (\fr -> Edge globalRoot fr Import) fileRoots) FileScope
+   in sg
+        { sgScopes = Map.insert globalRoot globalScope (sgScopes sg),
+          sgRoot = globalRoot,
+          sgNextId = sgNextId sg + 1
+        }
 
 -- | Build scope graph from a Nix expression.
 buildExpr :: NExprLoc -> Build ()

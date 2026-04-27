@@ -40,10 +40,11 @@ import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types hiding (Binding)
 import Nix.Expr.Types qualified as Nix
-import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, SrcSpan (..), nullSpan)
+import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, nullSpan)
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
 import NixCompile.Nix.Types
+import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- ============================================================================
@@ -733,10 +734,6 @@ atomType = \case
   NNull -> TNull
   NURI _ -> TString
 
--- | Extract text from VarName
-varNameText :: VarName -> Text
-varNameText = coerce
-
 -- ============================================================================
 -- Results
 -- ============================================================================
@@ -762,15 +759,6 @@ inferExpr expr =
   runInfer $ do
     t <- infer builtinEnv expr
     applyCurrentSubst t
-
--- | Convert SrcSpan to Span
-srcSpanToSpan :: SrcSpan -> Span
-srcSpanToSpan (SrcSpan begin end) =
-  let fileFromBegin = case begin of
-        NSourcePos path _ _ -> Just (coerce path)
-   in Span (toLoc begin) (toLoc end) fileFromBegin
-  where
-    toLoc (NSourcePos _ l c) = Loc (unPos (coerce l)) (unPos (coerce c))
 
 -- | Convert NSourcePos to Span (start point only)
 posToSpan :: Nix.NSourcePos -> Span

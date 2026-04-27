@@ -38,17 +38,17 @@ module NixCompile.Nix.Parse
   )
 where
 
-import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc, parseNixTextLoc)
 import Nix.Utils (Path (..))
-import NixCompile.Types (Loc (..), Span (..))
+import NixCompile.Nix.Utils (toSpan, varNameText)
+import NixCompile.Types (Span (..))
 
 -- | A bash script extracted from a Nix file
 data BashScript = BashScript
@@ -172,7 +172,7 @@ isStorePathExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
   _ -> False
   where
     isPackageBase (Fix (Compose (AnnUnit _ (NSym n)))) = varNameText n `elem` ["pkgs", "lib"]
-    isPackageBase (Fix (Compose (AnnUnit _ (NSelect _ b _ )))) = isPackageBase b
+    isPackageBase (Fix (Compose (AnnUnit _ (NSelect _ b _)))) = isPackageBase b
     isPackageBase _ = False
 
     keyTextIs name (StaticKey k) = varNameText k == name
@@ -183,10 +183,6 @@ isStorePathExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
         || T.isPrefixOf "lib" name
         || T.isSuffixOf "Pkg" name
         || T.isSuffixOf "Package" name
-
--- | Extract text from VarName newtype
-varNameText :: VarName -> Text
-varNameText = coerce
 
 -- | Get a simple text representation of an expression
 prettyExpr :: NExprLoc -> Text
@@ -212,27 +208,6 @@ prettyExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
 -- | Get the source span of an expression
 exprSpan :: NExprLoc -> Span
 exprSpan (Fix (Compose (AnnUnit srcSpan _))) = toSpan srcSpan Nothing
-
--- | Convert hnix source span to our Span type
-toSpan :: SrcSpan -> Maybe FilePath -> Span
-toSpan srcSpan mFile =
-  let
-    begin = getSpanBegin srcSpan
-    end = getSpanEnd srcSpan
-    fileFromBegin = case begin of
-      NSourcePos path _ _ -> Just (coerce path)
-    sp = Span
-      { spanStart = Loc (sourceLine begin) (sourceCol begin)
-      , spanEnd = Loc (sourceLine end) (sourceCol end)
-      , spanFile = fileFromBegin
-      }
-  in
-    case mFile of
-      Just f -> sp { spanFile = Just f }
-      Nothing -> sp
-  where
-    sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-    sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
 
 -- | Find all writeShellScript* calls in an expression
 findShellScriptCalls :: NExprLoc -> [ShellScriptCall]
@@ -301,9 +276,9 @@ findShellScriptCalls = go
       NSet _ bindings ->
         let nameVal = findBinding "name" bindings >>= extractStringLit
             textVal = findBinding "text" bindings
-        in case (nameVal, textVal) of
-          (Just n, Just t) -> Just (n, t)
-          _ -> Nothing
+         in case (nameVal, textVal) of
+              (Just n, Just t) -> Just (n, t)
+              _ -> Nothing
       _ -> Nothing
 
     -- Find a binding by name in a binding list
