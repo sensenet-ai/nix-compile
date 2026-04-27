@@ -1621,6 +1621,20 @@ prop_e2e_store_paths =
         Left _ -> False
         Right s -> not (Set.null (schemaStorePaths (scriptSchema s)))
 
+-- | Prefix-conflicting config paths are rejected instead of silently dropping data
+prop_e2e_config_prefix_conflict :: Bool
+prop_e2e_config_prefix_conflict =
+  let script =
+        T.unlines
+          [ "A=\"${A:-one}\"",
+            "B=\"${B:-2}\"",
+            "config.server=\"$A\"",
+            "config.server.port=$B"
+          ]
+   in case parseScript script of
+        Left err -> "conflicting config paths" `T.isInfixOf` err
+        Right _ -> False
+
 -- ============================================================================
 -- Properties: Edge cases
 -- ============================================================================
@@ -1931,6 +1945,7 @@ main = do
         run "e2e_type_conflict" prop_e2e_type_conflict,
         run "e2e_empty_script" prop_e2e_empty_script,
         run "e2e_store_paths" prop_e2e_store_paths,
+        run "e2e_config_prefix_conflict" prop_e2e_config_prefix_conflict,
         -- Edge cases
         run "edge_comments_only" prop_edge_comments_only,
         run "edge_long_varname" prop_edge_long_varname,

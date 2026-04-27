@@ -12,9 +12,11 @@ module NixCompile.Schema.Build
   ( buildSchema,
     resolveType,
     wasDefaulted,
+    validateConfigPaths,
   )
 where
 
+import Data.List (tails)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Set (Set)
@@ -22,6 +24,28 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Types
+
+-- | Validate config paths before building a tree.
+-- A config tree cannot represent a path as both a leaf and a branch:
+--   config.server="$HOST"
+--   config.server.port=$PORT
+-- Reject these prefix conflicts instead of silently dropping one side.
+validateConfigPaths :: [Fact] -> Either Text ()
+validateConfigPaths facts =
+  case [(a, b) | (a : rest) <- tails paths, b <- rest, conflicts a b] of
+    [] -> Right ()
+    ((a, b) : _) ->
+      Left $ "conflicting config paths: " <> pathText a <> " and " <> pathText b
+  where
+    paths = [p | ConfigAssign p _ _ _ <- facts] ++ [p | ConfigLit p _ _ <- facts]
+
+    conflicts a b = a /= b && (a `isPrefixOfPath` b || b `isPrefixOfPath` a)
+
+    isPrefixOfPath [] _ = True
+    isPrefixOfPath _ [] = False
+    isPrefixOfPath (x : xs) (y : ys) = x == y && isPrefixOfPath xs ys
+
+    pathText = T.intercalate "."
 
 -- | Build schema from facts and type substitution
 buildSchema :: [Fact] -> Subst -> Schema

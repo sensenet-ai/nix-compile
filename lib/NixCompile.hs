@@ -48,7 +48,7 @@ import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
-import NixCompile.Schema.Build (buildSchema)
+import NixCompile.Schema.Build (buildSchema, validateConfigPaths)
 import NixCompile.Types
 
 -- | Parse a bash script and extract its schema.
@@ -78,6 +78,7 @@ parseScriptWithFile mFile src = do
   let facts0 = extractFacts ast
       facts = attachFileToFacts mFile facts0
       constraints = factsToConstraints facts
+  validateConfigPaths facts
   subst <- case solve constraints of
     Left err -> Left (T.pack (show err))
     Right s -> Right s

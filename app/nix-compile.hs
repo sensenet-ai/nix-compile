@@ -51,6 +51,7 @@ import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified
+import NixCompile.Schema.Build (validateConfigPaths)
 import System.Directory (canonicalizePath, doesDirectoryExist, listDirectory)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
@@ -215,6 +216,11 @@ cmdCheck file = do
 
       -- Then do type inference and check policy violations
       let facts = extractFacts ast
+      case validateConfigPaths facts of
+        Left err -> do
+          $(logTM) ErrorS $ logStr $ "Config error: " <> err
+          liftIO exitFailure
+        Right () -> pure ()
       let constraints = factsToConstraints facts
       case solve constraints of
         Left err -> do
@@ -301,6 +307,11 @@ cmdNix file = do
 
           -- Type inference and policy checks
           let facts = extractFacts ast
+          configErrors <- case validateConfigPaths facts of
+            Left err -> do
+              $(logTM) ErrorS $ logStr $ "  Config error: " <> err
+              return 1
+            Right () -> pure 0
           let constraints = factsToConstraints facts
           typeErrors <- case solve constraints of
             Left err -> do
@@ -323,7 +334,7 @@ cmdNix file = do
             let srcLabel = T.pack file <> ":" <> Nix.bsName bs
             liftIO $ mapM_ (TIO.putStr . indentBlock "  " . formatDynamicCommand srcLabel) dynFacts
 
-          let errorCount = length violations + bareCount + dynCount + typeErrors
+          let errorCount = length violations + bareCount + dynCount + typeErrors + configErrors
           if errorCount == 0
             then $(logTM) InfoS "  OK"
             else $(logTM) ErrorS $ logStr $ T.pack $ "  " ++ show errorCount ++ " error(s)"
