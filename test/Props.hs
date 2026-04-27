@@ -1380,6 +1380,15 @@ prop_emit_bool_preflight_guard =
       output = emitConfigFunction schema
    in "must be true or false" `T.isInfixOf` output
 
+-- | Quoted config vars are emitted as strings and should not receive numeric/bool validators
+prop_emit_quoted_numeric_no_int_guard :: Bool
+prop_emit_quoted_numeric_no_int_guard =
+  let spec = ConfigSpec TInt (Just "PORT") (Just Quoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
+      output = emitConfigFunction schema
+   in not ("__nix_compile_require_int \"PORT\"" `T.isInfixOf` output)
+        && ": \"${PORT:?PORT is required}\"" `T.isInfixOf` output
+
 -- | emit-config must not mutate caller shell options (e.g. leak set -e)
 prop_emit_no_set_e_leak :: Bool
 prop_emit_no_set_e_leak =
@@ -1923,6 +1932,7 @@ main = do
         run "emit_preflight_guard" prop_emit_preflight_guard,
         run "emit_numeric_preflight_guard" prop_emit_numeric_preflight_guard,
         run "emit_bool_preflight_guard" prop_emit_bool_preflight_guard,
+        run "emit_quoted_numeric_no_int_guard" prop_emit_quoted_numeric_no_int_guard,
         run "emit_no_set_e_leak" prop_emit_no_set_e_leak,
         run "emit_runtime_escape_controls" prop_emit_runtime_escape_controls,
         run "emit_yaml_guarded" prop_emit_yaml_guarded,

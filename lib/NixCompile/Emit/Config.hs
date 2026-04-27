@@ -205,13 +205,19 @@ renderRuntimeGuards schema =
       cfgFrom spec /= Nothing
     ]
   where
-    renderGuard ConfigSpec {cfgFrom = Just var, cfgType = ty} =
-      case ty of
-        TInt -> "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
-        TNumeric -> "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
-        TBool -> "  __nix_compile_require_bool \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
-        _ -> "  : \"${" <> var <> ":?" <> var <> " is required}\""
+    renderGuard ConfigSpec {cfgFrom = Just var, cfgType = ty, cfgQuoted = quoted} =
+      if quoted == Just Quoted
+        then presenceGuard var
+        else case ty of
+          TInt -> intGuard var
+          TNumeric -> intGuard var
+          TBool -> boolGuard var
+          _ -> presenceGuard var
     renderGuard _ = ""
+
+    presenceGuard var = "  : \"${" <> var <> ":?" <> var <> " is required}\""
+    intGuard var = "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+    boolGuard var = "  __nix_compile_require_bool \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
 
 -- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text
