@@ -1,0 +1,12 @@
+[book]
+title = "nix-compile"
+authors = ["Aleph Systems"]
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/sensenet-ai/nix-compile"
+edit-url-template = "https://github.com/sensenet-ai/nix-compile/edit/main/doc/{path}"
