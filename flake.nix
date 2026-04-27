@@ -80,6 +80,7 @@
               hlint
               ormolu
               jq
+              mdbook
             ];
             shellHook = ''
               echo "nix-compile development shell"
@@ -97,6 +98,21 @@
             nix-compile = {
               type = "app";
               program = "${nix-compile}/bin/nix-compile";
+            };
+            doc = {
+              type = "app";
+              program =
+                let
+                  script = pkgs.writeShellScript "nix-compile-doc" ''
+                    dir=$(mktemp -d)
+                    trap "rm -rf $dir" EXIT
+                    cp -r ${./doc}/* "$dir/"
+                    chmod -R u+w "$dir"
+                    echo "serving docs at http://localhost:3000"
+                    exec ${pkgs.mdbook}/bin/mdbook serve "$dir"
+                  '';
+                in
+                "${script}";
             };
           };
         };
