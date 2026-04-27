@@ -1378,6 +1378,14 @@ prop_emit_bool_preflight_guard =
       output = emitConfigFunction schema
    in "must be true or false" `T.isInfixOf` output
 
+-- | runtime JSON escaper handles all JSON control escapes, not just newline/tab
+prop_emit_runtime_escape_controls :: Bool
+prop_emit_runtime_escape_controls =
+  let output = emitConfigFunction emptySchema
+   in "$'\\b'" `T.isInfixOf` output
+        && "$'\\f'" `T.isInfixOf` output
+        && "\\\\u%04x" `T.isInfixOf` output
+
 -- | emit-config YAML contains ${VAR:?} guards
 prop_emit_yaml_guarded :: Property
 prop_emit_yaml_guarded =
@@ -1893,6 +1901,7 @@ main = do
         run "emit_preflight_guard" prop_emit_preflight_guard,
         run "emit_numeric_preflight_guard" prop_emit_numeric_preflight_guard,
         run "emit_bool_preflight_guard" prop_emit_bool_preflight_guard,
+        run "emit_runtime_escape_controls" prop_emit_runtime_escape_controls,
         run "emit_yaml_guarded" prop_emit_yaml_guarded,
         run "emit_toml_no_null" prop_emit_toml_no_null,
         run "emit_json_literal" prop_emit_json_literal,
