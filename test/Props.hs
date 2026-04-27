@@ -1380,6 +1380,12 @@ prop_emit_bool_preflight_guard =
       output = emitConfigFunction schema
    in "must be true or false" `T.isInfixOf` output
 
+-- | emit-config must not mutate caller shell options (e.g. leak set -e)
+prop_emit_no_set_e_leak :: Bool
+prop_emit_no_set_e_leak =
+  let output = emitConfigFunction emptySchema
+   in not ("set -e" `T.isInfixOf` output)
+
 -- | runtime JSON escaper handles all JSON control escapes, not just newline/tab
 prop_emit_runtime_escape_controls :: Bool
 prop_emit_runtime_escape_controls =
@@ -1917,6 +1923,7 @@ main = do
         run "emit_preflight_guard" prop_emit_preflight_guard,
         run "emit_numeric_preflight_guard" prop_emit_numeric_preflight_guard,
         run "emit_bool_preflight_guard" prop_emit_bool_preflight_guard,
+        run "emit_no_set_e_leak" prop_emit_no_set_e_leak,
         run "emit_runtime_escape_controls" prop_emit_runtime_escape_controls,
         run "emit_yaml_guarded" prop_emit_yaml_guarded,
         run "emit_toml_no_null" prop_emit_toml_no_null,
