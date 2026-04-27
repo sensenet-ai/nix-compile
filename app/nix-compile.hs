@@ -411,7 +411,7 @@ cmdTypeCheck path = do
                         ([], [])
                         entries
                     go (nixFiles ++ found) (Set.insert canon visited) (subdirs ++ worklist)
-      go [] (Set.singleton canonRoot) [root]
+      go [] Set.empty [root]
 
     checkFileWrapper :: (LogEnv, LogContexts, Namespace) -> FilePath -> IO TCResult
     checkFileWrapper (le, ctx, ns) file = runKatipContextT le ctx ns (checkFile file)
