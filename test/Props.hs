@@ -1354,6 +1354,14 @@ prop_emit_json_runtime_args =
       output = emitConfigJson schema
    in property $ "%s" `T.isInfixOf` output && " \"${PORT:?" `T.isInfixOf` output
 
+-- | emit-config function performs preflight guards outside command substitutions
+prop_emit_preflight_guard :: Bool
+prop_emit_preflight_guard =
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
+      output = emitConfigFunction schema
+   in ": \"${PORT:?PORT is required}\"" `T.isInfixOf` output
+
 -- | emit-config YAML contains ${VAR:?} guards
 prop_emit_yaml_guarded :: Property
 prop_emit_yaml_guarded =
@@ -1866,6 +1874,7 @@ main = do
         -- Emit-config output
         run "emit_json_guarded" prop_emit_json_guarded,
         run "emit_json_runtime_args" prop_emit_json_runtime_args,
+        run "emit_preflight_guard" prop_emit_preflight_guard,
         run "emit_yaml_guarded" prop_emit_yaml_guarded,
         run "emit_toml_no_null" prop_emit_toml_no_null,
         run "emit_json_literal" prop_emit_json_literal,
