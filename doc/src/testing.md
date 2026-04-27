@@ -1,6 +1,6 @@
 # Testing
 
-nix-compile has four test suites with ~90 property tests and ~10 integration tests.
+nix-compile has four test suites with 114 property tests and 10 integration tests.
 
 ## Running tests
 
@@ -21,31 +21,31 @@ cabal test nix-compile-flake-parts
 
 ### `nix-compile-test` (Props.hs + Adversarial.hs)
 
-56 QuickCheck property tests covering:
+114 QuickCheck property tests across 21 categories:
 
-**Algebraic properties:**
-- Unification: reflexive, symmetric, valid substitution, self-trivial, concrete disjoint, TVar universal
-- Substitution: composition associativity, empty identity, single application
-- Constraint solving: empty, reflexive, satisfies, deterministic
-- Fact/constraint: deterministic, default generates one constraint, required generates none
-
-**Schema properties:**
-- Deterministic, env-complete, preserves defaults, required marked
-
-**Parser safety:**
-- No crash on arbitrary input, deterministic, handles empty/comments
-
-**Pattern matching:**
-- Default expansion, required expansion, simple expansion, numeric/alpha discrimination
-
-**Scope graph:**
-- Parent edges resolve before With edges
-
-**Overlay algebra:**
-- Identity (left/right), associativity, satisfaction, propagation
-
-**Stress tests:**
-- Large scripts (50-200 lines), many variables (20-50), deep config paths (3-8 levels), chained references
+| Category | Count | What it tests |
+|----------|-------|---------------|
+| Type algebra | 9 | Reflexive, symmetric, valid subst, order-independent solving |
+| Constraints | 4 | Empty identity, reflexive, satisfaction, order-independence |
+| Fact extraction | 5 | DefaultIs, Required, AssignFrom, ConfigAssign, ConfigLit vectors |
+| Schema building | 8 | Complete, defaults, required, defaulted-vars diagnostic |
+| Merge correctness | 4 | Required preserved, default kept, duplicate merged, identity law |
+| Parser | 4 | Labeled success/failure, deterministic, empty, comments |
+| Pattern matching | 5 | Default, required, simple, numeric, alpha rejection |
+| Builtins | 6 | Database integrity, known flags, unknown handling |
+| Config tree | 2 | Completeness (conflict-free), deterministic |
+| Scope graph | 7 | Priority, let/attrset/func/with/var construction, cross-file merge |
+| Nix inference | 10 | Totality, determinism, all literal types, lists, attrsets, functions, let |
+| Nix lint | 3 | `with` detected, `rec` detected, clean passes |
+| Bash lint | 3 | Heredoc, backtick detected, clean passes |
+| Emit-config | 8 | `${VAR:?}` guards, no null, literal, string quoted, balanced braces, no heredoc, nested |
+| Format | 4 | Simple annotation, preserves source, function annotation, no-crash |
+| E2E integration | 5 | Config extraction, required vars, type conflicts, empty, store paths |
+| Edge cases | 4 | Comments-only, long names, deep config, all fact types |
+| Bash AST | 4 | Arithmetic, subshell, pipe, for-loop body extraction |
+| Overlay algebra | 5 | Identity, associativity, satisfaction, propagation |
+| Stress | 4 | Large scripts (structural), many vars (>0), deep config, chains |
+| Literals | 3 | Int/bool roundtrip, type consistency |
 
 ### `nix-compile-fixtures` (Fixtures.hs)
 
@@ -70,8 +70,14 @@ Integration tests against real-world scripts:
 
 The property tests follow an adversarial philosophy:
 
-1. **Generators produce hostile input** -- injection attempts, overflow integers, malformed expansions, path traversal, Unicode in variable names
-2. **Properties assert invariants** -- algebraic laws, parser totality, security boundaries, specification conformance
-3. **Test vectors pin known behavior** -- specific expansion parses, literal types, overflow handling
+1. **No tautologies** -- every property asserts something structural about successful results, not just "no exception." Tests that previously followed `Left _ -> True; Right _ -> True` have been replaced with labeled assertions on output structure.
+
+2. **Generators produce hostile input** -- injection attempts, overflow integers, malformed expansions, path traversal, Unicode in variable names. Bash generators include conditionals (`if/then/fi`), loops (`for/do/done`), pipes, and subshells. Nix generators include list concat (`++`), attrset merge (`//`), and nested let.
+
+3. **Properties assert invariants** -- algebraic laws (unification reflexivity/symmetry, substitution composition, overlay monoid laws), structural properties (balanced JSON braces, non-empty facts), and correctness vectors (specific bash patterns produce specific facts).
+
+4. **Test vectors pin known behavior** -- specific expansion parses, literal types, overflow handling, merge semantics.
+
+5. **Order-independence** -- constraint solving is tested against reversed input to catch order-dependent bugs.
 
 The `Adversarial.hs` module contains additional security-focused properties (injection blocking, store path traversal rejection, bounded resource tests) that run alongside the main property suite.

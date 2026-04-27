@@ -22,4 +22,4 @@ nix-compile sits in the build pipeline and catches bugs *before* runtime:
 
 ## Project status
 
-The bash analysis pipeline is complete and battle-tested with QuickCheck property tests. The Nix type inference handles most of the language. The scope graph works for single files; cross-file analysis is in progress. See [Bug Tracker](./bugs.md) for the full status.
+114 QuickCheck properties across 21 categories, plus 10 fixture integration tests. Zero open bugs. The bash analysis pipeline, Nix type inference, scope graph resolution, emit-config generation, and policy enforcement are all tested and working. See [Testing](./testing.md) for the full breakdown and [Bug Tracker](./bugs.md) for the audit trail.

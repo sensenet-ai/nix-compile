@@ -55,5 +55,5 @@ Outputs a Dhall expression matching the schema in `dhall/ScopeGraph.dhall`, for 
 - Single-file scope graph construction: **working**
 - Priority-based resolution: **working** (Parent > Import > With)
 - `with` scoping: **working** (separate expression scope and body scope)
-- Cross-file analysis: **in progress** (`fromModuleGraph` is a stub)
+- Cross-file analysis: **working** (`fromModuleGraph` merges graphs with ID remapping and import edges)
 - `findReferences`: **working** (verifies resolution, not just name matching)
