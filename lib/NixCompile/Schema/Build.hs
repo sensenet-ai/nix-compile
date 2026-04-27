@@ -61,10 +61,10 @@ buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
       _ -> []
 
 -- | Build config schema
--- Uses fromListWith to handle duplicate paths: later assignments win
--- (matching bash runtime semantics where last assignment takes effect).
+-- Uses Map.fromList which keeps the last entry for duplicate keys,
+-- matching bash runtime semantics where the last assignment wins.
 buildConfigSchema :: [Fact] -> Subst -> Map ConfigPath ConfigSpec
-buildConfigSchema facts subst = Map.fromListWith (\new _old -> new) (concatMap go facts)
+buildConfigSchema facts subst = Map.fromList (concatMap go facts)
   where
     go = \case
       ConfigAssign path var quoted sp ->

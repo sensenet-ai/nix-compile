@@ -23,13 +23,14 @@ module NixCompile.Nix.Format
   )
 where
 
+import Control.Exception (IOException, try)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
+import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixFileLoc, parseNixTextLoc)
-import qualified Nix.Utils as Nix
-import NixCompile.Nix.Infer (inferExpr, InferResult(..))
+import Nix.Utils qualified as Nix
+import NixCompile.Nix.Infer (InferResult (..), inferExpr)
 import NixCompile.Nix.Pretty (annotateSource)
 
 -- ============================================================================
@@ -40,8 +41,13 @@ import NixCompile.Nix.Pretty (annotateSource)
 formatFile :: FilePath -> IO (Either Text Text)
 formatFile path = do
   -- Read original source
-  src <- TIO.readFile path
-  
+  readResult <- try (TIO.readFile path)
+  case readResult of
+    Left (e :: IOException) -> return $ Left $ T.pack $ show e
+    Right src -> formatFile' path src
+
+formatFile' :: FilePath -> Text -> IO (Either Text Text)
+formatFile' path src = do
   -- Parse and extract annotations
   result <- parseNixFileLoc (Nix.Path path)
   case result of
@@ -56,9 +62,9 @@ formatExpr src = case parseNixTextLoc src of
 
 -- | Internal formatter using pre-parsed expression
 formatExpr' :: Text -> NExprLoc -> Either Text Text
-formatExpr' src expr = 
+formatExpr' src expr =
   case inferExpr expr of
     Left err -> Left err
-    Right (_, bindings) -> 
+    Right (_, bindings) ->
       let res = InferResult bindings [] -- We don't track top-level functions separately here
-      in Right $ annotateSource src res
+       in Right $ annotateSource src res

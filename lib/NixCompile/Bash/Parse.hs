@@ -1,31 +1,34 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module NixCompile.Bash.Parse
   ( parseBash,
     parseBashWithFilename,
     parseBashFile,
-    BashAST(..),
+    BashAST (..),
   )
 where
 
+import Control.Exception (IOException, try)
 import Control.Monad.Identity (Identity, runIdentity)
-import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import qualified Data.Text.IO as TIO
-import qualified ShellCheck.AST as SA
+import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
+import ShellCheck.AST qualified as SA
 import ShellCheck.Interface
   ( ParseResult (..),
     ParseSpec (..),
+    Position (..),
     SystemInterface (..),
     newParseSpec,
     newSystemInterface,
-    Position(..),
   )
 import ShellCheck.Parser (parseScript)
 
 -- | The AST from ShellCheck with source positions
 data BashAST = BashAST
-  { astRoot :: SA.Token
-  , astPositions :: Map.Map SA.Id (Position, Position)
+  { astRoot :: SA.Token,
+    astPositions :: Map.Map SA.Id (Position, Position)
   }
   deriving (Show, Eq)
 
@@ -58,5 +61,7 @@ parseBashWithFilename filename src =
 -- | Parse a bash file
 parseBashFile :: FilePath -> IO (Either Text BashAST)
 parseBashFile path = do
-  content <- TIO.readFile path
-  return $ parseBashWithFilename path content
+  result <- try (TIO.readFile path)
+  case result of
+    Left (e :: IOException) -> return $ Left $ T.pack $ show e
+    Right content -> return $ parseBashWithFilename path content

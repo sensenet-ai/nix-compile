@@ -730,11 +730,10 @@ prop_scope_parent_before_with =
                 [ ( Scope.ScopeId 0,
                     Scope.Scope
                       (Scope.ScopeId 0)
-                      [declIn (Scope.ScopeId 0)]
+                      [] -- no local decl — resolution must follow edges
                       [refIn (Scope.ScopeId 0)]
-                      [ Scope.Edge (Scope.ScopeId 1) (Scope.ScopeId 0) Scope.Parent,
-                        Scope.Edge (Scope.ScopeId 2) (Scope.ScopeId 0) Scope.Parent,
-                        Scope.Edge (Scope.ScopeId 2) (Scope.ScopeId 0) Scope.With
+                      [ Scope.Edge (Scope.ScopeId 0) (Scope.ScopeId 1) Scope.Parent,
+                        Scope.Edge (Scope.ScopeId 0) (Scope.ScopeId 2) Scope.With
                       ]
                       Scope.FileScope
                   ),
@@ -759,12 +758,9 @@ prop_scope_parent_before_with =
             Scope.sgNextId = 3,
             Scope.sgFile = Nothing
           }
-   in case Scope.resolveAll sg of
+   in case Scope.resolve sg (refIn (Scope.ScopeId 0)) of
+        Right decl -> property (Scope.declScope decl == Scope.ScopeId 1)
         Left _ -> property False
-        Right resolved ->
-          case filter (\(r, _) -> Scope.refName r == "x") resolved of
-            [(_, decl)] -> property (Scope.declScope decl == Scope.ScopeId 1)
-            _ -> property False
 
 -- ============================================================================
 -- MAIN TEST RUNNER

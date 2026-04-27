@@ -38,6 +38,7 @@ import Data.Text qualified as T
 import Nix.Parser (parseNixTextLoc)
 import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
+import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigJson, emitConfigToml, emitConfigYaml)
@@ -498,10 +499,10 @@ genSatisfiableConstraints =
               _ -> pure (t :~: t)
           ]
 
--- | Constraint solving is deterministic
+-- | Constraint solving success/failure is order-independent
 prop_solve_deterministic :: [Constraint] -> Bool
 prop_solve_deterministic constraints =
-  solve constraints == solve constraints
+  isRight (solve constraints) == isRight (solve (reverse constraints))
 
 -- ============================================================================
 -- Properties: Fact -> Constraint
@@ -1166,6 +1167,115 @@ prop_nix_let_binding =
     _ -> False
 
 -- ============================================================================
+-- Properties: Merge correctness
+-- ============================================================================
+
+-- | mergeEnvSpec preserves required from either side
+prop_merge_preserves_required :: Bool
+prop_merge_preserves_required =
+  let sp = Span (Loc 1 0) (Loc 1 0) Nothing
+      e1 = EnvSpec TString False Nothing sp
+      e2 = EnvSpec TString True Nothing sp
+   in envRequired (mergeEnvSpec e1 e2) && envRequired (mergeEnvSpec e2 e1)
+
+-- | mergeEnvSpec keeps first default, falls back to second
+prop_merge_keeps_default :: Bool
+prop_merge_keeps_default =
+  let sp = Span (Loc 1 0) (Loc 1 0) Nothing
+      e1 = EnvSpec TInt False (Just (LitInt 42)) sp
+      e2 = EnvSpec TInt False (Just (LitInt 99)) sp
+      eNone = EnvSpec TInt False Nothing sp
+   in envDefault (mergeEnvSpec e1 e2) == Just (LitInt 42)
+        && envDefault (mergeEnvSpec eNone e2) == Just (LitInt 99)
+
+-- | Duplicate variables in facts are correctly merged
+prop_duplicate_var_merged :: Bool
+prop_duplicate_var_merged =
+  let sp = Span (Loc 1 0) (Loc 1 0) Nothing
+      facts =
+        [ DefaultIs "PORT" (LitInt 8080) sp,
+          Required "PORT" sp
+        ]
+      constraints = factsToConstraints facts
+      subst = case solve constraints of Right s -> s; Left _ -> emptySubst
+      schema = buildSchema facts subst
+   in case Map.lookup "PORT" (schemaEnv schema) of
+        Just spec -> envRequired spec && envDefault spec == Just (LitInt 8080) && envType spec == TInt
+        Nothing -> False
+
+-- | mergeSchemas identity: empty `merge` s == s
+prop_merge_schema_identity :: [Fact] -> Property
+prop_merge_schema_identity facts =
+  let constraints = factsToConstraints facts
+      subst = case solve constraints of Right s -> s; Left _ -> emptySubst
+      schema = buildSchema facts subst
+   in property $ mergeSchemas emptySchema schema == schema
+
+-- ============================================================================
+-- Properties: Fact extraction vectors
+-- ============================================================================
+
+-- | \${VAR:-default} produces DefaultIs fact
+prop_fact_default_is :: Bool
+prop_fact_default_is =
+  case parseBash "PORT=\"${PORT:-8080}\"" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isDefaultIs facts
+    Left _ -> False
+  where
+    isDefaultIs (DefaultIs "PORT" (LitInt 8080) _) = True
+    isDefaultIs _ = False
+
+-- | \${VAR:?} produces Required fact
+prop_fact_required :: Bool
+prop_fact_required =
+  case parseBash "API_KEY=\"${API_KEY:?}\"" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isRequired facts
+    Left _ -> False
+  where
+    isRequired (Required "API_KEY" _) = True
+    isRequired _ = False
+
+-- | \$VAR assignment produces AssignFrom fact
+prop_fact_assign_from :: Bool
+prop_fact_assign_from =
+  case parseBash "COPY=\"$ORIGINAL\"" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isAssignFrom facts
+    Left _ -> False
+  where
+    isAssignFrom (AssignFrom "COPY" "ORIGINAL" _) = True
+    isAssignFrom _ = False
+
+-- | config.x.y=$VAR produces ConfigAssign fact
+prop_fact_config_assign :: Bool
+prop_fact_config_assign =
+  case parseBash "config.server.port=$PORT" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isConfigAssign facts
+    Left _ -> False
+  where
+    isConfigAssign (ConfigAssign ["server", "port"] "PORT" _ _) = True
+    isConfigAssign _ = False
+
+-- | Literal config produces ConfigLit fact
+prop_fact_config_lit :: Bool
+prop_fact_config_lit =
+  case parseBash "config.debug=false" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isConfigLit facts
+    Left _ -> False
+  where
+    isConfigLit (ConfigLit ["debug"] (LitBool False) _) = True
+    isConfigLit _ = False
+
+-- ============================================================================
 -- Properties: Emit-config output
 -- ============================================================================
 
@@ -1552,6 +1662,17 @@ main = do
         run "nix_attrset" prop_nix_attrset,
         run "nix_identity" prop_nix_identity,
         run "nix_let_binding" prop_nix_let_binding,
+        -- Merge correctness
+        run "merge_preserves_required" prop_merge_preserves_required,
+        run "merge_keeps_default" prop_merge_keeps_default,
+        run "duplicate_var_merged" prop_duplicate_var_merged,
+        run "merge_schema_identity" prop_merge_schema_identity,
+        -- Fact extraction vectors
+        run "fact_default_is" prop_fact_default_is,
+        run "fact_required" prop_fact_required,
+        run "fact_assign_from" prop_fact_assign_from,
+        run "fact_config_assign" prop_fact_config_assign,
+        run "fact_config_lit" prop_fact_config_lit,
         -- Emit-config output
         run "emit_json_guarded" prop_emit_json_guarded,
         run "emit_yaml_guarded" prop_emit_yaml_guarded,

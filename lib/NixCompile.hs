@@ -40,15 +40,16 @@ module NixCompile
   )
 where
 
+import Control.Exception (IOException, try)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import NixCompile.Types
-import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
+import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import NixCompile.Bash.Facts (extractFacts)
+import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
 import NixCompile.Schema.Build (buildSchema)
+import NixCompile.Types
 
 -- | Parse a bash script and extract its schema.
 --
@@ -63,8 +64,10 @@ parseScript = parseScriptWithFile Nothing
 -- (best-effort; bash spans are still "token id" based).
 parseScriptFile :: FilePath -> IO (Either Text Script)
 parseScriptFile path = do
-  src <- TIO.readFile path
-  return (parseScriptWithFile (Just path) src)
+  result <- try (TIO.readFile path)
+  case result of
+    Left (e :: IOException) -> return $ Left $ T.pack $ show e
+    Right src -> return (parseScriptWithFile (Just path) src)
 
 -- | Internal worker that allows attaching a file path to spans.
 parseScriptWithFile :: Maybe FilePath -> Text -> Either Text Script
@@ -79,11 +82,12 @@ parseScriptWithFile mFile src = do
     Left err -> Left (T.pack (show err))
     Right s -> Right s
   let schema = buildSchema facts subst
-  Right Script
-    { scriptSource = src,
-      scriptFacts = facts,
-      scriptSchema = schema
-    }
+  Right
+    Script
+      { scriptSource = src,
+        scriptFacts = facts,
+        scriptSchema = schema
+      }
 
 -- | Propagate a file path into all spans, for more useful diagnostics.
 attachFileToFacts :: Maybe FilePath -> [Fact] -> [Fact]
@@ -106,4 +110,3 @@ attachFileToFact mFile = \case
 attachFileToSpan :: Maybe FilePath -> Span -> Span
 attachFileToSpan Nothing sp = sp
 attachFileToSpan (Just file) sp = sp {spanFile = Just file}
-

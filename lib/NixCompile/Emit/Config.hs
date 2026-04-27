@@ -50,9 +50,10 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Types
+import Numeric (showHex)
 
--- | Minimal JSON-style escaping for double-quoted strings.
--- Used for emitting literal config values safely.
+-- | JSON-compliant escaping for double-quoted strings.
+-- Escapes all control characters (U+0000 through U+001F) per JSON spec (RFC 8259).
 jsonEscape :: Text -> Text
 jsonEscape = T.concatMap $ \c -> case c of
   '"' -> "\\\""
@@ -60,7 +61,11 @@ jsonEscape = T.concatMap $ \c -> case c of
   '\n' -> "\\n"
   '\r' -> "\\r"
   '\t' -> "\\t"
-  _ -> T.singleton c
+  '\b' -> "\\b"
+  '\f' -> "\\f"
+  _
+    | c < '\x20' -> "\\u" <> T.justifyRight 4 '0' (T.pack (showHex (fromEnum c) ""))
+    | otherwise -> T.singleton c
 
 -- | Render a literal as JSON
 renderJsonLit :: Literal -> Text
