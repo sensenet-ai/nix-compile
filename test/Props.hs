@@ -35,6 +35,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import Nix.Parser (parseNixTextLoc)
 import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Parse (parseBash)
@@ -43,6 +44,7 @@ import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.Nix.Effect
+import NixCompile.Nix.Infer (Binding, inferExpr)
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
@@ -985,6 +987,183 @@ prop_overlay_propagation n1 n2 =
      in Set.member (RequireUpstream n2 t) (osCoeffects m)
 
 -- ============================================================================
+-- Properties: Nix type inference (FIX-11)
+-- ============================================================================
+
+-- | Generate valid Nix expression source text.
+-- Avoids `with`, `rec`, dynamic attrs (which are skipped by inference).
+genNixExpr :: Int -> Gen Text
+genNixExpr 0 = genNixAtom
+genNixExpr n =
+  frequency
+    [ (4, genNixAtom),
+      (2, genNixList n),
+      (2, genNixAttrSet n),
+      (2, genNixLet n),
+      (1, genNixFunc n),
+      (1, genNixIf n),
+      (1, genNixApp n),
+      (1, genNixBinOp n)
+    ]
+
+genNixAtom :: Gen Text
+genNixAtom =
+  oneof
+    [ T.pack . show <$> (choose (0, 1000) :: Gen Int),
+      pure "true",
+      pure "false",
+      pure "null",
+      do
+        s <- listOf1 (elements ['a' .. 'z'])
+        pure $ "\"" <> T.pack (take 10 s) <> "\""
+    ]
+
+genNixIdent :: Gen Text
+genNixIdent = do
+  c <- elements ['a' .. 'z']
+  rest <- listOf (elements $ ['a' .. 'z'] ++ ['0' .. '9'])
+  pure $ T.pack (c : take 5 rest)
+
+genNixList :: Int -> Gen Text
+genNixList n = do
+  len <- choose (0, 3)
+  elems <- replicateM len (genNixExpr (n `div` 2))
+  pure $ "[ " <> T.unwords elems <> " ]"
+
+genNixAttrSet :: Int -> Gen Text
+genNixAttrSet n = do
+  len <- choose (1, 3)
+  names <- replicateM len genNixIdent
+  vals <- replicateM len (genNixExpr (n `div` 2))
+  let bindings = zipWith (\k v -> k <> " = " <> v <> ";") (nub names) vals
+  pure $ "{ " <> T.unwords bindings <> " }"
+
+genNixLet :: Int -> Gen Text
+genNixLet n = do
+  name <- genNixIdent
+  val <- genNixExpr (n `div` 2)
+  body <- genNixExpr (n `div` 2)
+  pure $ "let " <> name <> " = " <> val <> "; in " <> body
+
+genNixFunc :: Int -> Gen Text
+genNixFunc n = do
+  param <- genNixIdent
+  body <- genNixExpr (n `div` 2)
+  pure $ param <> ": " <> body
+
+genNixIf :: Int -> Gen Text
+genNixIf n = do
+  cond <- genNixExpr (n `div` 3)
+  t <- genNixExpr (n `div` 3)
+  f <- genNixExpr (n `div` 3)
+  pure $ "if " <> cond <> " then " <> t <> " else " <> f
+
+genNixApp :: Int -> Gen Text
+genNixApp n = do
+  func <- genNixFunc n
+  arg <- genNixExpr (n `div` 2)
+  pure $ "(" <> func <> ") " <> arg
+
+genNixBinOp :: Int -> Gen Text
+genNixBinOp n = do
+  left <- genNixExpr (n `div` 2)
+  right <- genNixExpr (n `div` 2)
+  op <- elements ["+", "-", "*", "==", "!=", "<", "<=", ">", ">=", "&&", "||"]
+  pure $ "(" <> left <> " " <> op <> " " <> right <> ")"
+
+-- | Helper: parse Nix text and run inference
+parseAndInfer :: Text -> Either Text (NT.NixType, [Binding])
+parseAndInfer src = case parseNixTextLoc src of
+  Left _err -> Left "parse error"
+  Right expr -> inferExpr expr
+
+-- | NIX-1: inferExpr never crashes on parseable expressions
+prop_nix_infer_no_crash :: Property
+prop_nix_infer_no_crash = forAll (sized genNixExpr) $ \src ->
+  case parseNixTextLoc src of
+    Left _ -> True -- unparseable, skip
+    Right expr -> case inferExpr expr of
+      Left _ -> True -- type error is fine
+      Right _ -> True -- success is fine
+
+-- | NIX-2: inferExpr is deterministic
+prop_nix_infer_deterministic :: Property
+prop_nix_infer_deterministic = forAll (sized genNixExpr) $ \src ->
+  parseAndInfer src == parseAndInfer src
+
+-- | NIX-3: Integer literals infer to TInt
+prop_nix_int_literal :: Property
+prop_nix_int_literal = forAll (choose (0, 10000) :: Gen Int) $ \n ->
+  case parseAndInfer (T.pack (show n)) of
+    Right (NT.TInt, _) -> True
+    _ -> False
+
+-- | NIX-4: String literals infer to TString or TStrLit
+prop_nix_string_literal :: Property
+prop_nix_string_literal = forAll genStringLiteral $ \s ->
+  case parseAndInfer ("\"" <> s <> "\"") of
+    Right (NT.TString, _) -> True
+    Right (NT.TStrLit _, _) -> True
+    _ -> False
+
+-- | NIX-5: Bool literals infer to TBool
+prop_nix_bool_literal :: Bool -> Bool
+prop_nix_bool_literal b =
+  case parseAndInfer (if b then "true" else "false") of
+    Right (NT.TBool, _) -> True
+    _ -> False
+
+-- | NIX-6: null infers to TNull
+prop_nix_null_literal :: Bool
+prop_nix_null_literal =
+  case parseAndInfer "null" of
+    Right (NT.TNull, _) -> True
+    _ -> False
+
+-- | NIX-7: Lists of ints infer to TList TInt
+prop_nix_list_int :: Property
+prop_nix_list_int = forAll (choose (1, 5)) $ \n ->
+  let elems = T.unwords (replicate n "1")
+      src = "[ " <> elems <> " ]"
+   in case parseAndInfer src of
+        Right (NT.TList NT.TInt, _) -> True
+        _ -> False
+
+-- | NIX-8: Attrsets infer fields correctly
+prop_nix_attrset :: Property
+prop_nix_attrset =
+  let src = "{ x = 1; y = \"hello\"; }"
+   in case parseAndInfer src of
+        Right (t, _) -> case t of
+          NT.TAttrs m -> checkFields m
+          NT.TAttrsOpen m -> checkFields m
+          _ -> property False
+        _ -> property False
+  where
+    checkFields m =
+      case (Map.lookup "x" m, Map.lookup "y" m) of
+        (Just (NT.TInt, _), Just (ty, _)) ->
+          property $ case ty of
+            NT.TString -> True
+            NT.TStrLit _ -> True
+            _ -> False
+        _ -> property False
+
+-- | NIX-9: Identity function infers polymorphic type
+prop_nix_identity :: Bool
+prop_nix_identity =
+  case parseAndInfer "x: x" of
+    Right (NT.TFun _ _, _) -> True
+    _ -> False
+
+-- | NIX-10: Let binding scopes correctly
+prop_nix_let_binding :: Bool
+prop_nix_let_binding =
+  case parseAndInfer "let x = 42; in x" of
+    Right (NT.TInt, _) -> True
+    _ -> False
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -1064,7 +1243,18 @@ main = do
         run "overlay_identity_right" prop_overlay_identity_right,
         run "overlay_assoc" prop_overlay_assoc,
         run "overlay_satisfaction" prop_overlay_satisfaction,
-        run "overlay_propagation" prop_overlay_propagation
+        run "overlay_propagation" prop_overlay_propagation,
+        -- Nix type inference (FIX-11)
+        run "nix_infer_no_crash" prop_nix_infer_no_crash,
+        run "nix_infer_deterministic" prop_nix_infer_deterministic,
+        run "nix_int_literal" prop_nix_int_literal,
+        run "nix_string_literal" prop_nix_string_literal,
+        run "nix_bool_literal" prop_nix_bool_literal,
+        run "nix_null_literal" prop_nix_null_literal,
+        run "nix_list_int" prop_nix_list_int,
+        run "nix_attrset" prop_nix_attrset,
+        run "nix_identity" prop_nix_identity,
+        run "nix_let_binding" prop_nix_let_binding
       ]
 
   putStrLn ""
