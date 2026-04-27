@@ -47,7 +47,6 @@ where
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Types
@@ -137,6 +136,19 @@ emitConfigFunction schema =
       "    s=${s//$'\\t'/\\\\t}",
       "    printf '%s' \"$s\"",
       "  }",
+      "  __nix_compile_require_int() {",
+      "    case \"$2\" in",
+      "      ''|*[!0-9-]*|*-*-*|-)",
+      "        echo \"$1 must be an integer\" >&2; return 1 ;;",
+      "      *) printf '%s' \"$2\" ;;",
+      "    esac",
+      "  }",
+      "  __nix_compile_require_bool() {",
+      "    case \"$2\" in",
+      "      true|false) printf '%s' \"$2\" ;;",
+      "      *) echo \"$1 must be true or false\" >&2; return 1 ;;",
+      "    esac",
+      "  }",
       "  local format=\"${1:-json}\"",
       renderRuntimeGuards schema,
       "  case \"$format\" in",
@@ -163,16 +175,18 @@ emitConfigFunction schema =
 renderRuntimeGuards :: Schema -> Text
 renderRuntimeGuards schema =
   T.unlines
-    [ "  : \"${" <> var <> ":?" <> var <> " is required}\""
-    | var <- Set.toList (configVars schema)
+    [ renderGuard spec
+    | spec <- Map.elems (schemaConfig schema),
+      cfgFrom spec /= Nothing
     ]
-
-configVars :: Schema -> Set.Set Text
-configVars schema =
-  Set.fromList
-    [ var
-    | ConfigSpec {cfgFrom = Just var} <- Map.elems (schemaConfig schema)
-    ]
+  where
+    renderGuard ConfigSpec {cfgFrom = Just var, cfgType = ty} =
+      case ty of
+        TInt -> "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+        TNumeric -> "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+        TBool -> "  __nix_compile_require_bool \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+        _ -> "  : \"${" <> var <> ":?" <> var <> " is required}\""
+    renderGuard _ = ""
 
 -- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text

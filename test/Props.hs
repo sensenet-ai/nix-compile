@@ -1360,7 +1360,23 @@ prop_emit_preflight_guard =
   let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
-   in ": \"${PORT:?PORT is required}\"" `T.isInfixOf` output
+   in "__nix_compile_require_int \"PORT\" \"${PORT:?PORT is required}\"" `T.isInfixOf` output
+
+-- | emit-config validates unquoted numeric values before output to prevent JSON injection
+prop_emit_numeric_preflight_guard :: Bool
+prop_emit_numeric_preflight_guard =
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
+      output = emitConfigFunction schema
+   in "must be an integer" `T.isInfixOf` output
+
+-- | emit-config validates unquoted bool values before output
+prop_emit_bool_preflight_guard :: Bool
+prop_emit_bool_preflight_guard =
+  let spec = ConfigSpec TBool (Just "DEBUG") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["debug"] spec}
+      output = emitConfigFunction schema
+   in "must be true or false" `T.isInfixOf` output
 
 -- | emit-config YAML contains ${VAR:?} guards
 prop_emit_yaml_guarded :: Property
@@ -1875,6 +1891,8 @@ main = do
         run "emit_json_guarded" prop_emit_json_guarded,
         run "emit_json_runtime_args" prop_emit_json_runtime_args,
         run "emit_preflight_guard" prop_emit_preflight_guard,
+        run "emit_numeric_preflight_guard" prop_emit_numeric_preflight_guard,
+        run "emit_bool_preflight_guard" prop_emit_bool_preflight_guard,
         run "emit_yaml_guarded" prop_emit_yaml_guarded,
         run "emit_toml_no_null" prop_emit_toml_no_null,
         run "emit_json_literal" prop_emit_json_literal,
