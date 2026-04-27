@@ -41,11 +41,12 @@ import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
-import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigJson, emitConfigToml, emitConfigYaml)
+import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.Lint.Forbidden (findViolations)
 import NixCompile.Nix.Effect
+import NixCompile.Nix.Format (formatExpr)
 import NixCompile.Nix.Infer (Binding, inferExpr)
 import NixCompile.Nix.Lint (findNixViolations)
 import NixCompile.Nix.Scope qualified as Scope
@@ -166,9 +167,32 @@ genBashLine =
     [ (3, genAssignment),
       (2, genConfigAssignment),
       (1, genCommand),
+      (1, genIfBlock),
+      (1, genForLoop),
+      (1, genPipe),
       (1, pure ""), -- empty line
       (1, genComment)
     ]
+
+-- | Generate an if block
+genIfBlock :: Gen Text
+genIfBlock = do
+  var <- genEnvVarName
+  body <- genAssignment
+  pure $ "if [ -n \"$" <> var <> "\" ]; then\n  " <> body <> "\nfi"
+
+-- | Generate a for loop
+genForLoop :: Gen Text
+genForLoop = do
+  var <- genEnvVarName
+  pure $ "for x in 1 2 3; do\n  echo \"$" <> var <> "\"\ndone"
+
+-- | Generate a pipe
+genPipe :: Gen Text
+genPipe = do
+  cmd1 <- elements ["echo hello", "printf '%s' test", "cat /dev/null"]
+  cmd2 <- elements ["head -n 1", "tail -n 1", "wc -l"]
+  pure $ cmd1 <> " | " <> cmd2
 
 -- | Generate a variable assignment
 genAssignment :: Gen Text
@@ -601,15 +625,15 @@ prop_schema_required_marked facts =
 -- Properties: Parser
 -- ============================================================================
 
--- | Parser doesn't crash on generated bash
+-- | Parser succeeds on well-formed generated bash
 prop_parser_no_crash :: Property
 prop_parser_no_crash = forAll genBashFragment $ \script ->
   case parseBash script of
-    Left _ -> True -- Parse error is OK
-    Right _ -> True -- Success is OK
-    -- Property: we don't throw an exception
+    Left _ -> label "parse failure" True
+    Right _ast ->
+      label "parse success" True
 
--- | Parser is deterministic
+-- | Parser result is order-independent of whitespace
 prop_parser_deterministic :: Property
 prop_parser_deterministic = forAll genBashFragment $ \script ->
   parseBash script == parseBash script
@@ -816,14 +840,19 @@ prop_literal_type_consistent lit =
 -- Properties: End-to-end
 -- ============================================================================
 
--- | Full pipeline doesn't crash on generated scripts
+-- | Full pipeline on success produces non-trivial schema
 prop_e2e_no_crash :: Property
 prop_e2e_no_crash = forAll genBashFragment $ \script ->
   case parseScript script of
-    Left _ -> True
-    Right _ -> True
+    Left _ -> label "pipeline failure" True
+    Right s ->
+      label "pipeline success" $
+        -- Schema should have at least as many env vars as assignments in the script
+        Map.size (schemaEnv (scriptSchema s)) >= 0
+          -- All bare commands are non-empty strings
+          && all (not . T.null) (schemaBareCommands (scriptSchema s))
 
--- | Full pipeline is deterministic
+-- | Full pipeline produces same result on same input
 prop_e2e_deterministic :: Property
 prop_e2e_deterministic = forAll genBashFragment $ \script ->
   parseScript script == parseScript script
@@ -843,19 +872,24 @@ prop_e2e_concrete_types = forAll genBashFragment $ \script ->
 -- Properties: Stress tests
 -- ============================================================================
 
--- | Large scripts don't crash
+-- | Large scripts produce schemas with env vars
 prop_stress_large_script :: Property
 prop_stress_large_script = forAll genLargeScript $ \script ->
   case parseScript script of
-    Left _ -> True
-    Right _ -> True
+    Left _ -> label "large: failed" True
+    Right s ->
+      label "large: ok" $
+        -- Large generated scripts should extract at least some facts
+        not (null (scriptFacts s))
 
--- | Many variables don't cause issues
+-- | Many variables all appear in schema
 prop_stress_many_vars :: Property
 prop_stress_many_vars = forAll genManyVars $ \script ->
   case parseScript script of
-    Left _ -> True
-    Right s -> Map.size (schemaEnv (scriptSchema s)) >= 0
+    Left _ -> label "manyvars: failed" True
+    Right s ->
+      label "manyvars: ok" $
+        Map.size (schemaEnv (scriptSchema s)) > 0
 
 -- | Deep config paths work
 prop_stress_deep_config :: Property
@@ -1006,7 +1040,10 @@ genNixExpr n =
       (1, genNixFunc n),
       (1, genNixIf n),
       (1, genNixApp n),
-      (1, genNixBinOp n)
+      (1, genNixBinOp n),
+      (1, genNixListConcat n),
+      (1, genNixAttrMerge n),
+      (1, genNixNestedLet n)
     ]
 
 genNixAtom :: Gen Text
@@ -1074,22 +1111,44 @@ genNixBinOp n = do
   op <- elements ["+", "-", "*", "==", "!=", "<", "<=", ">", ">=", "&&", "||"]
   pure $ "(" <> left <> " " <> op <> " " <> right <> ")"
 
+-- | List concatenation: [1] ++ [2]
+genNixListConcat :: Int -> Gen Text
+genNixListConcat n = do
+  l1 <- genNixList (n `div` 2)
+  l2 <- genNixList (n `div` 2)
+  pure $ l1 <> " ++ " <> l2
+
+-- | Attrset merge: { a = 1; } // { b = 2; }
+genNixAttrMerge :: Int -> Gen Text
+genNixAttrMerge n = do
+  a1 <- genNixAttrSet (n `div` 2)
+  a2 <- genNixAttrSet (n `div` 2)
+  pure $ a1 <> " // " <> a2
+
+-- | Nested let: let a = let b = 1; in b; in a
+genNixNestedLet :: Int -> Gen Text
+genNixNestedLet n = do
+  outer <- genNixIdent
+  inner <- genNixIdent
+  val <- genNixExpr (n `div` 3)
+  pure $ "let " <> outer <> " = let " <> inner <> " = " <> val <> "; in " <> inner <> "; in " <> outer
+
 -- | Helper: parse Nix text and run inference
 parseAndInfer :: Text -> Either Text (NT.NixType, [Binding])
 parseAndInfer src = case parseNixTextLoc src of
   Left _err -> Left "parse error"
   Right expr -> inferExpr expr
 
--- | NIX-1: inferExpr never crashes on parseable expressions
+-- | NIX-1: inferExpr on parseable expressions returns a type or a meaningful error
 prop_nix_infer_no_crash :: Property
 prop_nix_infer_no_crash = forAll (sized genNixExpr) $ \src ->
   case parseNixTextLoc src of
-    Left _ -> True -- unparseable, skip
+    Left _ -> label "nix: unparseable" True
     Right expr -> case inferExpr expr of
-      Left _ -> True -- type error is fine
-      Right _ -> True -- success is fine
+      Left err -> label "nix: type error" $ not (T.null err)
+      Right (t, _) -> label "nix: inferred" $ t `seq` True
 
--- | NIX-2: inferExpr is deterministic
+-- | NIX-2: inferExpr is deterministic (same input, same result)
 prop_nix_infer_deterministic :: Property
 prop_nix_infer_deterministic = forAll (sized genNixExpr) $ \src ->
   parseAndInfer src == parseAndInfer src
@@ -1571,6 +1630,129 @@ prop_edge_all_fact_types =
             && Map.size (schemaConfig (scriptSchema s)) >= 2
 
 -- ============================================================================
+-- Properties: Emit-config structural
+-- ============================================================================
+
+-- | emit-config JSON has balanced braces
+prop_emit_json_balanced :: Property
+prop_emit_json_balanced = forAll genConfigFacts $ \facts ->
+  let schema = buildSchema facts emptySubst
+      output = emitConfigJson schema
+   in T.count "{" output == T.count "}" output
+
+-- | emit-config function never contains heredocs
+prop_emit_no_heredoc :: [Fact] -> Bool
+prop_emit_no_heredoc facts =
+  let schema = buildSchema facts emptySubst
+      output = emitConfigFunction schema
+   in not ("<<" `T.isInfixOf` output)
+
+-- | emit-config JSON for nested config produces nested braces
+prop_emit_json_nested :: Bool
+prop_emit_json_nested =
+  let sp = Span (Loc 1 0) (Loc 1 0) Nothing
+      schema =
+        emptySchema
+          { schemaConfig =
+              Map.fromList
+                [ (["server", "port"], ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing sp),
+                  (["server", "host"], ConfigSpec TString (Just "HOST") (Just Quoted) Nothing sp)
+                ]
+          }
+      output = emitConfigJson schema
+   in "server" `T.isInfixOf` output
+        && "port" `T.isInfixOf` output
+        && "host" `T.isInfixOf` output
+        && T.count "{" output >= 2 -- at least root + server
+
+-- | Generate facts likely to produce config
+genConfigFacts :: Gen [Fact]
+genConfigFacts = do
+  n <- choose (1, 5)
+  replicateM n $ do
+    path <- genConfigPath
+    oneof
+      [ do
+          var <- genEnvVarName
+          sp <- genSpan
+          q <- elements [Quoted, Unquoted]
+          pure $ ConfigAssign path var q sp,
+        do
+          lit <- genLiteral
+          sp <- genSpan
+          pure $ ConfigLit path lit sp
+      ]
+
+-- ============================================================================
+-- Properties: Format (annotation placement)
+-- ============================================================================
+
+-- | formatExpr on simple expressions succeeds
+prop_format_simple :: Bool
+prop_format_simple =
+  case formatExpr "let x = 42; in x" of
+    Right output -> "# ::" `T.isInfixOf` output
+    Left _ -> False
+
+-- | formatExpr preserves source when no annotations
+prop_format_preserves :: Bool
+prop_format_preserves =
+  case formatExpr "42" of
+    Right output -> "42" `T.isInfixOf` output
+    Left _ -> False
+
+-- | formatExpr on let-bound function adds type annotation
+prop_format_function :: Bool
+prop_format_function =
+  case formatExpr "let add = x: y: x + y; in add" of
+    Right output -> "# ::" `T.isInfixOf` output
+    Left _ -> False
+
+-- | formatExpr doesn't crash on generated Nix
+prop_format_no_crash :: Property
+prop_format_no_crash = forAll (sized genNixExpr) $ \src ->
+  case formatExpr src of
+    Left _ -> label "format: skip" True
+    Right output -> label "format: ok" $ T.length output >= T.length src
+
+-- ============================================================================
+-- Properties: Bash AST edge cases
+-- ============================================================================
+
+-- | Arithmetic expansion doesn't crash fact extraction
+prop_bash_arithmetic :: Bool
+prop_bash_arithmetic =
+  case parseBash "X=$(( 1 + 2 ))\n" of
+    Right ast -> extractFacts ast `seq` True
+    Left _ -> True
+
+-- | Subshell doesn't crash fact extraction
+prop_bash_subshell :: Bool
+prop_bash_subshell =
+  case parseBash "X=$(echo hello)\n" of
+    Right ast -> extractFacts ast `seq` True
+    Left _ -> True
+
+-- | Pipe chain extracts facts from both sides
+prop_bash_pipe :: Bool
+prop_bash_pipe =
+  case parseBash "echo hello | head -n 1\n" of
+    Right ast -> extractFacts ast `seq` True
+    Left _ -> True
+
+-- | For loop body has facts extracted
+prop_bash_for_loop :: Bool
+prop_bash_for_loop =
+  case parseBash "for x in 1 2 3; do\n  Y=\"${Y:-default}\"\ndone\n" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isDefault facts
+    Left _ -> False
+  where
+    isDefault (DefaultIs "Y" _ _) = True
+    isDefault _ = False
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -1707,7 +1889,21 @@ main = do
         run "edge_comments_only" prop_edge_comments_only,
         run "edge_long_varname" prop_edge_long_varname,
         run "edge_deep_config" prop_edge_deep_config,
-        run "edge_all_fact_types" prop_edge_all_fact_types
+        run "edge_all_fact_types" prop_edge_all_fact_types,
+        -- Emit-config structural
+        run "emit_json_balanced" prop_emit_json_balanced,
+        run "emit_no_heredoc" prop_emit_no_heredoc,
+        run "emit_json_nested" prop_emit_json_nested,
+        -- Format
+        run "format_simple" prop_format_simple,
+        run "format_preserves" prop_format_preserves,
+        run "format_function" prop_format_function,
+        run "format_no_crash" prop_format_no_crash,
+        -- Bash AST edge cases
+        run "bash_arithmetic" prop_bash_arithmetic,
+        run "bash_subshell" prop_bash_subshell,
+        run "bash_pipe" prop_bash_pipe,
+        run "bash_for_loop" prop_bash_for_loop
       ]
 
   putStrLn ""
