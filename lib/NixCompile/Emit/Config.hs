@@ -154,11 +154,12 @@ emitConfigFunction schema =
       "}"
     ]
 
+
 -- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text
 emitConfigJson schema =
   let tree = buildConfigTree (schemaConfig schema)
-   in "printf '%s\\n' '" <> escapeForPrintf (renderJsonTree 0 tree) <> "'"
+   in emitTemplate (renderJsonTree 0 tree)
 
 -- | Escape a string for use in single-quoted printf argument
 escapeForPrintf :: Text -> Text
@@ -166,34 +167,64 @@ escapeForPrintf = T.concatMap $ \case
   '\'' -> "'\\''" -- End quote, escaped quote, start quote
   c -> T.singleton c
 
+-- | A printf template plus shell arguments for runtime-expanded values.
+-- Static text stays in a single-quoted printf format string; dynamic values are
+-- passed as separate shell arguments, so ${VAR:?} and command substitutions are
+-- expanded by bash while literals remain inert.
+data Template = Template !Text ![Text]
+
+appendTemplate :: Template -> Template -> Template
+appendTemplate (Template a as) (Template b bs) = Template (a <> b) (as ++ bs)
+
+concatTemplates :: [Template] -> Template
+concatTemplates = foldr appendTemplate (Template "" [])
+
+literalTemplate :: Text -> Template
+literalTemplate text = Template (T.replace "%" "%%" text) []
+
+dynamicTemplate :: Text -> Template
+dynamicTemplate arg = Template "%s" [arg]
+
+emitTemplate :: Template -> Text
+emitTemplate (Template fmt args) =
+  "printf '" <> escapeForPrintf (fmt <> "\n") <> "'" <> argsText
+  where
+    argsText
+      | null args = ""
+      | otherwise = " " <> T.unwords args
+
+intersperseTemplate :: Template -> [Template] -> [Template]
+intersperseTemplate _ [] = []
+intersperseTemplate _ [x] = [x]
+intersperseTemplate sep (x : xs) = x : sep : intersperseTemplate sep xs
+
 -- | NixCompile config tree as JSON
-renderJsonTree :: Int -> ConfigTree -> Text
+renderJsonTree :: Int -> ConfigTree -> Template
 renderJsonTree indent = \case
-  ConfigBranch m | Map.null m -> "{}"
+  ConfigBranch m | Map.null m -> literalTemplate "{}"
   ConfigBranch m ->
     let entries = Map.toList m
         rendered = map (renderEntry indent) entries
         indentStr = T.replicate indent "  "
         nextIndent = T.replicate (indent + 1) "  "
-     in "{\n"
-          <> T.intercalate ",\n" (map (nextIndent <>) rendered)
-          <> "\n"
-          <> indentStr
-          <> "}"
+     in concatTemplates $
+          [literalTemplate "{\n"]
+            ++ intersperseTemplate (literalTemplate ",\n") (map (appendTemplate (literalTemplate nextIndent)) rendered)
+            ++ [literalTemplate ("\n" <> indentStr <> "}")]
   ConfigLeaf spec -> renderJsonValue spec
   where
     renderEntry ind (key, subtree) =
-      "\"" <> key <> "\": " <> renderJsonTree (ind + 1) subtree
+      literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJsonTree (ind + 1) subtree
 
 -- | NixCompile a config value as JSON
 -- Uses bash variable expansion, with quoting based on type.
 -- All variable references use ${VAR:?} to fail fast if unset,
 -- preventing malformed output at runtime.
-renderJsonValue :: ConfigSpec -> Text
+renderJsonValue :: ConfigSpec -> Template
 renderJsonValue ConfigSpec {..} =
   case (cfgFrom, cfgLit) of
     (_, Just lit) ->
-      renderJsonLit lit
+      literalTemplate (renderJsonLit lit)
     (Just var, _) ->
       let forceString = cfgQuoted == Just Quoted
           asString =
@@ -204,41 +235,41 @@ renderJsonValue ConfigSpec {..} =
               _ -> False
           guardedVar = "${" <> var <> ":?" <> var <> " is required}"
        in if asString
-            then "\"$(__nix_compile_escape_json \"" <> guardedVar <> "\")\""
-            else guardedVar
+            then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+            else dynamicTemplate guardedVar
     _ ->
-      "null"
+      literalTemplate "null"
 
 -- | Generate YAML output command using printf (no heredocs)
 emitConfigYaml :: Schema -> Text
 emitConfigYaml schema =
   let tree = buildConfigTree (schemaConfig schema)
-   in "printf '%s\\n' '" <> escapeForPrintf (renderYamlTree 0 tree) <> "'"
+   in emitTemplate (renderYamlTree 0 tree)
 
 -- | NixCompile config tree as YAML
-renderYamlTree :: Int -> ConfigTree -> Text
+renderYamlTree :: Int -> ConfigTree -> Template
 renderYamlTree indent = \case
-  ConfigBranch m | Map.null m -> "{}"
+  ConfigBranch m | Map.null m -> literalTemplate "{}"
   ConfigBranch m ->
     let entries = sortOn fst (Map.toList m)
         rendered = map (renderYamlEntry indent) entries
-     in T.intercalate "\n" rendered
+     in concatTemplates (intersperseTemplate (literalTemplate "\n") rendered)
   ConfigLeaf spec -> renderYamlValue spec
   where
     renderYamlEntry ind (key, subtree) =
       let indentStr = T.replicate ind "  "
        in case subtree of
             ConfigBranch _ ->
-              indentStr <> key <> ":\n" <> renderYamlTree (ind + 1) subtree
+              literalTemplate (indentStr <> key <> ":\n") `appendTemplate` renderYamlTree (ind + 1) subtree
             ConfigLeaf spec ->
-              indentStr <> key <> ": " <> renderYamlValue spec
+              literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue spec
 
 -- | NixCompile a config value as YAML
-renderYamlValue :: ConfigSpec -> Text
+renderYamlValue :: ConfigSpec -> Template
 renderYamlValue ConfigSpec {..} =
   case (cfgFrom, cfgLit) of
     (_, Just lit) ->
-      renderYamlLit lit
+      literalTemplate (renderYamlLit lit)
     (Just var, _) ->
       let forceString = cfgQuoted == Just Quoted
           asString =
@@ -249,56 +280,51 @@ renderYamlValue ConfigSpec {..} =
               _ -> False
           guardedVar = "${" <> var <> ":?" <> var <> " is required}"
        in if asString
-            then "\"$(__nix_compile_escape_json \"" <> guardedVar <> "\")\""
-            else guardedVar
+            then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+            else dynamicTemplate guardedVar
     _ ->
-      "null"
+      literalTemplate "null"
 
 -- | Generate TOML output command using printf (no heredocs)
 emitConfigToml :: Schema -> Text
 emitConfigToml schema =
   let tree = buildConfigTree (schemaConfig schema)
-   in "printf '%s\\n' '" <> escapeForPrintf (renderTomlTree [] tree) <> "'"
+   in emitTemplate (renderTomlTree [] tree)
 
 -- | NixCompile config tree as TOML
-renderTomlTree :: [Text] -> ConfigTree -> Text
+renderTomlTree :: [Text] -> ConfigTree -> Template
 renderTomlTree path = \case
-  ConfigBranch m | Map.null m -> ""
+  ConfigBranch m | Map.null m -> literalTemplate ""
   ConfigBranch m ->
-    let -- Separate leaves (direct values) from branches (sections)
-        (leaves, branches) = Map.partitionWithKey isLeaf m
+    let (leaves, branches) = Map.partitionWithKey isLeaf m
         isLeaf _ (ConfigLeaf _) = True
         isLeaf _ _ = False
-        -- NixCompile section header if we have leaves and a path
         sectionHeader =
           if not (null path) && not (Map.null leaves)
             then "[" <> T.intercalate "." path <> "]\n"
             else ""
-        -- NixCompile leaf values
-        leafLines =
-          map renderTomlLeaf (sortOn fst (Map.toList leaves))
-        -- NixCompile subsections
-        branchLines =
-          map (renderTomlBranch path) (sortOn fst (Map.toList branches))
-     in sectionHeader
-          <> T.intercalate "\n" leafLines
-          <> (if not (Map.null leaves) && not (Map.null branches) then "\n\n" else "")
-          <> T.intercalate "\n\n" branchLines
-  ConfigLeaf _ -> "" -- shouldn't be called at top level
+        leafLines = map renderTomlLeaf (sortOn fst (Map.toList leaves))
+        branchLines = map (renderTomlBranch path) (sortOn fst (Map.toList branches))
+     in concatTemplates $
+          [literalTemplate sectionHeader]
+            ++ intersperseTemplate (literalTemplate "\n") leafLines
+            ++ [literalTemplate (if not (Map.null leaves) && not (Map.null branches) then "\n\n" else "")]
+            ++ intersperseTemplate (literalTemplate "\n\n") branchLines
+  ConfigLeaf _ -> literalTemplate "" -- shouldn't be called at top level
   where
     renderTomlLeaf (key, ConfigLeaf spec) =
-      key <> " = " <> renderTomlValue spec
-    renderTomlLeaf _ = ""
+      literalTemplate (key <> " = ") `appendTemplate` renderTomlValue spec
+    renderTomlLeaf _ = literalTemplate ""
 
     renderTomlBranch parentPath (key, subtree) =
       renderTomlTree (parentPath ++ [key]) subtree
 
 -- | NixCompile a config value as TOML
-renderTomlValue :: ConfigSpec -> Text
+renderTomlValue :: ConfigSpec -> Template
 renderTomlValue ConfigSpec {..} =
   case (cfgFrom, cfgLit) of
     (_, Just lit) ->
-      renderTomlLit lit
+      literalTemplate (renderTomlLit lit)
     (Just var, _) ->
       let forceString = cfgQuoted == Just Quoted
           asString =
@@ -309,7 +335,8 @@ renderTomlValue ConfigSpec {..} =
               _ -> False
           guardedVar = "${" <> var <> ":?" <> var <> " is required}"
        in if asString
-            then "\"$(__nix_compile_escape_json \"" <> guardedVar <> "\")\""
-            else guardedVar
+            then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+            else dynamicTemplate guardedVar
     _ ->
-      "\"\"" -- TOML has no null; emit empty string as safe default
+      literalTemplate "\"\"" -- TOML has no null; emit empty string as safe default
+
