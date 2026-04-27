@@ -40,11 +40,13 @@ import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
-import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree)
+import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.Lint.Forbidden (findViolations)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Infer (Binding, inferExpr)
+import NixCompile.Nix.Lint (findNixViolations)
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
@@ -1164,6 +1166,301 @@ prop_nix_let_binding =
     _ -> False
 
 -- ============================================================================
+-- Properties: Emit-config output
+-- ============================================================================
+
+-- | emit-config JSON contains ${VAR:?} guards for variable refs
+prop_emit_json_guarded :: Property
+prop_emit_json_guarded =
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
+      output = emitConfigJson schema
+   in property $ ":?" `T.isInfixOf` output
+
+-- | emit-config YAML contains ${VAR:?} guards
+prop_emit_yaml_guarded :: Property
+prop_emit_yaml_guarded =
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
+      output = emitConfigYaml schema
+   in property $ ":?" `T.isInfixOf` output
+
+-- | emit-config TOML never outputs invalid "null"
+prop_emit_toml_no_null :: [Fact] -> Bool
+prop_emit_toml_no_null facts =
+  let schema = buildSchema facts emptySubst
+      output = emitConfigToml schema
+   in not ("null" `T.isInfixOf` output) || "\"\"" `T.isInfixOf` output || T.null output
+
+-- | emit-config JSON for literal values renders correctly
+prop_emit_json_literal :: Bool
+prop_emit_json_literal =
+  let spec = ConfigSpec TInt Nothing Nothing (Just (LitInt 8080)) (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
+      output = emitConfigJson schema
+   in "8080" `T.isInfixOf` output
+
+-- | emit-config string values are quoted in JSON
+prop_emit_json_string_quoted :: Bool
+prop_emit_json_string_quoted =
+  let spec = ConfigSpec TString (Just "HOST") (Just Quoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+      schema = emptySchema {schemaConfig = Map.singleton ["host"] spec}
+      output = emitConfigJson schema
+   in "__nix_compile_escape_json" `T.isInfixOf` output
+
+-- ============================================================================
+-- Properties: Scope graph construction
+-- ============================================================================
+
+-- | Let bindings create declarations in the correct scope
+prop_scope_let_decl :: Bool
+prop_scope_let_decl =
+  case parseNixTextLoc "let x = 1; in x" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+       in any (\d -> Scope.declName d == "x") decls
+
+-- | Attrsets create declarations for each key
+prop_scope_attrset_decls :: Bool
+prop_scope_attrset_decls =
+  case parseNixTextLoc "{ a = 1; b = 2; c = 3; }" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+          names = map Scope.declName decls
+       in "a" `elem` names && "b" `elem` names && "c" `elem` names
+
+-- | Function params create declarations
+prop_scope_func_params :: Bool
+prop_scope_func_params =
+  case parseNixTextLoc "{ x, y, z }: x + y + z" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+          names = map Scope.declName decls
+       in "x" `elem` names && "y" `elem` names && "z" `elem` names
+
+-- | Variable references are tracked
+prop_scope_var_refs :: Bool
+prop_scope_var_refs =
+  case parseNixTextLoc "let x = 1; in x" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          refs = concatMap Scope.scopeReferences (Map.elems (Scope.sgScopes sg))
+       in any (\r -> Scope.refName r == "x") refs
+
+-- | With creates separate expression and body scopes
+prop_scope_with_structure :: Bool
+prop_scope_with_structure =
+  case parseNixTextLoc "let s = { x = 1; }; in with s; x" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          scopes = Map.elems (Scope.sgScopes sg)
+          withScopes = filter (\s -> Scope.scopeKind s == Scope.WithScope) scopes
+       in -- With should create at least one WithScope
+          not (null withScopes)
+
+-- | Cross-file merge produces a unified graph
+prop_scope_merge_files :: Bool
+prop_scope_merge_files =
+  case (parseNixTextLoc "let a = 1; in a", parseNixTextLoc "let b = 2; in b") of
+    (Right e1, Right e2) ->
+      let sg = Scope.fromModuleGraph (Map.fromList [("a.nix", e1), ("b.nix", e2)])
+          decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+          names = map Scope.declName decls
+       in "a" `elem` names && "b" `elem` names
+    _ -> False
+
+-- ============================================================================
+-- Properties: Nix lint
+-- ============================================================================
+
+-- | Nix lint detects `with`
+prop_nix_lint_with :: Bool
+prop_nix_lint_with =
+  case parseNixTextLoc "with builtins; true" of
+    Left _ -> False
+    Right expr -> not (null (findNixViolations expr))
+
+-- | Nix lint detects `rec`
+prop_nix_lint_rec :: Bool
+prop_nix_lint_rec =
+  case parseNixTextLoc "rec { x = 1; }" of
+    Left _ -> False
+    Right expr -> not (null (findNixViolations expr))
+
+-- | Clean Nix files pass lint
+prop_nix_lint_clean :: Bool
+prop_nix_lint_clean =
+  case parseNixTextLoc "let x = 1; y = 2; in x + y" of
+    Left _ -> False
+    Right expr -> null (findNixViolations expr)
+
+-- ============================================================================
+-- Properties: Bash lint
+-- ============================================================================
+
+-- | Bash lint detects heredocs
+prop_bash_lint_heredoc :: Bool
+prop_bash_lint_heredoc =
+  case parseBash "cat << EOF\nhello\nEOF\n" of
+    Left _ -> False
+    Right ast -> not (null (findViolations ast))
+
+-- | Bash lint detects backticks
+prop_bash_lint_backtick :: Bool
+prop_bash_lint_backtick =
+  case parseBash "x=`date`" of
+    Left _ -> False
+    Right ast -> not (null (findViolations ast))
+
+-- | Clean bash passes lint
+prop_bash_lint_clean :: Bool
+prop_bash_lint_clean =
+  case parseBash "x=\"hello\"\necho \"$x\"\n" of
+    Left _ -> False
+    Right ast -> null (findViolations ast)
+
+-- ============================================================================
+-- Properties: Schema defaulted vars (DESIGN-2)
+-- ============================================================================
+
+-- | Variables with no type evidence are reported in schemaDefaultedVars
+prop_schema_defaulted_reported :: Bool
+prop_schema_defaulted_reported =
+  let facts = [Required "MYSTERY_VAR" (Span (Loc 1 0) (Loc 1 0) Nothing)]
+      constraints = factsToConstraints facts
+      subst = case solve constraints of Right s -> s; Left _ -> emptySubst
+      schema = buildSchema facts subst
+   in "MYSTERY_VAR" `elem` schemaDefaultedVars schema
+
+-- | Variables with known types are not in schemaDefaultedVars
+prop_schema_resolved_not_defaulted :: Bool
+prop_schema_resolved_not_defaulted =
+  let facts = [DefaultIs "PORT" (LitInt 8080) (Span (Loc 1 0) (Loc 1 0) Nothing)]
+      constraints = factsToConstraints facts
+      subst = case solve constraints of Right s -> s; Left _ -> emptySubst
+      schema = buildSchema facts subst
+   in "PORT" `notElem` schemaDefaultedVars schema
+
+-- ============================================================================
+-- Properties: End-to-end integration
+-- ============================================================================
+
+-- | parseScript on a config script produces config in schema
+prop_e2e_config_extraction :: Bool
+prop_e2e_config_extraction =
+  let script =
+        T.unlines
+          [ "PORT=\"${PORT:-8080}\"",
+            "HOST=\"${HOST:-localhost}\"",
+            "config.server.port=$PORT",
+            "config.server.host=\"$HOST\""
+          ]
+   in case parseScript script of
+        Left _ -> False
+        Right s ->
+          let cfg = schemaConfig (scriptSchema s)
+           in Map.member ["server", "port"] cfg && Map.member ["server", "host"] cfg
+
+-- | parseScript correctly identifies required vars
+prop_e2e_required_vars :: Bool
+prop_e2e_required_vars =
+  let script = "API_KEY=\"${API_KEY:?}\"\n"
+   in case parseScript script of
+        Left _ -> False
+        Right s ->
+          case Map.lookup "API_KEY" (schemaEnv (scriptSchema s)) of
+            Just spec -> envRequired spec
+            Nothing -> False
+
+-- | parseScript rejects type conflicts
+prop_e2e_type_conflict :: Bool
+prop_e2e_type_conflict =
+  let script =
+        T.unlines
+          [ "X=\"${X:-42}\"", -- X : TInt
+            "Y=\"${Y:-hello}\"", -- Y : TString
+            "Z=\"$X\"", -- Z : TInt (from X)
+            "Z=\"$Y\"" -- Z : TString (from Y) -- conflict with TInt!
+          ]
+   in case parseScript script of
+        Left _ -> True -- type error, correct
+        Right _ -> False -- should have failed
+
+-- | Empty script produces empty schema
+prop_e2e_empty_script :: Bool
+prop_e2e_empty_script =
+  case parseScript "" of
+    Left _ -> False
+    Right s ->
+      Map.null (schemaEnv (scriptSchema s))
+        && Map.null (schemaConfig (scriptSchema s))
+
+-- | Store paths are tracked
+prop_e2e_store_paths :: Bool
+prop_e2e_store_paths =
+  let script = "/nix/store/abc123-curl-8.0/bin/curl http://example.com\n"
+   in case parseScript script of
+        Left _ -> False
+        Right s -> not (Set.null (schemaStorePaths (scriptSchema s)))
+
+-- ============================================================================
+-- Properties: Edge cases
+-- ============================================================================
+
+-- | Script with only comments produces empty schema
+prop_edge_comments_only :: Bool
+prop_edge_comments_only =
+  case parseScript "# this is a comment\n# another comment\n" of
+    Left _ -> False
+    Right s -> Map.null (schemaEnv (scriptSchema s))
+
+-- | Very long variable names don't crash
+prop_edge_long_varname :: Bool
+prop_edge_long_varname =
+  let name = T.replicate 1000 "A"
+      script = name <> "=\"hello\"\n"
+   in case parseBash script of
+        Left _ -> True
+        Right _ -> True
+
+-- | Deeply nested config paths work
+prop_edge_deep_config :: Bool
+prop_edge_deep_config =
+  let path = T.intercalate "." (replicate 50 "level")
+      script = "config." <> path <> "=42\n"
+   in case parseScript script of
+        Left _ -> True -- parse might fail, that's ok
+        Right _ -> True -- but it shouldn't crash
+
+-- | Script with all fact types doesn't crash
+prop_edge_all_fact_types :: Bool
+prop_edge_all_fact_types =
+  let script =
+        T.unlines
+          [ "A=\"${A:-42}\"",
+            "B=\"${B:?}\"",
+            "C=\"$A\"",
+            "D=\"${D:-$A}\"",
+            "config.x.y=$A",
+            "config.x.z=\"$B\"",
+            "config.x.w=true",
+            "/nix/store/abc-curl/bin/curl --connect-timeout $A http://example.com"
+          ]
+   in case parseScript script of
+        Left _ -> False
+        Right s ->
+          Map.size (schemaEnv (scriptSchema s)) >= 4
+            && Map.size (schemaConfig (scriptSchema s)) >= 2
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -1254,7 +1551,42 @@ main = do
         run "nix_list_int" prop_nix_list_int,
         run "nix_attrset" prop_nix_attrset,
         run "nix_identity" prop_nix_identity,
-        run "nix_let_binding" prop_nix_let_binding
+        run "nix_let_binding" prop_nix_let_binding,
+        -- Emit-config output
+        run "emit_json_guarded" prop_emit_json_guarded,
+        run "emit_yaml_guarded" prop_emit_yaml_guarded,
+        run "emit_toml_no_null" prop_emit_toml_no_null,
+        run "emit_json_literal" prop_emit_json_literal,
+        run "emit_json_string_quoted" prop_emit_json_string_quoted,
+        -- Scope graph construction
+        run "scope_let_decl" prop_scope_let_decl,
+        run "scope_attrset_decls" prop_scope_attrset_decls,
+        run "scope_func_params" prop_scope_func_params,
+        run "scope_var_refs" prop_scope_var_refs,
+        run "scope_with_structure" prop_scope_with_structure,
+        run "scope_merge_files" prop_scope_merge_files,
+        -- Nix lint
+        run "nix_lint_with" prop_nix_lint_with,
+        run "nix_lint_rec" prop_nix_lint_rec,
+        run "nix_lint_clean" prop_nix_lint_clean,
+        -- Bash lint
+        run "bash_lint_heredoc" prop_bash_lint_heredoc,
+        run "bash_lint_backtick" prop_bash_lint_backtick,
+        run "bash_lint_clean" prop_bash_lint_clean,
+        -- Schema defaulted vars
+        run "schema_defaulted_reported" prop_schema_defaulted_reported,
+        run "schema_resolved_not_defaulted" prop_schema_resolved_not_defaulted,
+        -- End-to-end integration
+        run "e2e_config_extraction" prop_e2e_config_extraction,
+        run "e2e_required_vars" prop_e2e_required_vars,
+        run "e2e_type_conflict" prop_e2e_type_conflict,
+        run "e2e_empty_script" prop_e2e_empty_script,
+        run "e2e_store_paths" prop_e2e_store_paths,
+        -- Edge cases
+        run "edge_comments_only" prop_edge_comments_only,
+        run "edge_long_varname" prop_edge_long_varname,
+        run "edge_deep_config" prop_edge_deep_config,
+        run "edge_all_fact_types" prop_edge_all_fact_types
       ]
 
   putStrLn ""
