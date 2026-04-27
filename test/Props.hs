@@ -1352,7 +1352,7 @@ prop_emit_json_runtime_args =
   let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
-   in property $ "%s" `T.isInfixOf` output && " ${PORT:?" `T.isInfixOf` output
+   in property $ "%s" `T.isInfixOf` output && " \"${PORT:?" `T.isInfixOf` output
 
 -- | emit-config YAML contains ${VAR:?} guards
 prop_emit_yaml_guarded :: Property

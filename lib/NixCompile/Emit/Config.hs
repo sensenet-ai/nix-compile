@@ -154,7 +154,6 @@ emitConfigFunction schema =
       "}"
     ]
 
-
 -- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text
 emitConfigJson schema =
@@ -191,7 +190,12 @@ emitTemplate (Template fmt args) =
   where
     argsText
       | null args = ""
-      | otherwise = " " <> T.unwords args
+      | otherwise = " " <> T.unwords (map quoteShellArg args)
+
+    -- Quote runtime expressions so values with spaces, percent signs, glob chars,
+    -- or newlines are passed as one printf argument. Command substitutions remain
+    -- active inside double quotes (e.g. "$(escape "${VAR:?}")").
+    quoteShellArg arg = "\"" <> arg <> "\""
 
 intersperseTemplate :: Template -> [Template] -> [Template]
 intersperseTemplate _ [] = []
@@ -339,4 +343,3 @@ renderTomlValue ConfigSpec {..} =
             else dynamicTemplate guardedVar
     _ ->
       literalTemplate "\"\"" -- TOML has no null; emit empty string as safe default
-
