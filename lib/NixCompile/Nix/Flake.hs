@@ -16,15 +16,15 @@ module NixCompile.Nix.Flake
     FlakeInput (..),
     FlakeOutputs (..),
     OutputEntry (..),
-    
+
     -- * Parsing
     parseFlake,
     parseFlakeDir,
-    
+
     -- * Type inference
     inferFlake,
     FlakeTypes (..),
-    
+
     -- * Schema
     flakeOutputSchema,
   )
@@ -34,16 +34,16 @@ import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types hiding (Binding)
-import qualified Nix.Expr.Types as Nix
+import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
-import qualified Nix.Utils as Nix
+import Nix.Utils qualified as Nix
 import NixCompile.Nix.Types
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
@@ -54,43 +54,52 @@ import System.FilePath ((</>))
 
 -- | A parsed flake
 data Flake = Flake
-  { flakeDescription :: !(Maybe Text)
-  , flakeInputs :: !(Map Text FlakeInput)
-  , flakeOutputs :: !FlakeOutputs
-  , flakePath :: !FilePath
+  { flakeDescription :: !(Maybe Text),
+    flakeInputs :: !(Map Text FlakeInput),
+    flakeOutputs :: !FlakeOutputs,
+    flakePath :: !FilePath
   }
   deriving (Eq, Show)
 
 -- | A flake input
 data FlakeInput = FlakeInput
-  { inputUrl :: !(Maybe Text)      -- "github:NixOS/nixpkgs"
-  , inputFlake :: !Bool            -- true by default
-  , inputFollows :: !(Maybe Text)  -- "nixpkgs"
+  { inputUrl :: !(Maybe Text), -- "github:NixOS/nixpkgs"
+    inputFlake :: !Bool, -- true by default
+    inputFollows :: !(Maybe Text) -- "nixpkgs"
   }
   deriving (Eq, Show)
 
 -- | Flake outputs
 data FlakeOutputs = FlakeOutputs
-  { outPackages :: !(Map Text (Map Text OutputEntry))      -- system -> name -> entry
-  , outDevShells :: !(Map Text (Map Text OutputEntry))
-  , outChecks :: !(Map Text (Map Text OutputEntry))
-  , outApps :: !(Map Text (Map Text OutputEntry))
-  , outOverlays :: !(Map Text OutputEntry)
-  , outNixosModules :: !(Map Text OutputEntry)
-  , outNixosConfigurations :: !(Map Text OutputEntry)
-  , outLib :: !(Maybe NExprLoc)
-  , outOther :: !(Map Text NExprLoc)
+  { outPackages :: !(Map Text (Map Text OutputEntry)), -- system -> name -> entry
+    outDevShells :: !(Map Text (Map Text OutputEntry)),
+    outChecks :: !(Map Text (Map Text OutputEntry)),
+    outApps :: !(Map Text (Map Text OutputEntry)),
+    outOverlays :: !(Map Text OutputEntry),
+    outNixosModules :: !(Map Text OutputEntry),
+    outNixosConfigurations :: !(Map Text OutputEntry),
+    outLib :: !(Maybe NExprLoc),
+    outOther :: !(Map Text NExprLoc)
   }
   deriving (Show)
 
 instance Eq FlakeOutputs where
-  a == b = outPackages a == outPackages b
+  a == b =
+    outPackages a == outPackages b
+      && outDevShells a == outDevShells b
+      && outChecks a == outChecks b
+      && outApps a == outApps b
+      && outOverlays a == outOverlays b
+      && outNixosModules a == outNixosModules b
+      && outNixosConfigurations a == outNixosConfigurations b
+
+-- outLib and outOther contain NExprLoc (no Eq), skipped
 
 -- | An output entry
 data OutputEntry = OutputEntry
-  { entryName :: !Text
-  , entryExpr :: !NExprLoc
-  , entryType :: !NixType
+  { entryName :: !Text,
+    entryExpr :: !NExprLoc,
+    entryType :: !NixType
   }
   deriving (Show)
 
@@ -127,12 +136,13 @@ extractFlake path expr = do
       let desc = extractDescription bindings
       let inputs = extractInputs bindings
       let outputs = extractOutputs bindings
-      Right $ Flake
-        { flakeDescription = desc
-        , flakeInputs = inputs
-        , flakeOutputs = outputs
-        , flakePath = path
-        }
+      Right $
+        Flake
+          { flakeDescription = desc,
+            flakeInputs = inputs,
+            flakeOutputs = outputs,
+            flakePath = path
+          }
     _ -> Left "flake.nix must be an attribute set"
 
 -- | Unwrap expression to get the inner NExprF
@@ -160,21 +170,23 @@ extractInputs bindings = case findBinding "inputs" bindings of
     parseInput (Nix.NamedVar (StaticKey name :| []) expr _) =
       Just (varNameText name, parseInputExpr expr)
     parseInput _ = Nothing
-    
+
     parseInputExpr :: NExprLoc -> FlakeInput
     parseInputExpr expr = case unwrapExpr expr of
       -- Simple: inputs.foo = { url = "..."; };
-      NSet _ bs -> FlakeInput
-        { inputUrl = findBinding "url" bs >>= extractStringLit
-        , inputFlake = maybe True id (findBinding "flake" bs >>= extractBoolLit)
-        , inputFollows = findBinding "follows" bs >>= extractStringLit
-        }
+      NSet _ bs ->
+        FlakeInput
+          { inputUrl = findBinding "url" bs >>= extractStringLit,
+            inputFlake = maybe True id (findBinding "flake" bs >>= extractBoolLit),
+            inputFollows = findBinding "follows" bs >>= extractStringLit
+          }
       -- String shorthand: inputs.foo = "github:...";
-      NStr _ -> FlakeInput
-        { inputUrl = extractStringLit expr
-        , inputFlake = True
-        , inputFollows = Nothing
-        }
+      NStr _ ->
+        FlakeInput
+          { inputUrl = extractStringLit expr,
+            inputFlake = True,
+            inputFollows = Nothing
+          }
       _ -> FlakeInput Nothing True Nothing
 
 -- | Extract outputs
@@ -183,8 +195,17 @@ extractOutputs bindings = case findBinding "outputs" bindings of
   Just outputsExpr -> parseOutputsExpr outputsExpr
   Nothing -> emptyOutputs
   where
-    emptyOutputs = FlakeOutputs Map.empty Map.empty Map.empty Map.empty 
-                                Map.empty Map.empty Map.empty Nothing Map.empty
+    emptyOutputs =
+      FlakeOutputs
+        Map.empty
+        Map.empty
+        Map.empty
+        Map.empty
+        Map.empty
+        Map.empty
+        Map.empty
+        Nothing
+        Map.empty
 
 -- | Parse the outputs expression (usually a function)
 parseOutputsExpr :: NExprLoc -> FlakeOutputs
@@ -193,8 +214,17 @@ parseOutputsExpr expr = case unwrapExpr expr of
   NAbs _ body -> parseOutputsBody body
   -- outputs = { ... } (already evaluated?)
   NSet _ bindings -> parseOutputsBindings bindings
-  _ -> FlakeOutputs Map.empty Map.empty Map.empty Map.empty 
-                    Map.empty Map.empty Map.empty Nothing Map.empty
+  _ ->
+    FlakeOutputs
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Nothing
+      Map.empty
 
 -- | Parse the body of the outputs function
 parseOutputsBody :: NExprLoc -> FlakeOutputs
@@ -202,31 +232,41 @@ parseOutputsBody expr = case unwrapExpr expr of
   NSet _ bindings -> parseOutputsBindings bindings
   NLet _ body -> parseOutputsBody body
   NWith _ body -> parseOutputsBody body
-  _ -> FlakeOutputs Map.empty Map.empty Map.empty Map.empty 
-                    Map.empty Map.empty Map.empty Nothing Map.empty
+  _ ->
+    FlakeOutputs
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Map.empty
+      Nothing
+      Map.empty
 
 -- | Parse output bindings
 parseOutputsBindings :: [Nix.Binding NExprLoc] -> FlakeOutputs
-parseOutputsBindings bindings = FlakeOutputs
-  { outPackages = parseSystemMap "packages"
-  , outDevShells = parseSystemMap "devShells"
-  , outChecks = parseSystemMap "checks"
-  , outApps = parseSystemMap "apps"
-  , outOverlays = parseSimpleMap "overlays"
-  , outNixosModules = parseSimpleMap "nixosModules"
-  , outNixosConfigurations = parseSimpleMap "nixosConfigurations"
-  , outLib = findBinding "lib" bindings
-  , outOther = Map.empty -- TODO
-  }
+parseOutputsBindings bindings =
+  FlakeOutputs
+    { outPackages = parseSystemMap "packages",
+      outDevShells = parseSystemMap "devShells",
+      outChecks = parseSystemMap "checks",
+      outApps = parseSystemMap "apps",
+      outOverlays = parseSimpleMap "overlays",
+      outNixosModules = parseSimpleMap "nixosModules",
+      outNixosConfigurations = parseSimpleMap "nixosConfigurations",
+      outLib = findBinding "lib" bindings,
+      outOther = Map.empty -- TODO
+    }
   where
     parseSystemMap :: Text -> Map Text (Map Text OutputEntry)
     parseSystemMap name = case findBinding name bindings of
       Just expr -> case unwrapExpr expr of
-        NSet _ systemBindings -> 
+        NSet _ systemBindings ->
           Map.fromList $ mapMaybe (parseSystemBinding name) systemBindings
         _ -> Map.empty
       Nothing -> Map.empty
-    
+
     parseSystemBinding :: Text -> Nix.Binding NExprLoc -> Maybe (Text, Map Text OutputEntry)
     parseSystemBinding category (Nix.NamedVar (StaticKey system :| []) expr _) =
       case unwrapExpr expr of
@@ -234,7 +274,7 @@ parseOutputsBindings bindings = FlakeOutputs
           Just (varNameText system, Map.fromList $ mapMaybe (parseEntry category) pkgBindings)
         _ -> Nothing
     parseSystemBinding _ _ = Nothing
-    
+
     parseSimpleMap :: Text -> Map Text OutputEntry
     parseSimpleMap name = case findBinding name bindings of
       Just expr -> case unwrapExpr expr of
@@ -242,12 +282,12 @@ parseOutputsBindings bindings = FlakeOutputs
           Map.fromList $ mapMaybe (parseEntry name) entryBindings
         _ -> Map.empty
       Nothing -> Map.empty
-    
+
     parseEntry :: Text -> Nix.Binding NExprLoc -> Maybe (Text, OutputEntry)
     parseEntry category (Nix.NamedVar (StaticKey name :| []) expr _) =
       let entryType = inferOutputType category
           entry = OutputEntry (varNameText name) expr entryType
-      in Just (varNameText name, entry)
+       in Just (varNameText name, entry)
     parseEntry _ _ = Nothing
 
 -- | Infer the expected type for an output category
@@ -258,8 +298,8 @@ inferOutputType = \case
   "checks" -> TDerivation
   "apps" -> TAttrs $ Map.fromList [("type", (TString, False)), ("program", (TString, False))]
   "overlays" -> TFun (TAttrsOpen Map.empty) (TFun (TAttrsOpen Map.empty) (TAttrsOpen Map.empty))
-  "nixosModules" -> TAttrsOpen Map.empty  -- Module structure
-  "nixosConfigurations" -> TAttrsOpen Map.empty  -- NixOS config
+  "nixosModules" -> TAttrsOpen Map.empty -- Module structure
+  "nixosConfigurations" -> TAttrsOpen Map.empty -- NixOS config
   "lib" -> TAttrsOpen Map.empty
   _ -> TAny
 
@@ -269,43 +309,52 @@ inferOutputType = \case
 
 -- | Inferred types for a flake
 data FlakeTypes = FlakeTypes
-  { ftOutputsType :: !NixType
-  , ftPackageTypes :: !(Map Text (Map Text NixType))
-  , ftLibTypes :: !(Maybe (Map Text NixType))
+  { ftOutputsType :: !NixType,
+    ftPackageTypes :: !(Map Text (Map Text NixType)),
+    ftLibTypes :: !(Maybe (Map Text NixType))
   }
   deriving (Eq, Show)
 
 -- | Infer types for a flake
 inferFlake :: Flake -> FlakeTypes
-inferFlake flake = FlakeTypes
-  { ftOutputsType = flakeOutputsType
-  , ftPackageTypes = Map.map (Map.map entryType) (outPackages (flakeOutputs flake))
-  , ftLibTypes = Nothing  -- TODO: infer lib types
-  }
+inferFlake flake =
+  FlakeTypes
+    { ftOutputsType = flakeOutputsType,
+      ftPackageTypes = Map.map (Map.map entryType) (outPackages (flakeOutputs flake)),
+      ftLibTypes = Nothing -- TODO: infer lib types
+    }
   where
     flakeOutputsType = TFun flakeInputsType outputsType
-    
-    flakeInputsType = TAttrs $ Map.fromList
-      [ ("self", (TAttrsOpen Map.empty, False))
-      ] `Map.union` Map.map (const $ (TAttrsOpen Map.empty, False)) (flakeInputs flake)
-    
-    outputsType = TAttrs $ Map.fromList $ catMaybes
-      [ if Map.null (outPackages o) then Nothing else Just ("packages", (systemMapType TDerivation, False))
-      , if Map.null (outDevShells o) then Nothing else Just ("devShells", (systemMapType TDerivation, False))
-      , if Map.null (outChecks o) then Nothing else Just ("checks", (systemMapType TDerivation, False))
-      , if Map.null (outApps o) then Nothing else Just ("apps", (systemMapType appType, False))
-      , if Map.null (outOverlays o) then Nothing else Just ("overlays", (TAttrsOpen Map.empty, False))
-      ]
-    
+
+    flakeInputsType =
+      TAttrs $
+        Map.fromList
+          [ ("self", (TAttrsOpen Map.empty, False))
+          ]
+          `Map.union` Map.map (const $ (TAttrsOpen Map.empty, False)) (flakeInputs flake)
+
+    outputsType =
+      TAttrs $
+        Map.fromList $
+          catMaybes
+            [ if Map.null (outPackages o) then Nothing else Just ("packages", (systemMapType TDerivation, False)),
+              if Map.null (outDevShells o) then Nothing else Just ("devShells", (systemMapType TDerivation, False)),
+              if Map.null (outChecks o) then Nothing else Just ("checks", (systemMapType TDerivation, False)),
+              if Map.null (outApps o) then Nothing else Just ("apps", (systemMapType appType, False)),
+              if Map.null (outOverlays o) then Nothing else Just ("overlays", (TAttrsOpen Map.empty, False))
+            ]
+
     o = flakeOutputs flake
-    
-    systemMapType t = TAttrs $ Map.fromList
-      [ ("x86_64-linux", (TAttrsOpen (Map.singleton "_" (t, False)), False))
-      , ("aarch64-linux", (TAttrsOpen (Map.singleton "_" (t, False)), False))
-      , ("x86_64-darwin", (TAttrsOpen (Map.singleton "_" (t, False)), False))
-      , ("aarch64-darwin", (TAttrsOpen (Map.singleton "_" (t, False)), False))
-      ]
-    
+
+    systemMapType t =
+      TAttrs $
+        Map.fromList
+          [ ("x86_64-linux", (TAttrsOpen (Map.singleton "_" (t, False)), False)),
+            ("aarch64-linux", (TAttrsOpen (Map.singleton "_" (t, False)), False)),
+            ("x86_64-darwin", (TAttrsOpen (Map.singleton "_" (t, False)), False)),
+            ("aarch64-darwin", (TAttrsOpen (Map.singleton "_" (t, False)), False))
+          ]
+
     appType = TAttrs $ Map.fromList [("type", (TString, False)), ("program", (TString, False))]
 
 -- ============================================================================
@@ -314,18 +363,20 @@ inferFlake flake = FlakeTypes
 
 -- | The expected flake output schema
 flakeOutputSchema :: NixType
-flakeOutputSchema = TAttrs $ Map.fromList
-  [ ("packages", (systemMapType TDerivation, False))
-  , ("devShells", (systemMapType TDerivation, False))
-  , ("checks", (systemMapType TDerivation, False))
-  , ("apps", (systemMapType appType, False))
-  , ("overlays", (TAttrsOpen (Map.singleton "_" (overlayType, False)), False))
-  , ("nixosModules", (TAttrsOpen Map.empty, False))
-  , ("nixosConfigurations", (TAttrsOpen Map.empty, False))
-  , ("lib", (TAttrsOpen Map.empty, False))
-  , ("formatter", (systemMapType TDerivation, False))
-  , ("templates", (TAttrsOpen (Map.singleton "_" (templateType, False)), False))
-  ]
+flakeOutputSchema =
+  TAttrs $
+    Map.fromList
+      [ ("packages", (systemMapType TDerivation, False)),
+        ("devShells", (systemMapType TDerivation, False)),
+        ("checks", (systemMapType TDerivation, False)),
+        ("apps", (systemMapType appType, False)),
+        ("overlays", (TAttrsOpen (Map.singleton "_" (overlayType, False)), False)),
+        ("nixosModules", (TAttrsOpen Map.empty, False)),
+        ("nixosConfigurations", (TAttrsOpen Map.empty, False)),
+        ("lib", (TAttrsOpen Map.empty, False)),
+        ("formatter", (systemMapType TDerivation, False)),
+        ("templates", (TAttrsOpen (Map.singleton "_" (templateType, False)), False))
+      ]
   where
     systemMapType t = TAttrsOpen (Map.singleton "_" ((TAttrsOpen (Map.singleton "_" (t, False))), False))
     appType = TAttrs $ Map.fromList [("type", (TString, False)), ("program", (TString, False))]

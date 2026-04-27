@@ -16,17 +16,17 @@ module NixCompile.Bash.Facts
   )
 where
 
-import Control.Monad.Reader (Reader, runReader, ask)
+import Control.Monad.Reader (Reader, ask, runReader)
 import Data.Foldable (toList)
-import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import qualified Data.Text as T
-import NixCompile.Bash.Parse (BashAST(..))
+import Data.Text qualified as T
+import NixCompile.Bash.Parse (BashAST (..))
 import NixCompile.Bash.Patterns
 import NixCompile.Types
-import qualified ShellCheck.AST as SA
-import ShellCheck.Interface (Position(..))
+import ShellCheck.AST qualified as SA
+import ShellCheck.Interface (Position (..))
 
 -- | Extract all facts from a bash AST
 extractFacts :: BashAST -> [Fact]
@@ -63,7 +63,7 @@ assignmentFacts sp name value =
 parseConfigArrayAssign :: Text -> Maybe ConfigPath
 parseConfigArrayAssign name
   | "config[" `T.isPrefixOf` name && "]" `T.isSuffixOf` name =
-      let pathText = T.dropEnd 1 (T.drop 7 name)  -- drop "config[" and "]"
+      let pathText = T.dropEnd 1 (T.drop 7 name) -- drop "config[" and "]"
           parts = T.splitOn "." pathText
        in if validConfigPath parts then Just parts else Nothing
   | otherwise = Nothing
@@ -74,7 +74,7 @@ configArrayFacts sp configPath value =
   let valueText = tokenToText value
       -- Determine if quoted by checking the token structure
       quoted = isQuotedToken value
-   in case extractSimpleVar valueText of
+   in case extractVarRef valueText of
         Just var -> [ConfigAssign configPath var quoted sp]
         Nothing -> [ConfigLit configPath (parseLiteral valueText) sp]
 
@@ -89,27 +89,27 @@ isQuotedToken (SA.OuterToken _ inner) = case inner of
 envVarFacts :: Span -> Text -> SA.Token -> [Fact]
 envVarFacts sp name value =
   case extractParamExpansion value of
-    -- ${VAR:-default} / ${VAR-default}
+    -- \${VAR:-default} / ${VAR-default}
     Just (DefaultValue _var (Just def)) ->
       defaultFacts def
-    -- ${VAR:=default} / ${VAR=default}
+    -- \${VAR:=default} / ${VAR=default}
     Just (AssignDefault _var (Just def)) ->
       defaultFacts def
     Just (AssignDefault _var Nothing) ->
       [DefaultIs name (LitString "") sp]
-    -- ${VAR:-} (empty default) should behave like default = "" (not required)
+    -- \${VAR:-} (empty default) should behave like default = "" (not required)
     Just (DefaultValue _var Nothing) ->
       [DefaultIs name (LitString "") sp]
-    -- ${VAR:?message} / ${VAR?message}
+    -- \${VAR:?message} / ${VAR?message}
     Just (ErrorIfUnset _var _) ->
       [Required name sp]
-    -- ${VAR} / $VAR
+    -- \${VAR} / $VAR
     Just (SimpleRef var) ->
       [AssignFrom name var sp]
-    -- ${VAR:+alt} - use alternate value
+    -- \${VAR:+alt} - use alternate value
     Just (UseAlternate _var _) ->
-      []  -- Not tracking alternate values for now
-    -- Plain assignment: VAR=value
+      [] -- Not tracking alternate values for now
+      -- Plain assignment: VAR=value
     Nothing ->
       case extractLiteral value of
         Just lit -> [AssignLit name lit sp]
@@ -149,20 +149,23 @@ configFactsFromToken sp tok@(SA.OuterToken _ inner) =
 configFactsFromParts :: Span -> [SA.Token] -> [Fact]
 configFactsFromParts sp parts =
   let text = T.concat (map tokenToText parts)
-      (lhs, rest) = T.breakOn "=" text
+      (lhs, rhs) = T.breakOn "=" text
    in case T.stripPrefix "config." lhs of
-        Just pathText | not (T.null rest) ->
-          let pathParts = T.splitOn "." pathText
-           in if not (validConfigPath pathParts)
-                then []
-                else
-                  let -- Find the value token(s) after the "=" in the literal
-                      (valueToks, quoted) = findValueTokens parts
-                      varOrLit = extractConfigValue valueToks quoted
-                   in case varOrLit of
-                        Just (Left var) -> [ConfigAssign pathParts var quoted sp]
-                        Just (Right lit) -> [ConfigLit pathParts lit sp]
-                        Nothing -> []
+        Just pathText
+          | not (T.null rhs) ->
+              let pathParts = T.splitOn "." pathText
+               in if not (validConfigPath pathParts)
+                    then []
+                    else
+                      let (valueToks, quoted) = findValueTokens parts
+                          valueText = T.drop 1 rhs
+                          varOrLit = case valueToks of
+                            [] -> extractConfigValueText valueText
+                            _ -> extractConfigValue valueToks quoted
+                       in case varOrLit of
+                            Just (Left var) -> [ConfigAssign pathParts var quoted sp]
+                            Just (Right lit) -> [ConfigLit pathParts lit sp]
+                            Nothing -> []
         _ -> []
 
 -- | Find value tokens and determine if quoted
@@ -172,15 +175,18 @@ findValueTokens parts = loop parts False
   where
     loop [] _ = ([], Unquoted)
     loop (t@(SA.OuterToken _ inner) : rest) seenEq = case inner of
-      SA.Inner_T_Literal s | "=" `T.isSuffixOf` (T.pack s) ->
-        -- We've hit the "=" in "config.x.y=", value starts next
-        loop rest True
-      SA.Inner_T_DoubleQuoted _ | seenEq ->
-        -- Double-quoted value
-        ([t], Quoted)
-      _ | seenEq ->
-        -- Unquoted value (could be literal or variable)
-        ([t], Unquoted)
+      SA.Inner_T_Literal s
+        | "=" `T.isSuffixOf` (T.pack s) ->
+            -- We've hit the "=" in "config.x.y=", value starts next
+            loop rest True
+      SA.Inner_T_DoubleQuoted _
+        | seenEq ->
+            -- Double-quoted value
+            ([t], Quoted)
+      _
+        | seenEq ->
+            -- Unquoted value (could be literal or variable)
+            ([t], Unquoted)
       _ ->
         -- Still in the path part
         loop rest seenEq
@@ -188,11 +194,20 @@ findValueTokens parts = loop parts False
 -- | Extract variable name or literal from value tokens
 extractConfigValue :: [SA.Token] -> Quoted -> Maybe (Either Text Literal)
 extractConfigValue [] _ = Nothing
-extractConfigValue (tok:_) _quoted =
-  let text = tokenToText tok
+extractConfigValue toks _quoted =
+  let text = T.concat (map tokenToText toks)
    in case extractSimpleVar text of
         Just var -> Just (Left var)
         Nothing -> Just (Right (parseLiteral text))
+
+-- | Extract variable name or literal from text directly (fallback when token-based
+-- extraction can't find value tokens, e.g. when path and value are a single token).
+extractConfigValueText :: Text -> Maybe (Either Text Literal)
+extractConfigValueText t
+  | T.null t = Nothing
+  | otherwise = case extractVarRef t of
+      Just var -> Just (Left var)
+      Nothing -> Just (Right (parseLiteral t))
 
 -- | Extract simple variable reference: ${VAR} or HOST -> Just "VAR"/"HOST"
 extractSimpleVar :: Text -> Maybe Text
@@ -249,32 +264,75 @@ isIgnoredCommand cmd = cmd `elem` shellBuiltins
 shellBuiltins :: [Text]
 shellBuiltins =
   [ -- Flow control
-    "if", "then", "else", "elif", "fi"
-  , "case", "esac"
-  , "for", "while", "until", "do", "done"
-  , "function", "return"
-  , "break", "continue"
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "case",
+    "esac",
+    "for",
+    "while",
+    "until",
+    "do",
+    "done",
+    "function",
+    "return",
+    "break",
+    "continue",
     -- Variable/environment
-  , "set", "unset", "export", "declare", "local", "readonly", "typeset"
-  , "let"
-    -- Shell operation  
-  , "source", "."
-  , "cd", "pwd", "pushd", "popd", "dirs"
-  , "echo", "printf", "read"
-  , "exit", "exec"
-  , "trap", "wait", "kill"
-  , "true", "false", ":"
-  , "test", "["
+    "set",
+    "unset",
+    "export",
+    "declare",
+    "local",
+    "readonly",
+    "typeset",
+    "let",
+    -- Shell operation
+    "source",
+    ".",
+    "cd",
+    "pwd",
+    "pushd",
+    "popd",
+    "dirs",
+    "echo",
+    "printf",
+    "read",
+    "exit",
+    "exec",
+    "trap",
+    "wait",
+    "kill",
+    "true",
+    "false",
+    ":",
+    "test",
+    "[",
     -- Job control
-  , "bg", "fg", "jobs", "disown"
+    "bg",
+    "fg",
+    "jobs",
+    "disown",
     -- Misc builtins
-  , ""  -- Empty string placeholder
-  , "builtin", "command", "type", "hash"
-  , "help", "enable"
-  , "shopt", "bind", "complete", "compgen"
-  , "getopts", "shift"
-  , "times", "ulimit", "umask"
-  , "history", "fc"
+    "builtin",
+    "command",
+    "type",
+    "hash",
+    "help",
+    "enable",
+    "shopt",
+    "bind",
+    "complete",
+    "compgen",
+    "getopts",
+    "shift",
+    "times",
+    "ulimit",
+    "umask",
+    "history",
+    "fc"
   ]
 
 -- NOTE: The previous commonUtilities list has been REMOVED.
@@ -286,11 +344,12 @@ cmdInvocationFacts :: Span -> Text -> [SA.Token] -> Reader (Map SA.Id (Position,
 cmdInvocationFacts sp cmd args = do
   -- What kind of command is this?
   let pathFact
+        | T.null cmd = [] -- empty text from unrecognized AST nodes; skip
         | isStorePath cmd = [UsesStorePath (StorePath cmd) sp]
         | Just var <- extractVarRef cmd = [DynamicCommand var sp]
         | "@__nix_compile_interp_" `T.isPrefixOf` cmd = [BareCommand cmd sp]
         | "@" `T.isPrefixOf` cmd = [] -- Ignore other substitution placeholders like @foo@
-        | isIgnoredCommand cmd = []  -- builtins are OK
+        | isIgnoredCommand cmd = [] -- builtins are OK
         | otherwise = [BareCommand cmd sp]
 
   -- Extract the command name (strip store path prefix if present)
@@ -385,9 +444,10 @@ mkSpan scId = do
   posMap <- ask
   case Map.lookup scId posMap of
     Just (start, end) ->
-      pure $ Span
-        (Loc (fromIntegral $ posLine start) (fromIntegral $ posColumn start))
-        (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
-        (Just (posFile start))
+      pure $
+        Span
+          (Loc (fromIntegral $ posLine start) (fromIntegral $ posColumn start))
+          (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
+          (Just (posFile start))
     Nothing ->
       pure $ Span (Loc 0 0) (Loc 0 0) Nothing

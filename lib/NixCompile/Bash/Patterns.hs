@@ -32,11 +32,11 @@ module NixCompile.Bash.Patterns
 where
 
 import Control.Monad (guard)
-import Data.Char (isAlpha, isAlphaNum, isDigit)
+import Data.Char (isDigit)
 import Data.Text (Text)
-import qualified Data.Text as T
-import Text.Read (readMaybe)
+import Data.Text qualified as T
 import NixCompile.Types
+import Text.Read (readMaybe)
 
 -- ============================================================================
 -- Parameter Expansion
@@ -44,15 +44,15 @@ import NixCompile.Types
 
 -- | Bash parameter expansion patterns
 data ParamExpansion
-  = -- | ${VAR:-default} or ${VAR-default}
+  = -- | \${VAR:-default} or ${VAR-default}
     DefaultValue Text (Maybe Text)
-  | -- | ${VAR:=default} - assign default
+  | -- | \${VAR:=default} - assign default
     AssignDefault Text (Maybe Text)
-  | -- | ${VAR:?message} or ${VAR:?} - error if unset
+  | -- | \${VAR:?message} or ${VAR:?} - error if unset
     ErrorIfUnset Text (Maybe Text)
-  | -- | ${VAR:+alt} - use alt if set
+  | -- | \${VAR:+alt} - use alt if set
     UseAlternate Text (Maybe Text)
-  | -- | $VAR or ${VAR} - simple reference
+  | -- | \$VAR or ${VAR} - simple reference
     SimpleRef Text
   deriving (Eq, Show)
 
@@ -74,8 +74,9 @@ parseExpansionBody body =
   --   ${VAR:?} ${VAR?}
   case T.breakOn ":" body of
     -- Operators with ":" (bash semantics differ for unset vs null)
-    (var, rest) | ":" `T.isPrefixOf` rest ->
-      parseOpWithColon var (T.drop 1 rest)
+    (var, rest)
+      | ":" `T.isPrefixOf` rest ->
+          parseOpWithColon var (T.drop 1 rest)
     -- Operators without ":" (only test for unset)
     _ ->
       parseOpWithoutColon body
@@ -112,10 +113,13 @@ parseExpansionBody body =
         && T.all isVarChar t
 
     isValidStart t = case T.uncons t of
-      Just (c, _) -> isAlpha c || c == '_'
+      Just (c, _) -> isAsciiAlpha c || c == '_'
       Nothing -> False
 
-    isVarChar c = isAlphaNum c || c == '_'
+    isVarChar c = isAsciiAlphaNum c || c == '_'
+
+    isAsciiAlpha c = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+    isAsciiAlphaNum c = isAsciiAlpha c || (c >= '0' && c <= '9')
 
 -- ============================================================================
 -- Config Assignment
@@ -148,7 +152,7 @@ parseConfigArraySyntax line = do
   inner <- T.stripPrefix "config[" lhs
   -- Must end with ]
   guard ("]" `T.isSuffixOf` inner)
-  let pathText = T.dropEnd 1 inner  -- drop the ]
+  let pathText = T.dropEnd 1 inner -- drop the ]
   -- Must have = and something after
   guard (not (T.null rest))
   let rhs = T.drop 1 rest -- drop the =
@@ -163,6 +167,7 @@ parseConfigArraySyntax line = do
         configValue = value,
         configQuoted = quoted
       }
+
 -- | Parse config.x.y.z=$VAR (legacy dot syntax)
 parseConfigDotSyntax :: Text -> Maybe ConfigAssignment
 parseConfigDotSyntax line = do
@@ -184,6 +189,7 @@ parseConfigDotSyntax line = do
         configValue = value,
         configQuoted = quoted
       }
+
 -- | Config paths must be non-empty and contain no empty segments.
 --
 -- Examples (invalid):
@@ -199,24 +205,37 @@ isSafeConfigChar c = c == '_' || c == '-' || (c >= 'A' && c <= 'Z') || (c >= 'a'
 
 parseConfigValue :: Text -> Maybe (Either Text Literal, Quoted)
 parseConfigValue t
-  -- Quoted brace variable: "${VAR}"
-  | "\"${" `T.isPrefixOf` t && "}\"" `T.isSuffixOf` t =
-      Just (Left (T.dropEnd 2 (T.drop 3 t)), Quoted)
+  -- Quoted brace variable: "${VAR}" or "${VAR:-default}"
+  | "\"${" `T.isPrefixOf` t && "\"" `T.isSuffixOf` t =
+      let inner = T.dropEnd 1 (T.drop 1 t)
+       in if "${" `T.isPrefixOf` inner && "}" `T.isSuffixOf` inner
+            then case parseParamExpansion inner of
+              Just pe -> Just (leftVar pe, Quoted)
+              Nothing -> Just (Right (parseLiteralValue inner), Quoted)
+            else Just (Right (parseLiteralValue inner), Quoted)
   -- Quoted simple variable: "$VAR"
   | "\"$" `T.isPrefixOf` t && "\"" `T.isSuffixOf` t =
       Just (Left (T.dropEnd 1 (T.drop 2 t)), Quoted)
   -- Quoted literal string: "hello"
   | "\"" `T.isPrefixOf` t && "\"" `T.isSuffixOf` t =
       Just (Right (LitString (T.dropEnd 1 (T.drop 1 t))), Quoted)
-  -- Unquoted brace variable: ${VAR}
+  -- Unquoted brace variable: ${VAR} or ${VAR:-default}
   | "${" `T.isPrefixOf` t && "}" `T.isSuffixOf` t =
-      Just (Left (T.dropEnd 1 (T.drop 2 t)), Unquoted)
+      case parseParamExpansion t of
+        Just pe -> Just (leftVar pe, Unquoted)
+        Nothing -> Just (Right (parseLiteralValue t), Unquoted)
   -- Unquoted simple variable: $VAR
   | "$" `T.isPrefixOf` t =
       Just (Left (T.drop 1 t), Unquoted)
   -- Unquoted literal
   | otherwise =
       Just (Right (parseLiteralValue t), Unquoted)
+  where
+    leftVar (SimpleRef v) = Left v
+    leftVar (DefaultValue v _) = Left v
+    leftVar (AssignDefault v _) = Left v
+    leftVar (ErrorIfUnset v _) = Left v
+    leftVar (UseAlternate v _) = Left v
 
 parseLiteralValue :: Text -> Literal
 parseLiteralValue t
@@ -238,15 +257,16 @@ parseLiteral t
   | t == "false" = LitBool False
   | isNumericLiteral t = case safeParseInt t of
       Just n -> LitInt n
-      Nothing -> LitString t  -- Overflow, treat as string
+      Nothing -> LitString t -- Overflow, treat as string
   | isStorePathSafe t = LitPath (StorePath t)
   | otherwise = LitString t
 
 -- | Check if text is a valid store path (no traversal)
 isStorePathSafe :: Text -> Bool
-isStorePathSafe t = "/nix/store/" `T.isPrefixOf` t
-                 && not (".." `T.isInfixOf` t)
-                 && not ("//" `T.isInfixOf` t)
+isStorePathSafe t =
+  "/nix/store/" `T.isPrefixOf` t
+    && not (".." `T.isInfixOf` t)
+    && not ("//" `T.isInfixOf` t)
 
 -- | Check if text is a numeric literal
 -- Must have at least one digit, optional leading minus
@@ -255,7 +275,7 @@ isNumericLiteral :: Text -> Bool
 isNumericLiteral t =
   not (T.null t)
     && T.all isDigitOrSign t
-    && T.any isDigit t  -- Must have at least one digit
+    && T.any isDigit t -- Must have at least one digit
     && validMinus t
     && validLength t
     && fitsInt64 t

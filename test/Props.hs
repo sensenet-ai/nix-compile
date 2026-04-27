@@ -29,22 +29,23 @@ import Control.Monad (replicateM)
 import Data.Either (isRight)
 import Data.List (nub)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import NixCompile
-import NixCompile.Bash.Builtins (lookupArgType, builtins)
+import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
-import NixCompile.Emit.Config (buildConfigTree, ConfigTree(..))
-import NixCompile.Infer.Constraint (factsToConstraints, factToConstraints)
-import NixCompile.Infer.Unify (unify, solve)
-import NixCompile.Schema.Build (buildSchema)
+import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree)
+import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
+import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.Nix.Effect
-import qualified NixCompile.Nix.Types as NT
+import NixCompile.Nix.Scope qualified as Scope
+import NixCompile.Nix.Types qualified as NT
+import NixCompile.Schema.Build (buildSchema)
 import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
 
@@ -55,33 +56,34 @@ import Test.QuickCheck
 -- | Generate valid bash variable names
 genVarName :: Gen Text
 genVarName = do
-  first <- elements $ ['A'..'Z'] ++ ['a'..'z'] ++ ['_']
-  rest <- listOf $ elements $ ['A'..'Z'] ++ ['a'..'z'] ++ ['0'..'9'] ++ ['_']
-  let name = first : take 15 rest  -- reasonable length
+  first <- elements $ ['A' .. 'Z'] ++ ['a' .. 'z'] ++ ['_']
+  rest <- listOf $ elements $ ['A' .. 'Z'] ++ ['a' .. 'z'] ++ ['0' .. '9'] ++ ['_']
+  let name = first : take 15 rest -- reasonable length
   return $ T.pack name
 
 -- | Generate valid uppercase env var names (convention)
 genEnvVarName :: Gen Text
 genEnvVarName = do
-  first <- elements ['A'..'Z']
-  rest <- listOf $ elements $ ['A'..'Z'] ++ ['0'..'9'] ++ ['_']
+  first <- elements ['A' .. 'Z']
+  rest <- listOf $ elements $ ['A' .. 'Z'] ++ ['0' .. '9'] ++ ['_']
   let name = first : take 10 rest
   return $ T.pack name
 
 -- | Generate integer literals (common in bash)
 genIntLiteral :: Gen Int
-genIntLiteral = frequency
-  [ (3, choose (0, 100))      -- common small numbers
-  , (2, choose (1000, 65535)) -- ports, etc.
-  , (1, choose (-100, -1))    -- negative
-  , (1, pure 0)
-  ]
+genIntLiteral =
+  frequency
+    [ (3, choose (0, 100)), -- common small numbers
+      (2, choose (1000, 65535)), -- ports, etc.
+      (1, choose (-100, -1)), -- negative
+      (1, pure 0)
+    ]
 
 -- | Generate string literals (no special chars that break bash)
 genStringLiteral :: Gen Text
 genStringLiteral = do
   len <- choose (1, 20)
-  chars <- replicateM len $ elements $ ['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9'] ++ ['-', '_', '.']
+  chars <- replicateM len $ elements $ ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ ['-', '_', '.']
   return $ T.pack chars
 
 -- | Generate boolean literals
@@ -90,11 +92,12 @@ genBoolLiteral = arbitrary
 
 -- | Generate a Literal
 genLiteral :: Gen Literal
-genLiteral = oneof
-  [ LitInt <$> genIntLiteral
-  , LitString <$> genStringLiteral
-  , LitBool <$> genBoolLiteral
-  ]
+genLiteral =
+  oneof
+    [ LitInt <$> genIntLiteral,
+      LitString <$> genStringLiteral,
+      LitBool <$> genBoolLiteral
+    ]
 
 -- | Generate a Type
 genType :: Gen Type
@@ -106,10 +109,11 @@ genTypeVar = TypeVar <$> genVarName
 
 -- | Generate a Type including type variables
 genTypeWithVars :: Gen Type
-genTypeWithVars = frequency
-  [ (4, genType)
-  , (1, TVar <$> genTypeVar)
-  ]
+genTypeWithVars =
+  frequency
+    [ (4, genType),
+      (1, TVar <$> genTypeVar)
+    ]
 
 -- | Generate a Span (arbitrary, not semantic)
 genSpan :: Gen Span
@@ -128,16 +132,17 @@ genConfigPath = do
 
 -- | Generate a Fact
 genFact :: Gen Fact
-genFact = oneof
-  [ DefaultIs <$> genEnvVarName <*> genLiteral <*> genSpan
-  , DefaultFrom <$> genEnvVarName <*> genEnvVarName <*> genSpan
-  , Required <$> genEnvVarName <*> genSpan
-  , AssignFrom <$> genEnvVarName <*> genEnvVarName <*> genSpan
-  , AssignLit <$> genEnvVarName <*> genLiteral <*> genSpan
-  , ConfigAssign <$> genConfigPath <*> genEnvVarName <*> elements [Quoted, Unquoted] <*> genSpan
-  , ConfigLit <$> genConfigPath <*> genLiteral <*> genSpan
-  , BareCommand <$> genStringLiteral <*> genSpan
-  ]
+genFact =
+  oneof
+    [ DefaultIs <$> genEnvVarName <*> genLiteral <*> genSpan,
+      DefaultFrom <$> genEnvVarName <*> genEnvVarName <*> genSpan,
+      Required <$> genEnvVarName <*> genSpan,
+      AssignFrom <$> genEnvVarName <*> genEnvVarName <*> genSpan,
+      AssignLit <$> genEnvVarName <*> genLiteral <*> genSpan,
+      ConfigAssign <$> genConfigPath <*> genEnvVarName <*> elements [Quoted, Unquoted] <*> genSpan,
+      ConfigLit <$> genConfigPath <*> genLiteral <*> genSpan,
+      BareCommand <$> genStringLiteral <*> genSpan
+    ]
 
 -- | Generate a Constraint
 genConstraint :: Gen Constraint
@@ -151,13 +156,14 @@ genBashFragment = do
 
 -- | Generate a single bash line
 genBashLine :: Gen Text
-genBashLine = frequency
-  [ (3, genAssignment)
-  , (2, genConfigAssignment)
-  , (1, genCommand)
-  , (1, pure "")  -- empty line
-  , (1, genComment)
-  ]
+genBashLine =
+  frequency
+    [ (3, genAssignment),
+      (2, genConfigAssignment),
+      (1, genCommand),
+      (1, pure ""), -- empty line
+      (1, genComment)
+    ]
 
 -- | Generate a variable assignment
 genAssignment :: Gen Text
@@ -168,27 +174,30 @@ genAssignment = do
 
 -- | Generate assignment RHS
 genAssignmentValue :: Text -> Gen Text
-genAssignmentValue var = oneof
-  [ do -- ${VAR:-default}
-      def <- genLiteralText
-      return $ "\"${" <> var <> ":-" <> def <> "}\""
-  , do -- ${VAR:?}
-      return $ "\"${" <> var <> ":?}\""
-  , do -- literal
-      lit <- genLiteralText
-      return $ "\"" <> lit <> "\""
-  , do -- $OTHER
-      other <- genEnvVarName
-      return $ "\"$" <> other <> "\""
-  ]
+genAssignmentValue var =
+  oneof
+    [ do
+        def <- genLiteralText
+        return $ "\"${" <> var <> ":-" <> def <> "}\"",
+      do
+        return $ "\"${" <> var <> ":?}\"",
+      do
+        -- literal
+        lit <- genLiteralText
+        return $ "\"" <> lit <> "\"",
+      do
+        other <- genEnvVarName
+        return $ "\"$" <> other <> "\""
+    ]
 
 -- | Generate literal as text
 genLiteralText :: Gen Text
-genLiteralText = oneof
-  [ T.pack . show <$> genIntLiteral
-  , genStringLiteral
-  , elements ["true", "false"]
-  ]
+genLiteralText =
+  oneof
+    [ T.pack . show <$> genIntLiteral,
+      genStringLiteral,
+      elements ["true", "false"]
+    ]
 
 -- | Generate config.* assignment
 genConfigAssignment :: Gen Text
@@ -209,11 +218,12 @@ genCommand = do
 
 -- | Generate command argument
 genArg :: Gen Text
-genArg = oneof
-  [ genStringLiteral
-  , ("$" <>) <$> genEnvVarName
-  , ("\"$" <>) . (<> "\"") <$> genEnvVarName
-  ]
+genArg =
+  oneof
+    [ genStringLiteral,
+      ("$" <>) <$> genEnvVarName,
+      ("\"$" <>) . (<> "\"") <$> genEnvVarName
+    ]
 
 -- | Generate a comment
 genComment :: Gen Text
@@ -277,27 +287,30 @@ instance Arbitrary NT.NixType where
   arbitrary = sized genNixType
 
 genNixType :: Int -> Gen NT.NixType
-genNixType n | n <= 0 = oneof
-  [ pure NT.TInt
-  , pure NT.TFloat
-  , pure NT.TBool
-  , pure NT.TString
-  , NT.TStrLit <$> genStringLiteral
-  , pure NT.TPath
-  , pure NT.TNull
-  , pure NT.TDerivation
-  , pure NT.TAny
-  , NT.TVar <$> arbitrary
-  ]
-genNixType n = oneof
-  [ pure NT.TInt
-  , pure NT.TString
-  , pure NT.TBool
-  , NT.TList <$> genNixType (n `div` 2)
-  , NT.TFun <$> genNixType (n `div` 2) <*> genNixType (n `div` 2)
-  , NT.TAttrs <$> genAttrs (n `div` 2)
-  , NT.TAttrsOpen <$> genAttrs (n `div` 2)
-  ]
+genNixType n
+  | n <= 0 =
+      oneof
+        [ pure NT.TInt,
+          pure NT.TFloat,
+          pure NT.TBool,
+          pure NT.TString,
+          NT.TStrLit <$> genStringLiteral,
+          pure NT.TPath,
+          pure NT.TNull,
+          pure NT.TDerivation,
+          pure NT.TAny,
+          NT.TVar <$> arbitrary
+        ]
+genNixType n =
+  oneof
+    [ pure NT.TInt,
+      pure NT.TString,
+      pure NT.TBool,
+      NT.TList <$> genNixType (n `div` 2),
+      NT.TFun <$> genNixType (n `div` 2) <*> genNixType (n `div` 2),
+      NT.TAttrs <$> genAttrs (n `div` 2),
+      NT.TAttrsOpen <$> genAttrs (n `div` 2)
+    ]
   where
     genAttrs k = do
       size <- choose (0, 3)
@@ -309,20 +322,22 @@ genNixType n = oneof
       pure $ Map.fromList kvs
 
 instance Arbitrary Coeffect where
-  arbitrary = oneof
-    [ RequireUpstream <$> genVarName <*> arbitrary
-    , RequireSelf <$> genVarName <*> arbitrary
-    , do
-        p <- genStringLiteral -- path
-        pure $ RequireImport (T.unpack p)
-    ]
+  arbitrary =
+    oneof
+      [ RequireUpstream <$> genVarName <*> arbitrary,
+        RequireSelf <$> genVarName <*> arbitrary,
+        do
+          p <- genStringLiteral -- path
+          pure $ RequireImport (T.unpack p)
+      ]
 
 instance Arbitrary Effect where
-  arbitrary = oneof
-    [ Define <$> genVarName <*> arbitrary
-    , Override <$> genVarName <*> arbitrary
-    , Modify <$> genVarName
-    ]
+  arbitrary =
+    oneof
+      [ Define <$> genVarName <*> arbitrary,
+        Override <$> genVarName <*> arbitrary,
+        Modify <$> genVarName
+      ]
 
 instance Arbitrary OverlaySignature where
   arbitrary = OverlaySignature <$> arbitrary <*> arbitrary
@@ -347,10 +362,10 @@ prop_unify_valid_subst :: Type -> Type -> Property
 prop_unify_valid_subst t1 t2 =
   isRight (unify t1 t2) ==>
     case unify t1 t2 of
-      Right s -> 
+      Right s ->
         let t1' = applySubst s t1
             t2' = applySubst s t2
-        in t1' == t2' || numericCompatible t1' t2'
+         in t1' == t2' || numericCompatible t1' t2'
       Left _ -> False
   where
     numericCompatible TNumeric TInt = True
@@ -429,12 +444,12 @@ prop_solve_satisfies :: Property
 prop_solve_satisfies = forAll genSatisfiableConstraints $ \constraints ->
   case solve constraints of
     Right s -> all (satisfied s) constraints
-    Left _ -> True  -- If it fails to solve, that's OK (not falsified)
+    Left _ -> True -- If it fails to solve, that's OK (not falsified)
   where
-    satisfied s (t1 :~: t2) = 
+    satisfied s (t1 :~: t2) =
       let t1' = applySubst s t1
           t2' = applySubst s t2
-      in t1' == t2' || numericCompatible t1' t2'
+       in t1' == t2' || numericCompatible t1' t2'
     numericCompatible TNumeric TInt = True
     numericCompatible TInt TNumeric = True
     numericCompatible TNumeric TBool = True
@@ -444,34 +459,36 @@ prop_solve_satisfies = forAll genSatisfiableConstraints $ \constraints ->
 
 -- | Generate constraint sets that are more likely to be satisfiable
 genSatisfiableConstraints :: Gen [Constraint]
-genSatisfiableConstraints = frequency
-  [ (3, genReflexiveConstraints)
-  , (2, genVarConstraints)
-  , (1, genMixedConstraints)
-  ]
+genSatisfiableConstraints =
+  frequency
+    [ (3, genReflexiveConstraints),
+      (2, genVarConstraints),
+      (1, genMixedConstraints)
+    ]
   where
     -- All reflexive: T ~ T
     genReflexiveConstraints = do
       ts <- listOf genType
       return $ map (\t -> t :~: t) ts
-    
+
     -- Variable constraints: X ~ T, Y ~ T
     genVarConstraints = do
       n <- choose (1, 5)
       vs <- replicateM n genTypeVar
       ts <- replicateM n genType
       return $ zipWith (\v t -> TVar v :~: t) vs ts
-    
+
     -- Mixed but compatible
     genMixedConstraints = do
       n <- choose (1, 3)
       replicateM n $ do
         t <- genType
         oneof
-          [ pure (t :~: t)
-          , do v <- genTypeVar
-               pure (TVar v :~: t)
-          , case t of
+          [ pure (t :~: t),
+            do
+              v <- genTypeVar
+              pure (TVar v :~: t),
+            case t of
               TInt -> pure (TNumeric :~: TInt)
               TBool -> pure (TNumeric :~: TBool)
               _ -> pure (t :~: t)
@@ -583,9 +600,9 @@ prop_schema_required_marked facts =
 prop_parser_no_crash :: Property
 prop_parser_no_crash = forAll genBashFragment $ \script ->
   case parseBash script of
-    Left _ -> True   -- Parse error is OK
-    Right _ -> True  -- Success is OK
-  -- Property: we don't throw an exception
+    Left _ -> True -- Parse error is OK
+    Right _ -> True -- Success is OK
+    -- Property: we don't throw an exception
 
 -- | Parser is deterministic
 prop_parser_deterministic :: Property
@@ -673,20 +690,31 @@ prop_builtins_unknown_cmd = forAll genStringLiteral $ \cmd ->
 -- Properties: Config tree
 -- ============================================================================
 
--- | Config tree preserves all non-empty paths
--- Note: Empty paths [] are not meaningful in config.x.y syntax
+-- | Config tree preserves all non-empty paths when no path is a prefix of another.
+-- The tree can't represent a key as both a leaf and a branch (e.g. ["v"] and ["v","a"]).
+-- We filter to conflict-free path sets before asserting completeness.
 prop_config_tree_complete :: [(ConfigPath, ConfigSpec)] -> Bool
 prop_config_tree_complete items =
   let -- Filter out empty paths and paths with empty components
       validItems = filter (validPath . fst) items
       m = Map.fromList validItems
-      tree = buildConfigTree m
+      -- Remove paths that are strict prefixes of other paths (or vice versa)
+      keys = Map.keys m
+      conflictFree = Map.filterWithKey (\k _ -> not (hasConflict k keys)) m
+      tree = buildConfigTree conflictFree
       paths = collectPaths tree
-   in Set.fromList (Map.keys m) `Set.isSubsetOf` paths
+   in Set.fromList (Map.keys conflictFree) `Set.isSubsetOf` paths
   where
-    validPath [] = False  -- Empty path not valid
-    validPath ps = all (not . T.null) ps  -- No empty components
-    
+    validPath [] = False -- Empty path not valid
+    validPath ps = all (not . T.null) ps -- No empty components
+
+    -- A path conflicts if it is a strict prefix of, or has a strict prefix in, the path set
+    hasConflict p ps = any (\q -> p /= q && (p `isPrefixOfPath` q || q `isPrefixOfPath` p)) ps
+
+    isPrefixOfPath [] _ = True
+    isPrefixOfPath _ [] = False
+    isPrefixOfPath (x : xs) (y : ys) = x == y && isPrefixOfPath xs ys
+
     collectPaths :: ConfigTree -> Set ConfigPath
     collectPaths (ConfigLeaf _) = Set.singleton []
     collectPaths (ConfigBranch m) =
@@ -699,6 +727,57 @@ prop_config_tree_complete items =
 prop_config_tree_deterministic :: Map ConfigPath ConfigSpec -> Bool
 prop_config_tree_deterministic m =
   buildConfigTree m == buildConfigTree m
+
+-- ============================================================================
+-- Properties: Scope graph
+-- ============================================================================
+
+-- | Edge priority: Parent edges are resolved before With edges.
+-- A reference 'x' in a scope with both a Parent edge (to a LetScope with 'x')
+-- and a With edge (to a WithScope with 'x') should resolve to the LetScope decl.
+prop_scope_parent_before_with :: Bool
+prop_scope_parent_before_with =
+  let mkSpan = Scope.SourceSpan (Scope.SourcePos 1 1) (Scope.SourcePos 1 1) Nothing
+      declIn sid = Scope.Declaration "x" mkSpan sid Nothing Nothing Nothing
+      refIn sid = Scope.Reference "x" mkSpan sid Scope.VarRef
+      sg =
+        Scope.ScopeGraph
+          { Scope.sgScopes =
+              Map.fromList
+                [ ( Scope.ScopeId 0,
+                    Scope.Scope
+                      (Scope.ScopeId 0)
+                      [] -- no local decl for 'x'
+                      [refIn (Scope.ScopeId 0)]
+                      [ Scope.Edge (Scope.ScopeId 0) (Scope.ScopeId 1) Scope.Parent,
+                        Scope.Edge (Scope.ScopeId 0) (Scope.ScopeId 2) Scope.With
+                      ]
+                      Scope.FileScope
+                  ),
+                  ( Scope.ScopeId 1,
+                    Scope.Scope
+                      (Scope.ScopeId 1)
+                      [declIn (Scope.ScopeId 1)]
+                      []
+                      []
+                      Scope.LetScope
+                  ),
+                  ( Scope.ScopeId 2,
+                    Scope.Scope
+                      (Scope.ScopeId 2)
+                      [declIn (Scope.ScopeId 2)]
+                      []
+                      []
+                      Scope.WithScope
+                  )
+                ],
+            Scope.sgRoot = Scope.ScopeId 0,
+            Scope.sgNextId = 3,
+            Scope.sgFile = Nothing
+          }
+   in case Scope.resolve sg (refIn (Scope.ScopeId 0)) of
+        Right decl -> Scope.declScope decl == Scope.ScopeId 1
+        Left _ -> False
 
 -- ============================================================================
 -- Properties: Literal parsing
@@ -751,7 +830,7 @@ prop_e2e_concrete_types = forAll genBashFragment $ \script ->
     Left _ -> True
     Right s -> all isConcrete (Map.elems (schemaEnv (scriptSchema s)))
   where
-    isConcrete EnvSpec{..} = case envType of
+    isConcrete EnvSpec {..} = case envType of
       TVar _ -> False
       _ -> True
 
@@ -785,9 +864,9 @@ prop_stress_chain :: Property
 prop_stress_chain = forAll genChainedVars $ \script ->
   case parseScript script of
     Left _ -> True
-    Right s -> 
+    Right s ->
       let schema = scriptSchema s
-      in Map.size (schemaEnv schema) > 0
+       in Map.size (schemaEnv schema) > 0
 
 -- | Generator for large scripts
 genLargeScript :: Gen Text
@@ -823,9 +902,9 @@ genChainedVars = do
   case uniqueVars of
     [] -> return ""
     [v] -> return $ v <> "=\"${" <> v <> ":-default}\""
-    (v1:vRest) -> do
+    (v1 : vRest) -> do
       let first = v1 <> "=\"${" <> v1 <> ":-42}\""
-      let rest = zipWith (\v prev -> v <> "=\"$" <> prev <> "\"") vRest (v1:vRest)
+      let rest = zipWith (\v prev -> v <> "=\"$" <> prev <> "\"") vRest (v1 : vRest)
       return $ T.unlines (first : rest)
 
 -- | Transitivity: if A ~ B and B ~ C succeed, A ~ C should relate
@@ -835,18 +914,18 @@ prop_unify_transitivity = forAll genTypeVar $ \v ->
     forAll genType $ \t2 ->
       let c1 = TVar v :~: t1
           c2 = TVar v :~: t2
-      in case solve [c1, c2] of
-           Right _ -> True  -- If both unify with v, they're compatible
-           Left _ -> not (t1 == t2)  -- Failure means types were incompatible
+       in case solve [c1, c2] of
+            Right _ -> True -- If both unify with v, they're compatible
+            Left _ -> not (t1 == t2) -- Failure means types were incompatible
 
 -- | Schema config paths match input
 prop_schema_config_paths :: Property
 prop_schema_config_paths = forAll genConfigScript $ \script ->
   case parseScript script of
     Left _ -> True
-    Right s -> 
+    Right s ->
       let cfg = schemaConfig (scriptSchema s)
-      in all (not . null) (Map.keys cfg)
+       in all (not . null) (Map.keys cfg)
 
 -- | Generator for config-heavy script
 genConfigScript :: Gen Text
@@ -915,86 +994,78 @@ main = do
   putStrLn "========================="
   putStrLn ""
 
-  results <- sequence
-    [ -- Unification
-      run "unify_reflexive" prop_unify_reflexive
-    , run "unify_symmetric" prop_unify_symmetric
-    , run "unify_valid_subst" prop_unify_valid_subst
-    , run "unify_self_trivial" prop_unify_self_trivial
-    , run "unify_concrete_disjoint" prop_unify_concrete_disjoint
-    , run "unify_tvar_universal" prop_unify_tvar_universal
-    , run "subst_compose_assoc" prop_subst_compose_assoc
-    , run "subst_empty_identity" prop_subst_empty_identity
-    , run "subst_single" prop_subst_single
-
-    -- Constraint solving
-    , run "solve_empty" prop_solve_empty
-    , run "solve_reflexive" prop_solve_reflexive
-    , run "solve_satisfies" prop_solve_satisfies
-    , run "solve_deterministic" prop_solve_deterministic
-
-    -- Fact -> Constraint
-    , run "constraints_deterministic" prop_constraints_deterministic
-    , run "default_is_constraint" prop_default_is_constraint
-    , run "required_no_constraint" prop_required_no_constraint
-    , run "config_no_constraint" prop_config_no_constraint
-
-    -- Schema building
-    , run "schema_deterministic" prop_schema_deterministic
-    , run "schema_env_complete" prop_schema_env_complete
-    , run "schema_preserves_defaults" prop_schema_preserves_defaults
-    , run "schema_required_marked" prop_schema_required_marked
-
-    -- Parser
-    , run "parser_no_crash" prop_parser_no_crash
-    , run "parser_deterministic" prop_parser_deterministic
-    , run "parser_empty" prop_parser_empty
-    , run "parser_comments" prop_parser_comments
-
-    -- Patterns
-    , run "pattern_default" $ forAll genVarName $ \var -> property $ prop_pattern_default var
-    , run "pattern_required" $ forAll genVarName $ \var -> property $ prop_pattern_required var
-    , run "pattern_simple" $ forAll genVarName $ \var -> property $ prop_pattern_simple var
-    , run "numeric_int" prop_numeric_int
-    , run "numeric_rejects_alpha" prop_numeric_rejects_alpha
-
-    -- Builtins
-    , run "builtins_nonempty" prop_builtins_nonempty
-    , run "builtins_curl_timeout" prop_builtins_curl_timeout
-    , run "builtins_curl_output" prop_builtins_curl_output
-    , run "builtins_jq_indent" prop_builtins_jq_indent
-    , run "builtins_unknown_flag" prop_builtins_unknown_flag
-    , run "builtins_unknown_cmd" prop_builtins_unknown_cmd
-
-    -- Config tree
-    , run "config_tree_complete" prop_config_tree_complete
-    , run "config_tree_deterministic" prop_config_tree_deterministic
-
-    -- Literals
-    , run "literal_int_roundtrip" prop_literal_int_roundtrip
-    , run "literal_bool_roundtrip" prop_literal_bool_roundtrip
-    , run "literal_type_consistent" prop_literal_type_consistent
-
-    -- End-to-end
-    , run "e2e_no_crash" prop_e2e_no_crash
-    , run "e2e_deterministic" prop_e2e_deterministic
-    , run "e2e_concrete_types" prop_e2e_concrete_types
-
-    -- Stress tests
-    , run "stress_large_script" prop_stress_large_script
-    , run "stress_many_vars" prop_stress_many_vars
-    , run "stress_deep_config" prop_stress_deep_config
-    , run "stress_chain" prop_stress_chain
-    , run "unify_transitivity" prop_unify_transitivity
-    , run "schema_config_paths" prop_schema_config_paths
-    
-    -- Overlay Algebra
-    , run "overlay_identity_left" prop_overlay_identity_left
-    , run "overlay_identity_right" prop_overlay_identity_right
-    , run "overlay_assoc" prop_overlay_assoc
-    , run "overlay_satisfaction" prop_overlay_satisfaction
-    , run "overlay_propagation" prop_overlay_propagation
-    ]
+  results <-
+    sequence
+      [ -- Unification
+        run "unify_reflexive" prop_unify_reflexive,
+        run "unify_symmetric" prop_unify_symmetric,
+        run "unify_valid_subst" prop_unify_valid_subst,
+        run "unify_self_trivial" prop_unify_self_trivial,
+        run "unify_concrete_disjoint" prop_unify_concrete_disjoint,
+        run "unify_tvar_universal" prop_unify_tvar_universal,
+        run "subst_compose_assoc" prop_subst_compose_assoc,
+        run "subst_empty_identity" prop_subst_empty_identity,
+        run "subst_single" prop_subst_single,
+        -- Constraint solving
+        run "solve_empty" prop_solve_empty,
+        run "solve_reflexive" prop_solve_reflexive,
+        run "solve_satisfies" prop_solve_satisfies,
+        run "solve_deterministic" prop_solve_deterministic,
+        -- Fact -> Constraint
+        run "constraints_deterministic" prop_constraints_deterministic,
+        run "default_is_constraint" prop_default_is_constraint,
+        run "required_no_constraint" prop_required_no_constraint,
+        run "config_no_constraint" prop_config_no_constraint,
+        -- Schema building
+        run "schema_deterministic" prop_schema_deterministic,
+        run "schema_env_complete" prop_schema_env_complete,
+        run "schema_preserves_defaults" prop_schema_preserves_defaults,
+        run "schema_required_marked" prop_schema_required_marked,
+        -- Parser
+        run "parser_no_crash" prop_parser_no_crash,
+        run "parser_deterministic" prop_parser_deterministic,
+        run "parser_empty" prop_parser_empty,
+        run "parser_comments" prop_parser_comments,
+        -- Patterns
+        run "pattern_default" $ forAll genVarName $ \var -> property $ prop_pattern_default var,
+        run "pattern_required" $ forAll genVarName $ \var -> property $ prop_pattern_required var,
+        run "pattern_simple" $ forAll genVarName $ \var -> property $ prop_pattern_simple var,
+        run "numeric_int" prop_numeric_int,
+        run "numeric_rejects_alpha" prop_numeric_rejects_alpha,
+        -- Builtins
+        run "builtins_nonempty" prop_builtins_nonempty,
+        run "builtins_curl_timeout" prop_builtins_curl_timeout,
+        run "builtins_curl_output" prop_builtins_curl_output,
+        run "builtins_jq_indent" prop_builtins_jq_indent,
+        run "builtins_unknown_flag" prop_builtins_unknown_flag,
+        run "builtins_unknown_cmd" prop_builtins_unknown_cmd,
+        -- Config tree
+        run "config_tree_complete" prop_config_tree_complete,
+        run "config_tree_deterministic" prop_config_tree_deterministic,
+        -- Scope graph
+        run "scope_parent_before_with" prop_scope_parent_before_with,
+        -- Literals
+        run "literal_int_roundtrip" prop_literal_int_roundtrip,
+        run "literal_bool_roundtrip" prop_literal_bool_roundtrip,
+        run "literal_type_consistent" prop_literal_type_consistent,
+        -- End-to-end
+        run "e2e_no_crash" prop_e2e_no_crash,
+        run "e2e_deterministic" prop_e2e_deterministic,
+        run "e2e_concrete_types" prop_e2e_concrete_types,
+        -- Stress tests
+        run "stress_large_script" prop_stress_large_script,
+        run "stress_many_vars" prop_stress_many_vars,
+        run "stress_deep_config" prop_stress_deep_config,
+        run "stress_chain" prop_stress_chain,
+        run "unify_transitivity" prop_unify_transitivity,
+        run "schema_config_paths" prop_schema_config_paths,
+        -- Overlay Algebra
+        run "overlay_identity_left" prop_overlay_identity_left,
+        run "overlay_identity_right" prop_overlay_identity_right,
+        run "overlay_assoc" prop_overlay_assoc,
+        run "overlay_satisfaction" prop_overlay_satisfaction,
+        run "overlay_propagation" prop_overlay_propagation
+      ]
 
   putStrLn ""
   let passed = length (filter id results)
@@ -1008,9 +1079,8 @@ main = do
     else do
       putStrLn "Some tests failed!"
       exitFailure
-
   where
-    run :: Testable prop => String -> prop -> IO Bool
+    run :: (Testable prop) => String -> prop -> IO Bool
     run name prop = do
       putStr $ "  " ++ name ++ " ... "
       result <- quickCheckResult (withMaxSuccess 200 prop)

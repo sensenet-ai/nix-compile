@@ -15,11 +15,11 @@ module NixCompile.Schema.Build
 where
 
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import NixCompile.Types
 
 -- | Build schema from facts and type substitution
@@ -56,24 +56,11 @@ buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
       _ -> []
 
--- | Merge two env specs (prefer required, keep first default)
--- Both entries share the same resolved type via 'resolveType subst var',
--- so taking the first type is deterministic and correct.
-mergeEnvSpec :: EnvSpec -> EnvSpec -> EnvSpec
-mergeEnvSpec e1 e2 =
-  EnvSpec
-    { envType = envType e1,
-      envRequired = envRequired e1 || envRequired e2,
-      envDefault = envDefault e1 <|> envDefault e2,
-      envSpan = envSpan e1
-    }
-  where
-    Nothing <|> b = b
-    a <|> _ = a
-
 -- | Build config schema
+-- Uses fromListWith to handle duplicate paths: later assignments win
+-- (matching bash runtime semantics where last assignment takes effect).
 buildConfigSchema :: [Fact] -> Subst -> Map ConfigPath ConfigSpec
-buildConfigSchema facts subst = Map.fromList (concatMap go facts)
+buildConfigSchema facts subst = Map.fromListWith (\new _old -> new) (concatMap go facts)
   where
     go = \case
       ConfigAssign path var quoted sp ->

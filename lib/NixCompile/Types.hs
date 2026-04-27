@@ -54,6 +54,7 @@ module NixCompile.Types
     -- * Schema (final output)
     Schema (..),
     EnvSpec (..),
+    mergeEnvSpec,
     ConfigSpec (..),
     CommandSpec (..),
     emptySchema,
@@ -71,11 +72,11 @@ where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import GHC.Generics (Generic)
 
 -- ============================================================================
@@ -267,9 +268,10 @@ newtype StorePath = StorePath {unStorePath :: Text}
 -- | Check if a text looks like a store path
 -- Blocks path traversal attempts
 isStorePath :: Text -> Bool
-isStorePath t = "/nix/store/" `T.isPrefixOf` t
-             && not (".." `T.isInfixOf` t)
-             && not ("//" `T.isInfixOf` t)
+isStorePath t =
+  "/nix/store/" `T.isPrefixOf` t
+    && not (".." `T.isInfixOf` t)
+    && not ("//" `T.isInfixOf` t)
 
 -- ============================================================================
 -- Schema
@@ -287,6 +289,19 @@ data EnvSpec = EnvSpec
 instance FromJSON EnvSpec
 
 instance ToJSON EnvSpec
+
+-- | Merge two env specs for the same variable.
+-- Preserves required status from either, keeps first default.
+mergeEnvSpec :: EnvSpec -> EnvSpec -> EnvSpec
+mergeEnvSpec e1 e2 =
+  EnvSpec
+    { envType = envType e1,
+      envRequired = envRequired e1 || envRequired e2,
+      envDefault = case envDefault e1 of
+        Just _ -> envDefault e1
+        Nothing -> envDefault e2,
+      envSpan = envSpan e1
+    }
 
 -- | Config field specification
 data ConfigSpec = ConfigSpec
@@ -344,7 +359,7 @@ emptySchema =
 mergeSchemas :: Schema -> Schema -> Schema
 mergeSchemas s1 s2 =
   Schema
-    { schemaEnv = schemaEnv s1 `Map.union` schemaEnv s2,
+    { schemaEnv = Map.unionWith mergeEnvSpec (schemaEnv s1) (schemaEnv s2),
       schemaConfig = schemaConfig s1 `Map.union` schemaConfig s2,
       schemaCommands = schemaCommands s1 ++ schemaCommands s2,
       schemaStorePaths = schemaStorePaths s1 `Set.union` schemaStorePaths s2,
