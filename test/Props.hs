@@ -1369,6 +1369,7 @@ prop_emit_numeric_preflight_guard =
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in "must be an integer" `T.isInfixOf` output
+        && "*-)" `T.isInfixOf` output
 
 -- | emit-config validates unquoted bool values before output
 prop_emit_bool_preflight_guard :: Bool
