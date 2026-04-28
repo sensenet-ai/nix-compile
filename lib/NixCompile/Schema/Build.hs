@@ -81,12 +81,20 @@ buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
       ConfigTemplate _ parts _ sp ->
         [ (var, EnvSpec (resolveType subst var) False Nothing sp)
-        | ConfigVar var <- parts
+        | var <- configPartVars parts
         ]
       -- Command argument usage: infer type from builtin database
       CmdArg _ _ var sp ->
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
       _ -> []
+
+configPartVars :: [ConfigPart] -> [Text]
+configPartVars = concatMap $ \case
+  ConfigVar var -> [var]
+  ConfigVarDefault var _ -> [var]
+  ConfigVarRequired var -> [var]
+  ConfigVarAlternate var _ -> [var]
+  ConfigText _ -> []
 
 -- | Build config schema
 -- Uses Map.fromList which keeps the last entry for duplicate keys,

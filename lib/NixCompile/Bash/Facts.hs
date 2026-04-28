@@ -161,7 +161,10 @@ configFactsFromParts sp parts =
                           valueText = T.drop 1 rhs
                           parsed = case valueToks of
                             [] -> parseConfigValueDynamic valueText quoted
-                            _ -> parseConfigValueDynamic (T.concat (map tokenToText valueToks)) quoted
+                            _ -> case parseConfigTemplateTokens valueToks of
+                              Just [ConfigVar var] -> Just (CVDVar var)
+                              Just parts' -> Just (CVDTemplate parts')
+                              Nothing -> parseConfigValueDynamic (T.concat (map tokenToText valueToks)) quoted
                        in map (configValueFact pathParts quoted sp) (maybeToList parsed)
         _ -> []
 
@@ -206,13 +209,50 @@ findValueTokens parts = loop parts False
         loop rest seenEq
 
 parseConfigValueDynamic :: Text -> Quoted -> Maybe ConfigValueDynamic
-parseConfigValueDynamic t _quoted
+parseConfigValueDynamic raw _quoted
   | T.null t = Nothing
   | otherwise =
       case parseConfigTemplate t of
         Just [ConfigVar var] -> Just (CVDVar var)
         Just parts -> Just (CVDTemplate parts)
         Nothing -> Just (CVDLit (parseLiteral t))
+  where
+    t
+      | "\"" `T.isPrefixOf` raw && "\"" `T.isSuffixOf` raw = T.dropEnd 1 (T.drop 1 raw)
+      | otherwise = raw
+
+parseConfigTemplateTokens :: [SA.Token] -> Maybe [ConfigPart]
+parseConfigTemplateTokens toks =
+  let parts = mergeTextParts (concatMap tokenParts toks)
+   in if any isVarPart parts then Just parts else Nothing
+  where
+    isVarPart (ConfigText _) = False
+    isVarPart _ = True
+
+    tokenParts (SA.OuterToken _ inner) = innerParts inner
+
+    innerParts = \case
+      SA.Inner_T_Literal s -> [ConfigText (T.pack s)]
+      SA.Inner_T_SingleQuoted s -> [ConfigText (T.pack s)]
+      SA.Inner_T_Glob s -> [ConfigText (T.pack s)]
+      SA.Inner_T_NormalWord ps -> concatMap tokenParts ps
+      SA.Inner_T_DoubleQuoted ps -> concatMap tokenParts ps
+      SA.Inner_T_DollarBraced _ body ->
+        expansionPart ("${" <> tokenToText body <> "}")
+      _ -> []
+
+    expansionPart txt = case parseParamExpansion txt of
+      Just (SimpleRef var) -> [ConfigVar var]
+      Just (DefaultValue var mdef) -> [ConfigVarDefault var (maybe "" id mdef)]
+      Just (AssignDefault var mdef) -> [ConfigVarDefault var (maybe "" id mdef)]
+      Just (ErrorIfUnset var _) -> [ConfigVarRequired var]
+      Just (UseAlternate var malt) -> [ConfigVarAlternate var (maybe "" id malt)]
+      Nothing -> [ConfigText txt]
+
+    mergeTextParts = foldr step []
+      where
+        step (ConfigText a) (ConfigText b : xs) = ConfigText (a <> b) : xs
+        step p xs = p : xs
 
 parseConfigTemplate :: Text -> Maybe [ConfigPart]
 parseConfigTemplate t =
@@ -227,8 +267,14 @@ parseConfigTemplate t =
       | "${" `T.isPrefixOf` s =
           let rest = T.drop 2 s
               (name, afterName) = T.breakOn "}" rest
-           in if "}" `T.isPrefixOf` afterName && isVarName name
-                then ConfigVar name : parseParts (T.drop 1 afterName)
+           in if "}" `T.isPrefixOf` afterName
+                then case parseParamExpansion ("${" <> name <> "}") of
+                  Just (SimpleRef var) -> ConfigVar var : parseParts (T.drop 1 afterName)
+                  Just (DefaultValue var mdef) -> ConfigVarDefault var (maybe "" id mdef) : parseParts (T.drop 1 afterName)
+                  Just (AssignDefault var mdef) -> ConfigVarDefault var (maybe "" id mdef) : parseParts (T.drop 1 afterName)
+                  Just (ErrorIfUnset var _) -> ConfigVarRequired var : parseParts (T.drop 1 afterName)
+                  Just (UseAlternate var malt) -> ConfigVarAlternate var (maybe "" id malt) : parseParts (T.drop 1 afterName)
+                  Nothing -> splitText s
                 else splitText s
       | "$" `T.isPrefixOf` s =
           let rest = T.drop 1 s
@@ -293,20 +339,24 @@ extractVarRef t
 -- | Facts from config.* assignment (text-based fallback)
 configFacts :: Span -> Text -> [Fact]
 configFacts sp text =
-  case parseConfigAssignment text of
-    Just ConfigAssignment {..} ->
-      case configValue of
-        Left var -> [ConfigAssign configPath var configQuoted sp]
-        Right lit -> [ConfigLit configPath lit sp]
-    Nothing ->
-      let (lhs, rhs0) = T.breakOn "=" text
-       in case (T.stripPrefix "config." lhs, T.stripPrefix "=" rhs0) of
-            (Just pathText, Just rhs)
-              | let pathParts = T.splitOn "." pathText,
-                validConfigPath pathParts,
-                Just parsed <- parseConfigValueDynamic rhs Unquoted ->
-                  [configValueFact pathParts Unquoted sp parsed]
-            _ -> []
+  let dynamicFallback =
+        let (lhs, rhs0) = T.breakOn "=" text
+         in case (T.stripPrefix "config." lhs, T.stripPrefix "=" rhs0) of
+              (Just pathText, Just rhs)
+                | "$" `T.isInfixOf` rhs,
+                  let pathParts = T.splitOn "." pathText,
+                  validConfigPath pathParts,
+                  Just parsed <- parseConfigValueDynamic rhs Unquoted ->
+                    [configValueFact pathParts Unquoted sp parsed]
+              _ -> []
+   in case dynamicFallback of
+        facts@(_ : _) -> facts
+        [] -> case parseConfigAssignment text of
+          Just ConfigAssignment {..} ->
+            case configValue of
+              Left var -> [ConfigAssign configPath var configQuoted sp]
+              Right lit -> [ConfigLit configPath lit sp]
+          Nothing -> []
 
 -- | Shell builtins that are allowed without store paths
 -- These are part of bash itself, not external commands

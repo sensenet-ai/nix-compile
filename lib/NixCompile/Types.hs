@@ -204,6 +204,9 @@ type ConfigPath = [Text]
 data ConfigPart
   = ConfigText !Text
   | ConfigVar !Text
+  | ConfigVarDefault !Text !Text
+  | ConfigVarRequired !Text
+  | ConfigVarAlternate !Text !Text
   deriving stock (Eq, Show, Generic)
 
 instance FromJSON ConfigPart

@@ -214,12 +214,17 @@ renderRuntimeGuards schema =
           TBool -> [boolGuard var]
           _ -> [presenceGuard var]
     renderGuards ConfigSpec {cfgTemplate = Just parts} =
-      [presenceGuard var | ConfigVar var <- parts]
+      [presenceGuard var | var <- requiredTemplateVars parts]
     renderGuards _ = []
 
     presenceGuard var = "  : \"${" <> var <> ":?" <> var <> " is required}\""
     intGuard var = "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
     boolGuard var = "  __nix_compile_require_bool \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+
+    requiredTemplateVars = concatMap $ \case
+      ConfigVar var -> [var]
+      ConfigVarRequired var -> [var]
+      _ -> []
 
 -- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text
@@ -422,3 +427,6 @@ renderTemplateParts = concatTemplates . map renderPart
   where
     renderPart (ConfigText txt) = literalTemplate (jsonEscape txt)
     renderPart (ConfigVar var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
+    renderPart (ConfigVarDefault var def) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":-" <> def <> "}\")")
+    renderPart (ConfigVarRequired var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
+    renderPart (ConfigVarAlternate var alt) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":+" <> alt <> "}\")")

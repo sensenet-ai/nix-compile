@@ -1682,6 +1682,17 @@ prop_e2e_config_template_prefix_suffix =
             Just ConfigSpec {cfgTemplate = Just [ConfigText "prefix-", ConfigVar "A", ConfigText "-suffix"]} -> True
             _ -> False
 
+-- | Braced defaults inside config templates remain dynamic and use runtime default
+prop_e2e_config_template_default :: Bool
+prop_e2e_config_template_default =
+  let script = "config.host=\"${HOST:-localhost}\""
+   in case parseScript script of
+        Left _ -> False
+        Right s ->
+          case Map.lookup ["host"] (schemaConfig (scriptSchema s)) of
+            Just ConfigSpec {cfgTemplate = Just [ConfigVarDefault "HOST" "localhost"]} -> True
+            _ -> False
+
 -- ============================================================================
 -- Properties: Edge cases
 -- ============================================================================
@@ -1997,6 +2008,7 @@ main = do
         run "e2e_config_prefix_conflict" prop_e2e_config_prefix_conflict,
         run "e2e_config_template" prop_e2e_config_template,
         run "e2e_config_template_prefix_suffix" prop_e2e_config_template_prefix_suffix,
+        run "e2e_config_template_default" prop_e2e_config_template_default,
         -- Edge cases
         run "edge_comments_only" prop_edge_comments_only,
         run "edge_long_varname" prop_edge_long_varname,
