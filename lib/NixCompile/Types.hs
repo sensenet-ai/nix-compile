@@ -42,6 +42,7 @@ module NixCompile.Types
 
     -- * Config paths
     ConfigPath,
+    ConfigPart (..),
 
     -- * Commands
     Command (..),
@@ -198,6 +199,17 @@ instance ToJSON Quoted
 -- e.g., ["server", "port"] for config.server.port
 type ConfigPath = [Text]
 
+-- | A dynamic config value template.
+-- Represents values such as "$A-$B" or "prefix-$VAR-suffix".
+data ConfigPart
+  = ConfigText !Text
+  | ConfigVar !Text
+  deriving stock (Eq, Show, Generic)
+
+instance FromJSON ConfigPart
+
+instance ToJSON ConfigPart
+
 -- | Facts extracted from parsing
 data Fact
   = -- | VAR="${VAR:-default}" - variable has a default
@@ -214,6 +226,8 @@ data Fact
     ConfigAssign !ConfigPath !Text !Quoted !Span
   | -- | config.x.y=literal - config literal
     ConfigLit !ConfigPath !Literal !Span
+  | -- | config.x.y="$A-$B" - config template with multiple parts
+    ConfigTemplate !ConfigPath ![ConfigPart] !Quoted !Span
   | -- | Command invocation with known arg
     CmdArg !Text !Text !Text !Span -- cmd, argname, varname, span
   | -- | Store path usage
@@ -309,6 +323,7 @@ data ConfigSpec = ConfigSpec
     cfgFrom :: !(Maybe Text), -- source env var, if any
     cfgQuoted :: !(Maybe Quoted), -- quoting used in bash assignment (if from var)
     cfgLit :: !(Maybe Literal), -- literal value, if any
+    cfgTemplate :: !(Maybe [ConfigPart]), -- dynamic template, if any
     cfgSpan :: !Span
   }
   deriving stock (Eq, Show, Generic)

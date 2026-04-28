@@ -103,6 +103,7 @@ attachFileToFact mFile = \case
   AssignLit v lit sp -> AssignLit v lit (attachFileToSpan mFile sp)
   ConfigAssign p v q sp -> ConfigAssign p v q (attachFileToSpan mFile sp)
   ConfigLit p lit sp -> ConfigLit p lit (attachFileToSpan mFile sp)
+  ConfigTemplate p parts q sp -> ConfigTemplate p parts q (attachFileToSpan mFile sp)
   CmdArg c a v sp -> CmdArg c a v (attachFileToSpan mFile sp)
   UsesStorePath p sp -> UsesStorePath p (attachFileToSpan mFile sp)
   BareCommand c sp -> BareCommand c (attachFileToSpan mFile sp)

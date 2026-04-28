@@ -371,6 +371,7 @@ instance Arbitrary ConfigSpec where
       <*> oneof [Just <$> genValidVarName, pure Nothing]
       <*> oneof [Just <$> arbitrary, pure Nothing]
       <*> oneof [Just <$> genLiteral, pure Nothing]
+      <*> pure Nothing
       <*> genSpan
 
 -- ============================================================================
@@ -607,7 +608,7 @@ prop_emit_no_heredoc facts =
 -- | emitConfigFunction output contains no unescaped special chars in literals
 prop_emit_escaped :: Property
 prop_emit_escaped = forAll genLiteral $ \lit ->
-  let spec = ConfigSpec TString Nothing Nothing (Just lit) (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TString Nothing Nothing (Just lit) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["test"] spec}
       output = emitConfigFunction schema
    in case lit of

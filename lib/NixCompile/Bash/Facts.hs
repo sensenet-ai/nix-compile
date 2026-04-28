@@ -159,14 +159,26 @@ configFactsFromParts sp parts =
                     else
                       let (valueToks, quoted) = findValueTokens parts
                           valueText = T.drop 1 rhs
-                          varOrLit = case valueToks of
-                            [] -> extractConfigValueText valueText
-                            _ -> extractConfigValue valueToks quoted
-                       in case varOrLit of
-                            Just (Left var) -> [ConfigAssign pathParts var quoted sp]
-                            Just (Right lit) -> [ConfigLit pathParts lit sp]
-                            Nothing -> []
+                          parsed = case valueToks of
+                            [] -> parseConfigValueDynamic valueText quoted
+                            _ -> parseConfigValueDynamic (T.concat (map tokenToText valueToks)) quoted
+                       in map (configValueFact pathParts quoted sp) (maybeToList parsed)
         _ -> []
+
+data ConfigValueDynamic
+  = CVDVar Text
+  | CVDLit Literal
+  | CVDTemplate [ConfigPart]
+
+configValueFact :: ConfigPath -> Quoted -> Span -> ConfigValueDynamic -> Fact
+configValueFact path quoted sp = \case
+  CVDVar var -> ConfigAssign path var quoted sp
+  CVDLit lit -> ConfigLit path lit sp
+  CVDTemplate parts -> ConfigTemplate path parts quoted sp
+
+maybeToList :: Maybe a -> [a]
+maybeToList Nothing = []
+maybeToList (Just a) = [a]
 
 -- | Find value tokens and determine if quoted
 -- Returns the tokens representing the value and whether it was quoted.
@@ -193,23 +205,57 @@ findValueTokens parts = loop parts False
         -- Still in the path part
         loop rest seenEq
 
--- | Extract variable name or literal from value tokens
-extractConfigValue :: [SA.Token] -> Quoted -> Maybe (Either Text Literal)
-extractConfigValue [] _ = Nothing
-extractConfigValue toks _quoted =
-  let text = T.concat (map tokenToText toks)
-   in case extractSimpleVar text of
-        Just var -> Just (Left var)
-        Nothing -> Just (Right (parseLiteral text))
-
--- | Extract variable name or literal from text directly (fallback when token-based
--- extraction can't find value tokens, e.g. when path and value are a single token).
-extractConfigValueText :: Text -> Maybe (Either Text Literal)
-extractConfigValueText t
+parseConfigValueDynamic :: Text -> Quoted -> Maybe ConfigValueDynamic
+parseConfigValueDynamic t _quoted
   | T.null t = Nothing
-  | otherwise = case extractVarRef t of
-      Just var -> Just (Left var)
-      Nothing -> Just (Right (parseLiteral t))
+  | otherwise =
+      case parseConfigTemplate t of
+        Just [ConfigVar var] -> Just (CVDVar var)
+        Just parts -> Just (CVDTemplate parts)
+        Nothing -> Just (CVDLit (parseLiteral t))
+
+parseConfigTemplate :: Text -> Maybe [ConfigPart]
+parseConfigTemplate t =
+  let parts = parseParts t
+   in if any isVarPart parts then Just (mergeTextParts parts) else Nothing
+  where
+    isVarPart (ConfigVar _) = True
+    isVarPart _ = False
+
+    parseParts s
+      | T.null s = []
+      | "${" `T.isPrefixOf` s =
+          let rest = T.drop 2 s
+              (name, afterName) = T.breakOn "}" rest
+           in if "}" `T.isPrefixOf` afterName && isVarName name
+                then ConfigVar name : parseParts (T.drop 1 afterName)
+                else splitText s
+      | "$" `T.isPrefixOf` s =
+          let rest = T.drop 1 s
+              (name, afterName) = T.span isVarChar rest
+           in if isVarName name
+                then ConfigVar name : parseParts afterName
+                else splitText s
+      | otherwise = splitText s
+
+    splitText s =
+      let (txt, rest) = T.breakOn "$" s
+       in if T.null txt
+            then ConfigText (T.take 1 rest) : parseParts (T.drop 1 rest)
+            else ConfigText txt : parseParts rest
+
+    mergeTextParts = foldr step []
+      where
+        step (ConfigText a) (ConfigText b : xs) = ConfigText (a <> b) : xs
+        step p xs = p : xs
+
+    isVarName v =
+      not (T.null v)
+        && not (isNumericLiteral v)
+        && not (isBoolLiteral v)
+        && T.all isVarChar v
+
+    isVarChar c = c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 
 -- | Extract simple variable reference: ${VAR} or HOST -> Just "VAR"/"HOST"
 extractSimpleVar :: Text -> Maybe Text
@@ -252,7 +298,15 @@ configFacts sp text =
       case configValue of
         Left var -> [ConfigAssign configPath var configQuoted sp]
         Right lit -> [ConfigLit configPath lit sp]
-    Nothing -> []
+    Nothing ->
+      let (lhs, rhs0) = T.breakOn "=" text
+       in case (T.stripPrefix "config." lhs, T.stripPrefix "=" rhs0) of
+            (Just pathText, Just rhs)
+              | let pathParts = T.splitOn "." pathText,
+                validConfigPath pathParts,
+                Just parsed <- parseConfigValueDynamic rhs Unquoted ->
+                  [configValueFact pathParts Unquoted sp parsed]
+            _ -> []
 
 -- | Shell builtins that are allowed without store paths
 -- These are part of bash itself, not external commands

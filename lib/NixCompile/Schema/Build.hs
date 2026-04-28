@@ -37,7 +37,7 @@ validateConfigPaths facts =
     ((a, b) : _) ->
       Left $ "conflicting config paths: " <> pathText a <> " and " <> pathText b
   where
-    paths = [p | ConfigAssign p _ _ _ <- facts] ++ [p | ConfigLit p _ _ <- facts]
+    paths = [p | ConfigAssign p _ _ _ <- facts] ++ [p | ConfigLit p _ _ <- facts] ++ [p | ConfigTemplate p _ _ _ <- facts]
 
     conflicts a b = a /= b && (a `isPrefixOfPath` b || b `isPrefixOfPath` a)
 
@@ -79,6 +79,10 @@ buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
       ConfigAssign _ var _ sp ->
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
+      ConfigTemplate _ parts _ sp ->
+        [ (var, EnvSpec (resolveType subst var) False Nothing sp)
+        | ConfigVar var <- parts
+        ]
       -- Command argument usage: infer type from builtin database
       CmdArg _ _ var sp ->
         [(var, EnvSpec (resolveType subst var) False Nothing sp)]
@@ -92,9 +96,11 @@ buildConfigSchema facts subst = Map.fromList (concatMap go facts)
   where
     go = \case
       ConfigAssign path var quoted sp ->
-        [(path, ConfigSpec (resolveType subst var) (Just var) (Just quoted) Nothing sp)]
+        [(path, ConfigSpec (resolveType subst var) (Just var) (Just quoted) Nothing Nothing sp)]
       ConfigLit path lit sp ->
-        [(path, ConfigSpec (literalType lit) Nothing Nothing (Just lit) sp)]
+        [(path, ConfigSpec (literalType lit) Nothing Nothing (Just lit) Nothing sp)]
+      ConfigTemplate path parts quoted sp ->
+        [(path, ConfigSpec TString Nothing (Just quoted) Nothing (Just parts) sp)]
       _ -> []
 
 -- | Build command schema

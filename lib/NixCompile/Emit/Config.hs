@@ -200,20 +200,22 @@ emitConfigFunction schema =
 renderRuntimeGuards :: Schema -> Text
 renderRuntimeGuards schema =
   T.unlines
-    [ renderGuard spec
+    [ guardLine
     | spec <- Map.elems (schemaConfig schema),
-      cfgFrom spec /= Nothing
+      guardLine <- renderGuards spec
     ]
   where
-    renderGuard ConfigSpec {cfgFrom = Just var, cfgType = ty, cfgQuoted = quoted} =
+    renderGuards ConfigSpec {cfgFrom = Just var, cfgType = ty, cfgQuoted = quoted} =
       if quoted == Just Quoted
-        then presenceGuard var
+        then [presenceGuard var]
         else case ty of
-          TInt -> intGuard var
-          TNumeric -> intGuard var
-          TBool -> boolGuard var
-          _ -> presenceGuard var
-    renderGuard _ = ""
+          TInt -> [intGuard var]
+          TNumeric -> [intGuard var]
+          TBool -> [boolGuard var]
+          _ -> [presenceGuard var]
+    renderGuards ConfigSpec {cfgTemplate = Just parts} =
+      [presenceGuard var | ConfigVar var <- parts]
+    renderGuards _ = []
 
     presenceGuard var = "  : \"${" <> var <> ":?" <> var <> " is required}\""
     intGuard var = "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
@@ -291,10 +293,12 @@ renderJsonTree indent = \case
 -- preventing malformed output at runtime.
 renderJsonValue :: ConfigSpec -> Template
 renderJsonValue ConfigSpec {..} =
-  case (cfgFrom, cfgLit) of
-    (_, Just lit) ->
+  case (cfgFrom, cfgLit, cfgTemplate) of
+    (_, Just lit, _) ->
       literalTemplate (renderJsonLit lit)
-    (Just var, _) ->
+    (_, _, Just parts) ->
+      literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+    (Just var, _, _) ->
       let forceString = cfgQuoted == Just Quoted
           asString =
             forceString || case cfgType of
@@ -336,10 +340,12 @@ renderYamlTree indent = \case
 -- | NixCompile a config value as YAML
 renderYamlValue :: ConfigSpec -> Template
 renderYamlValue ConfigSpec {..} =
-  case (cfgFrom, cfgLit) of
-    (_, Just lit) ->
+  case (cfgFrom, cfgLit, cfgTemplate) of
+    (_, Just lit, _) ->
       literalTemplate (renderYamlLit lit)
-    (Just var, _) ->
+    (_, _, Just parts) ->
+      literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+    (Just var, _, _) ->
       let forceString = cfgQuoted == Just Quoted
           asString =
             forceString || case cfgType of
@@ -391,10 +397,12 @@ renderTomlTree path = \case
 -- | NixCompile a config value as TOML
 renderTomlValue :: ConfigSpec -> Template
 renderTomlValue ConfigSpec {..} =
-  case (cfgFrom, cfgLit) of
-    (_, Just lit) ->
+  case (cfgFrom, cfgLit, cfgTemplate) of
+    (_, Just lit, _) ->
       literalTemplate (renderTomlLit lit)
-    (Just var, _) ->
+    (_, _, Just parts) ->
+      literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+    (Just var, _, _) ->
       let forceString = cfgQuoted == Just Quoted
           asString =
             forceString || case cfgType of
@@ -408,3 +416,9 @@ renderTomlValue ConfigSpec {..} =
             else dynamicTemplate guardedVar
     _ ->
       literalTemplate "\"\"" -- TOML has no null; emit empty string as safe default
+
+renderTemplateParts :: [ConfigPart] -> Template
+renderTemplateParts = concatTemplates . map renderPart
+  where
+    renderPart (ConfigText txt) = literalTemplate (jsonEscape txt)
+    renderPart (ConfigVar var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")

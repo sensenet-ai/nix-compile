@@ -302,12 +302,12 @@ genConfigSpec = oneof [genFromVar, genFromLit]
       v <- genEnvVarName
       q <- oneof [pure Nothing, Just <$> arbitrary]
       s <- genSpan
-      pure $ ConfigSpec t (Just v) q Nothing s
+      pure $ ConfigSpec t (Just v) q Nothing Nothing s
 
     genFromLit = do
       lit <- genLiteral
       s <- genSpan
-      pure $ ConfigSpec (literalType lit) Nothing Nothing (Just lit) s
+      pure $ ConfigSpec (literalType lit) Nothing Nothing (Just lit) Nothing s
 
 instance Arbitrary NT.TypeVar where
   arbitrary = NT.TypeVar <$> arbitrary
@@ -1341,7 +1341,7 @@ prop_fact_config_lit =
 -- | emit-config JSON contains ${VAR:?} guards for variable refs
 prop_emit_json_guarded :: Property
 prop_emit_json_guarded =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
    in property $ ":?" `T.isInfixOf` output
@@ -1349,7 +1349,7 @@ prop_emit_json_guarded =
 -- | emit-config JSON passes runtime vars as printf arguments, not inert single-quoted text
 prop_emit_json_runtime_args :: Property
 prop_emit_json_runtime_args =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
    in property $ "%s" `T.isInfixOf` output && " \"${PORT:?" `T.isInfixOf` output
@@ -1357,7 +1357,7 @@ prop_emit_json_runtime_args =
 -- | emit-config function performs preflight guards outside command substitutions
 prop_emit_preflight_guard :: Bool
 prop_emit_preflight_guard =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in "__nix_compile_require_int \"PORT\" \"${PORT:?PORT is required}\"" `T.isInfixOf` output
@@ -1365,7 +1365,7 @@ prop_emit_preflight_guard =
 -- | emit-config validates unquoted numeric values before output to prevent JSON injection
 prop_emit_numeric_preflight_guard :: Bool
 prop_emit_numeric_preflight_guard =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in "must be an integer" `T.isInfixOf` output
@@ -1375,7 +1375,7 @@ prop_emit_numeric_preflight_guard =
 -- | emit-config validates unquoted bool values before output
 prop_emit_bool_preflight_guard :: Bool
 prop_emit_bool_preflight_guard =
-  let spec = ConfigSpec TBool (Just "DEBUG") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TBool (Just "DEBUG") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["debug"] spec}
       output = emitConfigFunction schema
    in "must be true or false" `T.isInfixOf` output
@@ -1383,7 +1383,7 @@ prop_emit_bool_preflight_guard =
 -- | Quoted config vars are emitted as strings and should not receive numeric/bool validators
 prop_emit_quoted_numeric_no_int_guard :: Bool
 prop_emit_quoted_numeric_no_int_guard =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Quoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt (Just "PORT") (Just Quoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in not ("__nix_compile_require_int \"PORT\"" `T.isInfixOf` output)
@@ -1406,7 +1406,7 @@ prop_emit_runtime_escape_controls =
 -- | emit-config YAML contains ${VAR:?} guards
 prop_emit_yaml_guarded :: Property
 prop_emit_yaml_guarded =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigYaml schema
    in property $ ":?" `T.isInfixOf` output
@@ -1421,7 +1421,7 @@ prop_emit_toml_no_null facts =
 -- | emit-config JSON for literal values renders correctly
 prop_emit_json_literal :: Bool
 prop_emit_json_literal =
-  let spec = ConfigSpec TInt Nothing Nothing (Just (LitInt 8080)) (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TInt Nothing Nothing (Just (LitInt 8080)) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
    in "8080" `T.isInfixOf` output
@@ -1429,7 +1429,7 @@ prop_emit_json_literal =
 -- | emit-config string values are quoted in JSON
 prop_emit_json_string_quoted :: Bool
 prop_emit_json_string_quoted =
-  let spec = ConfigSpec TString (Just "HOST") (Just Quoted) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec = ConfigSpec TString (Just "HOST") (Just Quoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema {schemaConfig = Map.singleton ["host"] spec}
       output = emitConfigJson schema
    in "__nix_compile_escape_json" `T.isInfixOf` output
@@ -1651,6 +1651,37 @@ prop_e2e_config_prefix_conflict =
         Left err -> "conflicting config paths" `T.isInfixOf` err
         Right _ -> False
 
+-- | Multi-var config templates are represented as templates, not static literals
+prop_e2e_config_template :: Bool
+prop_e2e_config_template =
+  let script =
+        T.unlines
+          [ "A=\"${A:-one}\"",
+            "B=\"${B:-two}\"",
+            "config.combo=\"$A-$B\""
+          ]
+   in case parseScript script of
+        Left _ -> False
+        Right s ->
+          case Map.lookup ["combo"] (schemaConfig (scriptSchema s)) of
+            Just ConfigSpec {cfgTemplate = Just [ConfigVar "A", ConfigText "-", ConfigVar "B"]} -> True
+            _ -> False
+
+-- | Prefix/suffix config templates are represented as templates
+prop_e2e_config_template_prefix_suffix :: Bool
+prop_e2e_config_template_prefix_suffix =
+  let script =
+        T.unlines
+          [ "A=\"${A:-one}\"",
+            "config.path=\"prefix-$A-suffix\""
+          ]
+   in case parseScript script of
+        Left _ -> False
+        Right s ->
+          case Map.lookup ["path"] (schemaConfig (scriptSchema s)) of
+            Just ConfigSpec {cfgTemplate = Just [ConfigText "prefix-", ConfigVar "A", ConfigText "-suffix"]} -> True
+            _ -> False
+
 -- ============================================================================
 -- Properties: Edge cases
 -- ============================================================================
@@ -1726,8 +1757,8 @@ prop_emit_json_nested =
         emptySchema
           { schemaConfig =
               Map.fromList
-                [ (["server", "port"], ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing sp),
-                  (["server", "host"], ConfigSpec TString (Just "HOST") (Just Quoted) Nothing sp)
+                [ (["server", "port"], ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing sp),
+                  (["server", "host"], ConfigSpec TString (Just "HOST") (Just Quoted) Nothing Nothing sp)
                 ]
           }
       output = emitConfigJson schema
@@ -1964,6 +1995,8 @@ main = do
         run "e2e_empty_script" prop_e2e_empty_script,
         run "e2e_store_paths" prop_e2e_store_paths,
         run "e2e_config_prefix_conflict" prop_e2e_config_prefix_conflict,
+        run "e2e_config_template" prop_e2e_config_template,
+        run "e2e_config_template_prefix_suffix" prop_e2e_config_template_prefix_suffix,
         -- Edge cases
         run "edge_comments_only" prop_edge_comments_only,
         run "edge_long_varname" prop_edge_long_varname,

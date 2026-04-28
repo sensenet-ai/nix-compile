@@ -45,6 +45,9 @@ factToConstraints = \case
   -- config.x.y = literal: no variable constraint
   ConfigLit _ _ _ ->
     []
+  -- config templates impose no type constraints; vars are stringified at emit time
+  ConfigTemplate _ _ _ _ ->
+    []
   -- Command arg with known type: look up in builtins
   CmdArg cmd argName varName _ ->
     case lookupArgType cmd argName of
