@@ -30,6 +30,7 @@ module NixCompile.Nix.Flake
   )
 where
 
+import Control.Exception (IOException, try)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
@@ -113,10 +114,11 @@ instance Eq OutputEntry where
 -- | Parse a flake.nix file
 parseFlake :: FilePath -> IO (Either Text Flake)
 parseFlake path = do
-  result <- parseNixFileLoc (Nix.Path path)
+  result <- try (parseNixFileLoc (Nix.Path path))
   case result of
-    Left doc -> pure $ Left (T.pack $ show doc)
-    Right expr -> pure $ extractFlake path expr
+    Left (e :: IOException) -> pure $ Left (T.pack $ show e)
+    Right (Left doc) -> pure $ Left (T.pack $ show doc)
+    Right (Right expr) -> pure $ extractFlake path expr
 
 -- | Parse a flake from a directory (looks for flake.nix)
 parseFlakeDir :: FilePath -> IO (Either Text Flake)

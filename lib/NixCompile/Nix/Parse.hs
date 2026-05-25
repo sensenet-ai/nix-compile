@@ -38,6 +38,7 @@ module NixCompile.Nix.Parse
   )
 where
 
+import Control.Exception (IOException, try)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
@@ -79,10 +80,11 @@ data ShellScriptCall = ShellScriptCall
 -- | Parse a Nix file and return the annotated AST
 parseNixFile :: FilePath -> IO (Either Text NExprLoc)
 parseNixFile path = do
-  result <- parseNixFileLoc (Path path)
+  result <- try (parseNixFileLoc (Path path))
   pure $ case result of
-    Left doc -> Left (T.pack $ show doc)
-    Right expr -> Right expr
+    Left (e :: IOException) -> Left (T.pack $ show e)
+    Right (Left doc) -> Left (T.pack $ show doc)
+    Right (Right expr) -> Right expr
 
 -- | Parse a Nix expression from text
 parseNixExpr :: Text -> Either Text NExprLoc

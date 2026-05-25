@@ -49,10 +49,11 @@ formatFile path = do
 formatFile' :: FilePath -> Text -> IO (Either Text Text)
 formatFile' path src = do
   -- Parse and extract annotations
-  result <- parseNixFileLoc (Nix.Path path)
+  result <- try (parseNixFileLoc (Nix.Path path))
   case result of
-    Left doc -> pure $ Left (T.pack $ show doc)
-    Right expr -> pure $ formatExpr' src expr
+    Left (e :: IOException) -> pure $ Left (T.pack $ show e)
+    Right (Right expr) -> pure $ formatExpr' src expr
+    Right (Left doc) -> pure $ Left (T.pack $ show doc)
 
 -- | Format a Nix expression (from text)
 formatExpr :: Text -> Either Text Text
