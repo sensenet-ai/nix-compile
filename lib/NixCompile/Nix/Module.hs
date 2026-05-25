@@ -29,46 +29,47 @@ module NixCompile.Nix.Module
     ParseFailure (..),
     LintFailure (..),
     LayoutFailure (..),
-    
+
     -- * Building
     buildModuleGraph,
     buildModuleGraphFromFlake,
-    
+
     -- * Queries
     moduleImports,
     moduleDependents,
     topologicalOrder,
     hasViolations,
     totalViolationCount,
-    
+
     -- * Import extraction
     findImports,
   )
 where
 
+import Control.Exception (IOException, try)
 import Control.Monad (foldM)
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
+import Data.List (isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Nix.Expr.Types hiding (Binding)
-import qualified Nix.Expr.Types as Nix
+import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
-import qualified Nix.Utils as NixPath
+import Nix.Utils qualified as NixPath
 import NixCompile.Nix.Infer (inferExpr)
 import NixCompile.Nix.Layout (LayoutViolation, findLayoutViolations)
 import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types
-import NixCompile.Types (Span (..), Loc (..))
-import System.Directory (doesFileExist, canonicalizePath)
-import System.FilePath ((</>), takeDirectory, normalise, pathSeparator)
-import Data.List (isPrefixOf)
+import NixCompile.Types (Loc (..), Span (..))
+import System.Directory (canonicalizePath, doesFileExist)
+import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))
 
 -- ============================================================================
 -- Types
@@ -76,51 +77,51 @@ import Data.List (isPrefixOf)
 
 -- | A module (Nix file) in the graph
 data Module = Module
-  { modPath :: !FilePath           -- Canonical path
-  , modExpr :: !NExprLoc           -- Parsed AST
-  , modType :: !NixType            -- Inferred type
-  , modImports :: ![Import]        -- Imports from this module
+  { modPath :: !FilePath, -- Canonical path
+    modExpr :: !NExprLoc, -- Parsed AST
+    modType :: !NixType, -- Inferred type
+    modImports :: ![Import] -- Imports from this module
   }
   deriving (Show)
 
 -- | An import reference
 data Import = Import
-  { impPath :: !FilePath           -- Resolved path (canonical)
-  , impRawPath :: !Text            -- Original path in source
-  , impArgs :: !(Maybe NExprLoc)   -- Arguments passed (if any)
-  , impSpan :: !Span               -- Source location
+  { impPath :: !FilePath, -- Resolved path (canonical)
+    impRawPath :: !Text, -- Original path in source
+    impArgs :: !(Maybe NExprLoc), -- Arguments passed (if any)
+    impSpan :: !Span -- Source location
   }
   deriving (Show)
 
 -- | A parse failure record
 data ParseFailure = ParseFailure
-  { pfPath :: !FilePath                     -- File that failed to parse
-  , pfError :: !Text                        -- Error message
+  { pfPath :: !FilePath, -- File that failed to parse
+    pfError :: !Text -- Error message
   }
   deriving (Show)
 
 -- | A lint failure record (with/rec violation)
 data LintFailure = LintFailure
-  { lfPath :: !FilePath                     -- File with violation
-  , lfViolations :: ![NixViolation]         -- Violations found
+  { lfPath :: !FilePath, -- File with violation
+    lfViolations :: ![NixViolation] -- Violations found
   }
   deriving (Show)
 
 -- | A layout failure record (_index.nix, missing _class, etc.)
 data LayoutFailure = LayoutFailure
-  { layPath :: !FilePath                    -- File with violation
-  , layViolations :: ![LayoutViolation]     -- Violations found
+  { layPath :: !FilePath, -- File with violation
+    layViolations :: ![LayoutViolation] -- Violations found
   }
   deriving (Show)
 
 -- | The complete module graph
 data ModuleGraph = ModuleGraph
-  { mgModules :: !(Map FilePath Module)     -- All modules by path
-  , mgRoot :: !FilePath                     -- Entry point (e.g., flake.nix)
-  , mgOrder :: ![FilePath]                  -- Topological order (deps first)
-  , mgFailures :: ![ParseFailure]           -- Files that failed to parse
-  , mgLintFailures :: ![LintFailure]        -- Files with with/rec
-  , mgLayoutFailures :: ![LayoutFailure]    -- Files with layout violations
+  { mgModules :: !(Map FilePath Module), -- All modules by path
+    mgRoot :: !FilePath, -- Entry point (e.g., flake.nix)
+    mgOrder :: ![FilePath], -- Topological order (deps first)
+    mgFailures :: ![ParseFailure], -- Files that failed to parse
+    mgLintFailures :: ![LintFailure], -- Files with with/rec
+    mgLayoutFailures :: ![LayoutFailure] -- Files with layout violations
   }
   deriving (Show)
 
@@ -130,10 +131,10 @@ data ModuleGraph = ModuleGraph
 
 -- | Internal build state
 data BuildState = BuildState
-  { bsModules :: !(Map FilePath Module)
-  , bsFailures :: ![ParseFailure]
-  , bsLintFailures :: ![LintFailure]
-  , bsLayoutFailures :: ![LayoutFailure]
+  { bsModules :: !(Map FilePath Module),
+    bsFailures :: ![ParseFailure],
+    bsLintFailures :: ![LintFailure],
+    bsLayoutFailures :: ![LayoutFailure]
   }
 
 -- | Build a module graph starting from a root file
@@ -143,14 +144,16 @@ buildModuleGraph rootPath = do
   let rootDir = takeDirectory canonRoot
   finalState <- buildModules rootDir canonRoot Set.empty (BuildState Map.empty [] [] [])
   let order = computeOrder canonRoot (bsModules finalState)
-  pure $ Right $ ModuleGraph
-    { mgModules = bsModules finalState
-    , mgRoot = canonRoot
-    , mgOrder = order
-    , mgFailures = reverse (bsFailures finalState)
-    , mgLintFailures = reverse (bsLintFailures finalState)
-    , mgLayoutFailures = reverse (bsLayoutFailures finalState)
-    }
+  pure $
+    Right $
+      ModuleGraph
+        { mgModules = bsModules finalState,
+          mgRoot = canonRoot,
+          mgOrder = order,
+          mgFailures = reverse (bsFailures finalState),
+          mgLintFailures = reverse (bsLintFailures finalState),
+          mgLayoutFailures = reverse (bsLayoutFailures finalState)
+        }
 
 -- | Build module graph from a flake directory
 buildModuleGraphFromFlake :: FilePath -> IO (Either Text ModuleGraph)
@@ -165,52 +168,59 @@ buildModuleGraphFromFlake dir = do
 -- Tolerant: skips files that fail to parse, continues with others
 buildModules :: FilePath -> FilePath -> Set FilePath -> BuildState -> IO BuildState
 buildModules rootDir path visited state
-  | path `Set.member` visited = pure state  -- Already processed
+  | path `Set.member` visited = pure state -- Already processed
   | otherwise = do
       exists <- doesFileExist path
       if not exists
-        then pure state  -- Skip non-existent (might be external input)
+        then pure state -- Skip non-existent (might be external input)
         else do
-          result <- parseNixFileLoc (NixPath.Path path)
+          result <- try (parseNixFileLoc (NixPath.Path path))
           case result of
-            Left doc -> do
+            Left (e :: IOException) -> do
+              let failure = ParseFailure path (T.pack $ show e)
+              let state' = state {bsFailures = failure : bsFailures state}
+              pure state'
+            Right (Left doc) -> do
               -- Record the parse failure
               let failure = ParseFailure path (T.pack (show doc))
-              let state' = state { bsFailures = failure : bsFailures state }
+              let state' = state {bsFailures = failure : bsFailures state}
               pure state'
-            Right expr -> do
+            Right (Right expr) -> do
               let imports = findImports (takeDirectory path) expr
               let modType = case inferExpr expr of
                     Right (t, _) -> t
                     Left _ -> TAny
-              
+
               -- Check for with/rec violations
               let lintViolations = findNixViolations expr
-              
+
               -- Check for layout violations
               let layoutViolations = findLayoutViolations path expr
-              
-              let modDef = Module
-                    { modPath = path
-                    , modExpr = expr
-                    , modType = modType
-                    , modImports = imports
-                    }
-              
-              let state' = state { bsModules = Map.insert path modDef (bsModules state) }
-              
+
+              let modDef =
+                    Module
+                      { modPath = path,
+                        modExpr = expr,
+                        modType = modType,
+                        modImports = imports
+                      }
+
+              let state' = state {bsModules = Map.insert path modDef (bsModules state)}
+
               -- Record lint failures if any
-              let state'' = if null lintViolations
-                    then state'
-                    else state' { bsLintFailures = LintFailure path lintViolations : bsLintFailures state' }
-              
+              let state'' =
+                    if null lintViolations
+                      then state'
+                      else state' {bsLintFailures = LintFailure path lintViolations : bsLintFailures state'}
+
               -- Record layout failures if any
-              let state''' = if null layoutViolations
-                    then state''
-                    else state'' { bsLayoutFailures = LayoutFailure path layoutViolations : bsLayoutFailures state'' }
-              
+              let state''' =
+                    if null layoutViolations
+                      then state''
+                      else state'' {bsLayoutFailures = LayoutFailure path layoutViolations : bsLayoutFailures state''}
+
               let visited' = Set.insert path visited
-              
+
               -- Recursively process imports
               foldM (processImport rootDir visited') state''' imports
 
@@ -219,13 +229,13 @@ processImport :: FilePath -> Set FilePath -> BuildState -> Import -> IO BuildSta
 processImport rootDir visited state imp = do
   exists <- doesFileExist (impPath imp)
   if not exists
-    then pure state  -- Skip non-existent imports
+    then pure state -- Skip non-existent imports
     else do
       canonPath <- canonicalizePath (impPath imp)
       let rootPrefix = rootDir ++ [pathSeparator]
       if rootPrefix `isPrefixOf` canonPath || canonPath == rootDir
         then buildModules rootDir canonPath visited state
-        else pure state  -- Path traversal blocked silently
+        else pure state -- Path traversal blocked silently
 
 -- ============================================================================
 -- Import Finding
@@ -238,10 +248,10 @@ findImports baseDir = go
     go :: NExprLoc -> [Import]
     go (Fix (Compose (AnnUnit srcSpan e))) = case e of
       -- import ./path  or  (import ./path) { args }
-      NApp func arg -> 
+      NApp func arg ->
         -- First check if func is directly the import builtin
         case isImportBuiltin func of
-          Just () -> 
+          Just () ->
             -- func is `import`, arg is the path
             makeImport baseDir (extractPath arg) Nothing srcSpan
           Nothing ->
@@ -252,9 +262,8 @@ findImports baseDir = go
               Just (rawPath, Just inner) ->
                 makeImport baseDir rawPath (Just arg) srcSpan ++ go inner ++ go arg
               Nothing -> go func ++ go arg
-      
       -- Recurse into all expressions
-      NLet bindings body -> 
+      NLet bindings body ->
         concatMap goBinding bindings ++ go body
       NSet _ bindings -> concatMap goBinding bindings
       NIf c t f -> go c ++ go t ++ go f
@@ -266,13 +275,13 @@ findImports baseDir = go
       NBinary _ l r -> go l ++ go r
       NUnary _ x -> go x
       _ -> []
-    
+
     goBinding :: Nix.Binding NExprLoc -> [Import]
     goBinding = \case
       Nix.NamedVar _ expr _ -> go expr
       Nix.Inherit (Just scope) _ _ -> go scope
       Nix.Inherit Nothing _ _ -> []
-    
+
     -- Try to unwrap an import expression, returning the path and any remaining args
     -- Returns: Just (path, maybeRemainingExpr) if this is an import
     unwrapImport :: NExprLoc -> Maybe (Text, Maybe NExprLoc)
@@ -280,7 +289,7 @@ findImports baseDir = go
       -- import path  or  import path { args }
       NApp func pathExpr -> case func of
         -- Direct: import ./path
-        Fix (Compose (AnnUnit _ (NSym name))) 
+        Fix (Compose (AnnUnit _ (NSym name)))
           | varNameText name == "import" -> Just (extractPath pathExpr, Nothing)
         -- Curried: (import ./path) { args } - pathExpr is the args, recurse into func
         _ -> case unwrapImport func of
@@ -288,17 +297,16 @@ findImports baseDir = go
           _ -> case isImportBuiltin func of
             Just () -> Just (extractPath pathExpr, Nothing)
             Nothing -> Nothing
-      
       _ -> Nothing
-    
+
     -- Check if expression is `import` or `builtins.import`
     isImportBuiltin :: NExprLoc -> Maybe ()
     isImportBuiltin (Fix (Compose (AnnUnit _ e))) = case e of
       NSym name | varNameText name == "import" -> Just ()
-      NSelect _ _ (attr :| rest) 
-        | varNameText (keyName (last (attr:rest))) == "import" -> Just ()
+      NSelect _ _ (attr :| rest)
+        | varNameText (keyName (last (attr : rest))) == "import" -> Just ()
       _ -> Nothing
-    
+
     -- Extract path from path expression
     extractPath :: NExprLoc -> Text
     extractPath (Fix (Compose (AnnUnit _ e))) = case e of
@@ -306,49 +314,47 @@ findImports baseDir = go
       NStr (DoubleQuoted [Plain t]) -> t
       NStr (Indented _ [Plain t]) -> t
       _ -> ""
-    
+
     keyName (StaticKey k) = k
     keyName (DynamicKey _) = VarName ""
-    
+
     varNameText :: VarName -> Text
     varNameText = coerce
-    
+
     makeImport :: FilePath -> Text -> Maybe NExprLoc -> SrcSpan -> [Import]
     makeImport base rawPath args srcSpan
       | T.null rawPath = []
-      | otherwise = 
+      | otherwise =
           let resolved = resolveImportPath base (T.unpack rawPath)
-          in [ Import
-                { impPath = resolved
-                , impRawPath = rawPath
-                , impArgs = args
-                , impSpan = toSpan srcSpan
-                }
-             ]
-    
+           in [ Import
+                  { impPath = resolved,
+                    impRawPath = rawPath,
+                    impArgs = args,
+                    impSpan = toSpan srcSpan
+                  }
+              ]
+
     toSpan :: SrcSpan -> Span
     toSpan srcSpan =
-      let
-        begin = getSpanBegin srcSpan
-        end = getSpanEnd srcSpan
-        fileFromBegin = case begin of
-          NSourcePos path _ _ -> Just (coerce path)
-      in
-      Span
-        { spanStart = Loc (sourceLine begin) (sourceCol begin)
-        , spanEnd = Loc (sourceLine end) (sourceCol end)
-        , spanFile = fileFromBegin
-        }
-    
+      let begin = getSpanBegin srcSpan
+          end = getSpanEnd srcSpan
+          fileFromBegin = case begin of
+            NSourcePos path _ _ -> Just (coerce path)
+       in Span
+            { spanStart = Loc (sourceLine begin) (sourceCol begin),
+              spanEnd = Loc (sourceLine end) (sourceCol end),
+              spanFile = fileFromBegin
+            }
+
     sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
     sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
 
 -- | Resolve an import path relative to a base directory
 resolveImportPath :: FilePath -> FilePath -> FilePath
 resolveImportPath baseDir path = case path of
-  '.':_ -> normalise (baseDir </> path)
-  '/':_ -> path
-  _     -> path  -- External input, keep as-is
+  '.' : _ -> normalise (baseDir </> path)
+  '/' : _ -> path
+  _ -> path -- External input, keep as-is
 
 -- ============================================================================
 -- Queries
@@ -360,10 +366,10 @@ moduleImports mg path = maybe [] modImports (Map.lookup path (mgModules mg))
 
 -- | Get all modules that import a given module
 moduleDependents :: ModuleGraph -> FilePath -> [FilePath]
-moduleDependents mg path = 
-  [ modPath m 
-  | m <- Map.elems (mgModules mg)
-  , any (\i -> impPath i == path) (modImports m)
+moduleDependents mg path =
+  [ modPath m
+  | m <- Map.elems (mgModules mg),
+    any (\i -> impPath i == path) (modImports m)
   ]
 
 -- | Get topological order (dependencies first)
@@ -372,17 +378,18 @@ topologicalOrder = mgOrder
 
 -- | Check if the module graph has any violations
 hasViolations :: ModuleGraph -> Bool
-hasViolations mg = 
-  not (null (mgFailures mg)) ||
-  not (null (mgLintFailures mg)) ||
-  not (null (mgLayoutFailures mg))
+hasViolations mg =
+  not (null (mgFailures mg))
+    || not (null (mgLintFailures mg))
+    || not (null (mgLayoutFailures mg))
 
 -- | Count total violations across all categories
 totalViolationCount :: ModuleGraph -> Int
 totalViolationCount mg =
-  length (mgFailures mg) +  -- Parse failures
-  sum (map (length . lfViolations) (mgLintFailures mg)) +  -- Lint violations
-  sum (map (length . layViolations) (mgLayoutFailures mg))  -- Layout violations
+  length (mgFailures mg)
+    + sum (map (length . lfViolations) (mgLintFailures mg)) -- Parse failures
+    + sum (map (length . layViolations) (mgLayoutFailures mg)) -- Lint violations
+    -- Layout violations
 
 -- | Compute topological order using DFS
 computeOrder :: FilePath -> Map FilePath Module -> [FilePath]
@@ -391,12 +398,12 @@ computeOrder root modules = reverse $ snd $ dfs Set.empty [] root
     dfs :: Set FilePath -> [FilePath] -> FilePath -> (Set FilePath, [FilePath])
     dfs visited order path
       | path `Set.member` visited = (visited, order)
-      | otherwise = 
+      | otherwise =
           case Map.lookup path modules of
             Nothing -> (visited, order)
             Just m ->
               let visited' = Set.insert path visited
                   (visited'', order') = foldl go (visited', order) (map impPath (modImports m))
-              in (visited'', path : order')
-    
+               in (visited'', path : order')
+
     go (v, o) p = dfs v o p

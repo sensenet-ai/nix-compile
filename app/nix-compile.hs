@@ -499,10 +499,6 @@ cmdTypeCheck path = do
         detectUnsupported (Fix (Compose (AnnUnit _ expr))) = case expr of
           -- Dynamic attribute access
           NSelect _ _ (DynamicKey _ :| _) -> Just "dynamic attribute access"
-          -- with expression
-          NWith _ _ -> Just "with expression"
-          -- rec attrset
-          NSet Recursive _ -> Just "rec attrset"
           -- Dynamic imports (NImport removed in hnix 0.17.0)
           -- NImport path -> case path of
           --   Fix (Compose (AnnUnit _ (NStr _))) -> Just "dynamic import"

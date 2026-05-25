@@ -23,6 +23,7 @@ module NixCompile.Nix.Infer
   )
 where
 
+import Control.Exception (IOException, try)
 import Control.Monad (foldM, forM, forM_, replicateM)
 import Control.Monad.Except
 import Control.Monad.State.Strict
@@ -51,22 +52,26 @@ import NixCompile.Types (Loc (..), Span (..))
 -- Environment
 -- ============================================================================
 
--- | Type environment: maps variable names to their type schemes
-newtype TypeEnv = TypeEnv {unTypeEnv :: Map Text Scheme}
+-- | Type environment: maps variable names to their type schemes,
+-- optionally carries a with-scope type for name resolution.
+data TypeEnv = TypeEnv
+  { envBindings :: Map Text Scheme,
+    envWith :: Maybe NixType
+  }
   deriving (Eq, Show)
 
 emptyEnv :: TypeEnv
-emptyEnv = TypeEnv Map.empty
+emptyEnv = TypeEnv Map.empty Nothing
 
 extendEnv :: Text -> Scheme -> TypeEnv -> TypeEnv
-extendEnv name scheme (TypeEnv m) = TypeEnv (Map.insert name scheme m)
+extendEnv name scheme env = env {envBindings = Map.insert name scheme (envBindings env)}
 
 lookupEnv :: Text -> TypeEnv -> Maybe Scheme
-lookupEnv name (TypeEnv m) = Map.lookup name m
+lookupEnv name env = Map.lookup name (envBindings env)
 
 -- | Built-in function types
 builtinEnv :: TypeEnv
-builtinEnv = TypeEnv $ Map.union (Map.singleton "builtins" (mono $ TAttrs builtinsTypes)) (Map.map (mono . fst) builtinsTypes)
+builtinEnv = TypeEnv {envBindings = Map.union (Map.singleton "builtins" (mono $ TAttrs builtinsTypes)) (Map.map (mono . fst) builtinsTypes), envWith = Nothing}
   where
     mono t = Forall [] t
     req t = (t, False)
@@ -141,7 +146,8 @@ data InferState = InferState
   { inferSupply :: !Int, -- Fresh type variable supply
     inferSubst :: !Subst, -- Current substitution
     inferBinds :: ![Binding], -- Collected bindings
-    inferSpan :: !(Maybe Span) -- Current source location
+    inferSpan :: !(Maybe Span), -- Current source location
+    inferWithMemo :: !(Map Text NixType) -- Memoized with-scope names
   }
 
 -- | Inference monad with error handling
@@ -149,7 +155,7 @@ type Infer a = ExceptT Text (State InferState) a
 
 runInfer :: Infer a -> Either Text (a, [Binding])
 runInfer m =
-  let (eRes, st) = runState (runExceptT m) (InferState 0 emptySubst [] Nothing)
+  let (eRes, st) = runState (runExceptT m) (InferState 0 emptySubst [] Nothing Map.empty)
    in case eRes of
         Left err -> Left err
         Right res -> Right (res, inferBinds st)
@@ -380,10 +386,20 @@ infer env (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp) $ case
   NLiteralPath _ -> pure TPath
   NEnvPath _ -> pure TPath
   -- Variables
-  NSym name -> case lookupEnv (varNameText name) env of
-    Just scheme -> instantiate scheme
-    Nothing -> freshVar -- Unknown variable, assign fresh
-
+  NSym name ->
+    let tyName = varNameText name
+     in case lookupEnv tyName env of
+          Just scheme -> instantiate scheme
+          Nothing -> case envWith env of
+            Just _scopeT -> do
+              memo <- gets inferWithMemo
+              case Map.lookup tyName memo of
+                Just t -> pure t
+                Nothing -> do
+                  tv <- freshVar
+                  modify $ \s -> s {inferWithMemo = Map.insert tyName tv memo}
+                  pure tv
+            Nothing -> freshVar
   -- Lists: use mergeTypes for heterogeneous lists
   NList [] -> do
     elemType <- freshVar
@@ -412,8 +428,13 @@ infer env (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp) $ case
 
   -- With expression
   NWith scope body -> do
-    _ <- infer env scope
-    infer env body
+    scopeT <- infer env scope
+    let env' = env {envWith = Just scopeT}
+    oldMemo <- gets inferWithMemo
+    modify $ \s -> s {inferWithMemo = Map.empty}
+    resultT <- infer env' body
+    modify $ \s -> s {inferWithMemo = oldMemo}
+    pure resultT
 
   -- Assert
   NAssert cond body -> do
@@ -713,7 +734,7 @@ collectFreeVarsBinding _ = []
 generalize :: TypeEnv -> NixType -> Infer Scheme
 generalize env t = do
   t' <- applyCurrentSubst t
-  envSchemes <- mapM applyCurrentSubstScheme (Map.elems (unTypeEnv env))
+  envSchemes <- mapM applyCurrentSubstScheme (Map.elems (envBindings env))
   let freeInEnv = Set.unions (map freeTypeVarsScheme envSchemes)
   let freeInT = freeTypeVars t'
   let vars = Set.toList (freeInT `Set.difference` freeInEnv)
@@ -771,10 +792,11 @@ posToSpan (Nix.NSourcePos path l c) =
 -- | Infer types for a Nix file
 inferFile :: FilePath -> IO (Either Text InferResult)
 inferFile path = do
-  result <- parseNixFileLoc (Nix.Path path)
+  result <- try (parseNixFileLoc (Nix.Path path))
   case result of
-    Left doc -> pure $ Left (T.pack $ show doc)
-    Right expr ->
+    Left (e :: IOException) -> pure $ Left (T.pack $ show e)
+    Right (Left doc) -> pure $ Left (T.pack $ show doc)
+    Right (Right expr) ->
       case inferExpr expr of
         Left err -> pure $ Left err
         Right (t, bindings) -> pure $ Right $ InferResult bindings [(T.pack path, t)]
