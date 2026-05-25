@@ -26,6 +26,7 @@ module NixCompile.Nix.Parse
   ( -- * Parsing
     parseNixFile,
     parseNixExpr,
+    parseNix,
 
     -- * Extraction
     extractBashScripts,
@@ -91,6 +92,10 @@ parseNixExpr :: Text -> Either Text NExprLoc
 parseNixExpr src = case parseNixTextLoc src of
   Left doc -> Left (T.pack $ show doc)
   Right expr -> Right expr
+
+-- | Parse a Nix expression from text with filepath for error context
+parseNix :: FilePath -> Text -> Either Text NExprLoc
+parseNix _path src = parseNixExpr src
 
 -- | Extract all bash scripts from a Nix file
 extractBashScripts :: FilePath -> IO (Either Text [BashScript])
