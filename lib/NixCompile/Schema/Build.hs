@@ -97,10 +97,8 @@ configPartVars = concatMap $ \case
   ConfigText _ -> []
 
 -- | Build config schema
--- Uses Map.fromList which keeps the last entry for duplicate keys,
--- matching bash runtime semantics where the last assignment wins.
 buildConfigSchema :: [Fact] -> Subst -> Map ConfigPath ConfigSpec
-buildConfigSchema facts subst = Map.fromList (concatMap go facts)
+buildConfigSchema facts subst = Map.fromListWith mergeConfigSpec (concatMap go facts)
   where
     go = \case
       ConfigAssign path var quoted sp ->

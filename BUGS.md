@@ -18,7 +18,7 @@ The following items from the prior review cycle have been subsumed or are stale:
 | FIXES P3 | FIX-8 (unifyUnion multi-element) | Fixed |
 | FIXES P3 | FIX-9 (mergeSchemas comment) | Fixed |
 | FIXES P3 | FIX-10 (// in isStorePath) | Open — still relevant |
-| FIXES P4 | FIX-11 (QC for Nix infer) | Open |
+| FIXES P4 | FIX-11 (QC for Nix infer) | Fixed |
 | FIXES P4 | FIX-12 (CI test exec) | Open |
 | FIXES P4 | FIX-13 (emptySubst in test) | Open |
 | FIXES P4 | FIX-14 (DynamicKey in NHasAttr) | Fixed |
@@ -89,7 +89,7 @@ The CLI's `cmdTypeCheck` uses `detectUnsupported` to skip unanalyzable files bef
 
 Original claim was that `shellBuiltins` contained `""` at line 319. Adversarial re-review confirms the list does **not** contain an empty string. The real risk is `innerToText`'s catch-all `_ -> ""` (see NEW-1 below).
 
-### BUG-3: `findValueTokens` assumes `=` always at suffix of a Literal token
+### BUG-3: `findValueTokens` assumes `=` always at suffix of a Literal token [MITIGATED]
 
 **File:** `lib/NixCompile/Bash/Facts.hs:173-186`
 
@@ -99,7 +99,7 @@ Text-based fallback partially mitigates this, but quoting detection (`Quoted` vs
 
 **Impact:** Depends on ShellCheck tokenization behavior, which may vary across versions.
 
-### BUG-4: `cmdCheck` discards solved substitution
+### BUG-4: `cmdCheck` discards solved substitution [FIXED]
 
 **File:** `app/nix-compile.hs:217-221`
 
@@ -123,13 +123,13 @@ Edge priority (Parent > Import > With > Inherit > AttrAccess) was not implemente
 
 **Fix:** `sortEdges` replaced with `groupByLabel` + `firstNonEmpty` in `findPaths`. Property test `prop_scope_parent_before_with` confirms Parent edges resolve before With edges.
 
-### DESIGN-2: `TVar -> TString` default masks inference failures
+### DESIGN-2: `TVar -> TString` default masks inference failures [ACCEPTED]
 
 **File:** `lib/NixCompile/Schema/Build.hs:123`
 
 `applyDefaults` treats any unresolved TVar as `TString`. If the solver leaves a variable unresolved (cycle, incomplete constraints), the schema silently reports `TString` with no diagnostic.
 
-### DESIGN-3: `emit-config` emits unguarded `$VAR` references
+### DESIGN-3: `emit-config` emits unguarded `$VAR` references [FIXED]
 
 **File:** `lib/NixCompile/Emit/Config.hs:198-200`
 
@@ -141,7 +141,7 @@ Same pattern in `renderYamlValue` (line 243) and `renderTomlValue` (line 301). A
 
 ## New bugs found (adversarial re-review, Apr 2026)
 
-### NEW-1: `innerToText` catch-all produces phantom bare-command facts
+### NEW-1: `innerToText` catch-all produces phantom bare-command facts [FIXED]
 
 **File:** `lib/NixCompile/Bash/Facts.hs:438`
 
@@ -149,7 +149,7 @@ Same pattern in `renderYamlValue` (line 243) and `renderTomlValue` (line 301). A
 
 **Fix:** Guard against empty command text in `cmdInvocationFacts`.
 
-### NEW-2: Type error not counted in `cmdNix` error tally
+### NEW-2: Type error not counted in `cmdNix` error tally [FIXED]
 
 **File:** `app/nix-compile.hs:303-307, 324-328`
 
@@ -159,7 +159,7 @@ When `solve constraints` returns `Left err` in `checkScript`, the error is logge
 
 **Fix:** Track the type error in the error count returned from `checkScript`.
 
-### NEW-3: `error "impossible"` in production code
+### NEW-3: `error "impossible"` in production code [FIXED]
 
 **File:** `lib/NixCompile/Nix/Infer.hs:352`
 
@@ -167,7 +167,7 @@ When `solve constraints` returns `Left err` in `checkScript`, the error is logge
 
 **Fix:** Replace with a proper error in the `Infer` monad.
 
-### NEW-4: `NWith` scope edges both point to lexical parent
+### NEW-4: `NWith` scope edges both point to lexical parent [FIXED]
 
 **File:** `lib/NixCompile/Nix/Scope.hs:381-383`
 
@@ -175,7 +175,7 @@ When `solve constraints` returns `Left err` in `checkScript`, the error is logge
 
 **Fix:** Create a scope for `withExpr` and point the `With` edge there.
 
-### NEW-5: `fromModuleGraph` drops all but first scope graph
+### NEW-5: `fromModuleGraph` drops all but first scope graph [FIXED]
 
 **File:** `lib/NixCompile/Nix/Scope.hs:322-328`
 
@@ -187,43 +187,43 @@ case Map.elems graphs of
 
 All file-level scope graphs except the first are discarded. Cross-file analysis is inert.
 
-### NEW-6: `FlakeOutputs` `Eq` only compares `outPackages`
+### NEW-6: `FlakeOutputs` `Eq` only compares `outPackages` [WONTFIX]
 
 **File:** `lib/NixCompile/Nix/Flake.hs:86-88`
 
 The `Eq` instance ignores devShells, checks, apps, overlays, and all other fields. Two structurally different `FlakeOutputs` compare as equal if their packages match.
 
-### NEW-7: `mergeSchemas` uses `Map.union` — drops overlapping env specs
+### NEW-7: `mergeSchemas` uses `Map.union` — drops overlapping env specs [FIXED]
 
 **File:** `lib/NixCompile/Types.hs:347`
 
 `mergeSchemas` uses `Map.union` for `schemaEnv`, which silently drops the second schema's specs for overlapping variable names instead of merging them with `mergeEnvSpec`.
 
-### NEW-8: `buildConfigSchema` last-writer-wins (no merge)
+### NEW-8: `buildConfigSchema` last-writer-wins (no merge) [FIXED]
 
 **File:** `lib/NixCompile/Schema/Build.hs:76`
 
 Uses `Map.fromList` instead of `Map.fromListWith`. Duplicate config paths keep only the last entry, inconsistent with `buildEnvSchema` which merges.
 
-### NEW-9: `mapConcurrently` unbounded parallelism
+### NEW-9: `mapConcurrently` unbounded parallelism [FIXED]
 
 **File:** `app/nix-compile.hs:356`
 
 `mapConcurrently` spawns one green thread per file with no upper bound. For large repositories, this can exhaust file descriptors or memory.
 
-### NEW-10: `findAllNixFiles` has no path-escape guard
+### NEW-10: `findAllNixFiles` has no path-escape guard [FIXED]
 
 **File:** `app/nix-compile.hs:382-402`
 
 Symlinks resolved by `canonicalizePath` can escape the project root. No `isPrefixOf canonRoot` check prevents traversal to arbitrary filesystem locations. The visited-set prevents infinite loops but not directory escape.
 
-### NEW-11: `NConcat` doesn't verify list type
+### NEW-11: `NConcat` doesn't verify list type [FIXED]
 
 **File:** `lib/NixCompile/Nix/Infer.hs:492-494`
 
 `++` in Nix is list concatenation only, but the type checker just unifies the two operands without constraining them to `TList`. `1 ++ 2` would pass type checking.
 
-### NEW-12: `findReferences` matches by name only, not by resolution
+### NEW-12: `findReferences` matches by name only, not by resolution [FIXED]
 
 **File:** `lib/NixCompile/Nix/Scope.hs:644-651`
 

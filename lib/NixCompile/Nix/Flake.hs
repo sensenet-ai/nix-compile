@@ -258,9 +258,10 @@ parseOutputsBindings bindings =
       outNixosModules = parseSimpleMap "nixosModules",
       outNixosConfigurations = parseSimpleMap "nixosConfigurations",
       outLib = findBinding "lib" bindings,
-      outOther = Map.empty -- TODO
+      outOther = parseOther
     }
   where
+    knownNames = ["packages", "devShells", "checks", "apps", "overlays", "nixosModules", "nixosConfigurations", "lib"]
     parseSystemMap :: Text -> Map Text (Map Text OutputEntry)
     parseSystemMap name = case findBinding name bindings of
       Just expr -> case unwrapExpr expr of
@@ -284,6 +285,15 @@ parseOutputsBindings bindings =
           Map.fromList $ mapMaybe (parseEntry name) entryBindings
         _ -> Map.empty
       Nothing -> Map.empty
+
+    parseOther :: Map Text NExprLoc
+    parseOther =
+      Map.fromList
+        [ (varNameText n, e)
+        | Nix.NamedVar (StaticKey n :| []) e _ <- bindings,
+          let name = varNameText n,
+          name `notElem` knownNames
+        ]
 
     parseEntry :: Text -> Nix.Binding NExprLoc -> Maybe (Text, OutputEntry)
     parseEntry category (Nix.NamedVar (StaticKey name :| []) expr _) =

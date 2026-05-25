@@ -18,6 +18,7 @@ library
     exposed-modules:
         NixCompile
         NixCompile.Bash.Builtins
+        NixCompile.Config
         NixCompile.Bash.Facts
         NixCompile.Bash.Parse
         NixCompile.Bash.Patterns

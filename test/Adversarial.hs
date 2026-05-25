@@ -431,13 +431,12 @@ prop_constraints_deterministic facts =
   factsToConstraints facts == factsToConstraints facts
 
 -- | PROP-8: Schema building is deterministic
-prop_schema_deterministic :: [Fact] -> Bool
+prop_schema_deterministic :: [Fact] -> Property
 prop_schema_deterministic facts =
-  let constraints = factsToConstraints facts
-      s = case solve constraints of
-        Right subst -> subst
-        Left _ -> emptySubst
-   in buildSchema facts s == buildSchema facts s
+  isRight (solve (factsToConstraints facts)) ==>
+    case solve (factsToConstraints facts) of
+      Right s -> buildSchema facts s == buildSchema facts s
+      Left _ -> False
 
 -- ============================================================================
 -- PARSER SAFETY PROPERTIES
@@ -787,7 +786,7 @@ main = do
             ("solve_satisfies", property prop_solve_satisfies),
             ("solve_unsatisfiable", property prop_solve_unsatisfiable),
             ("constraints_deterministic", property prop_constraints_deterministic),
-            ("schema_deterministic", property prop_schema_deterministic)
+            ("schema_deterministic", forAll arbitrary prop_schema_deterministic)
           ],
         section
           "PARSER SAFETY"

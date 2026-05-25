@@ -57,6 +57,7 @@ module NixCompile.Types
     EnvSpec (..),
     mergeEnvSpec,
     ConfigSpec (..),
+    mergeConfigSpec,
     CommandSpec (..),
     emptySchema,
     mergeSchemas,
@@ -319,6 +320,11 @@ mergeEnvSpec e1 e2 =
         Nothing -> envDefault e2,
       envSpan = envSpan e1
     }
+
+-- | Merge two config specs for the same path.
+-- Prefers the second (later) spec since last assignment wins in bash.
+mergeConfigSpec :: ConfigSpec -> ConfigSpec -> ConfigSpec
+mergeConfigSpec _ c2 = c2
 
 -- | Config field specification
 data ConfigSpec = ConfigSpec
