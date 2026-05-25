@@ -40,6 +40,9 @@ library
         NixCompile.Nix.Layout
         NixCompile.Nix.LayoutConvention
         NixCompile.Nix.Lint
+        NixCompile.Nix.LintDerivation
+        NixCompile.Nix.LintPackages
+        NixCompile.Nix.LintPatterns
         NixCompile.Nix.Module
         NixCompile.Nix.ModuleKind
         NixCompile.Nix.Naming

@@ -46,6 +46,7 @@ module NixCompile
     Config.isSuppressed,
     Config.bashRuleId,
     Config.nixRuleId,
+    Config.derivRuleId,
 
     -- * Re-exports
     module NixCompile.Types,
