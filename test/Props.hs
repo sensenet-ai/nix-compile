@@ -49,7 +49,9 @@ import NixCompile.Nix.Effect
 import NixCompile.Nix.Format (formatExpr)
 import NixCompile.Nix.Infer (Binding, inferExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
-import NixCompile.Nix.Lint (findNixViolations)
+import NixCompile.Nix.Lint
+import NixCompile.Nix.LintDerivation qualified as DerivLint
+import NixCompile.Nix.LintPatterns qualified as PatternLint
 import NixCompile.Nix.ModuleKind
 import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
@@ -1754,6 +1756,199 @@ prop_bash_lint_clean =
     Right ast -> null (findViolations ast)
 
 -- ============================================================================
+-- Properties: New Nix lint rules (N005-N012)
+-- ============================================================================
+
+-- | Nix lint detects `substituteAll`
+prop_nix_lint_substitute_all :: Bool
+prop_nix_lint_substitute_all =
+  case parseNixTextLoc "substituteAll { inherit (pkgs) foo; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = findNixViolations expr
+          hasSubstAll v = case NixCompile.Nix.Lint.nvType v of
+            NixCompile.Nix.Lint.VSubstituteAll -> True
+            _ -> False
+       in any hasSubstAll violations
+
+-- | Nix lint detects raw `mkDerivation`
+prop_nix_lint_raw_mkderivation :: Bool
+prop_nix_lint_raw_mkderivation =
+  case parseNixTextLoc "mkDerivation { name = \"foo\"; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = findNixViolations expr
+          hasRawMkDeriv v = case NixCompile.Nix.Lint.nvType v of
+            NixCompile.Nix.Lint.VRawMkDerivation -> True
+            _ -> False
+       in any hasRawMkDeriv violations
+
+-- | Nix lint detects `runCommand`
+prop_nix_lint_raw_runcommand :: Bool
+prop_nix_lint_raw_runcommand =
+  case parseNixTextLoc "runCommand \"name\" {} \"exit 0\"" of
+    Left _ -> False
+    Right expr ->
+      let violations = findNixViolations expr
+          hasRunCmd v = case NixCompile.Nix.Lint.nvType v of
+            NixCompile.Nix.Lint.VRawRunCommand -> True
+            _ -> False
+       in any hasRunCmd violations
+
+-- | Nix lint detects raw `writeShellApplication`
+prop_nix_lint_raw_wsa :: Bool
+prop_nix_lint_raw_wsa =
+  case parseNixTextLoc "writeShellApplication { name = \"foo\"; text = \"bar\"; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = findNixViolations expr
+          hasRawWSA v = case NixCompile.Nix.Lint.nvType v of
+            NixCompile.Nix.Lint.VRawWriteShellApplication -> True
+            _ -> False
+       in any hasRawWSA violations
+
+-- | Nix lint detects `writeShellScript`
+prop_nix_lint_write_shell_script :: Bool
+prop_nix_lint_write_shell_script =
+  case parseNixTextLoc "writeShellScript \"name\" ''body''" of
+    Left _ -> False
+    Right expr ->
+      let violations = findNixViolations expr
+          hasWSS v = case NixCompile.Nix.Lint.nvType v of
+            NixCompile.Nix.Lint.VWriteShellScript -> True
+            _ -> False
+       in any hasWSS violations
+
+-- | Nix lint detects long inline strings
+prop_nix_lint_long_string :: Bool
+prop_nix_lint_long_string =
+  let longStr = "\"" <> T.replicate 200 "x" <> "\""
+   in case parseNixTextLoc longStr of
+        Left _ -> False
+        Right expr ->
+          let violations = findNixViolations expr
+              hasLongStr v = case NixCompile.Nix.Lint.nvType v of
+                NixCompile.Nix.Lint.VLongInlineString _ -> True
+                _ -> False
+           in any hasLongStr violations
+
+-- | Short strings do not trigger long-inline-string violation
+prop_nix_lint_short_string_ok :: Bool
+prop_nix_lint_short_string_ok =
+  let shortStr = "\"" <> T.replicate 50 "x" <> "\""
+   in case parseNixTextLoc shortStr of
+        Left _ -> False
+        Right expr ->
+          let violations = findNixViolations expr
+              hasLongStr v = case NixCompile.Nix.Lint.nvType v of
+                NixCompile.Nix.Lint.VLongInlineString _ -> True
+                _ -> False
+           in not (any hasLongStr violations)
+
+-- | Lint is deterministic: same input produces same violations
+prop_nix_lint_deterministic_ext :: Property
+prop_nix_lint_deterministic_ext = forAll (sized genNixExpr) $ \src ->
+  case parseNixTextLoc src of
+    Left _ -> label "lint-det: unparseable" True
+    Right expr ->
+      label "lint-det: ok" $
+        findNixViolations expr == findNixViolations expr
+
+-- ============================================================================
+-- Properties: Derivation lint rules
+-- ============================================================================
+
+-- | mkDerivation without meta triggers VMissingMeta
+prop_deriv_missing_meta :: Bool
+prop_deriv_missing_meta =
+  case parseNixTextLoc "mkDerivation { name = \"foo\"; src = ./.; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = DerivLint.findDerivViolations "test.nix" expr
+          hasMissingMeta v = DerivLint.dvType v == DerivLint.VMissingMeta
+       in any hasMissingMeta violations
+
+-- | mkDerivation with meta but no description triggers VMissingDescription
+prop_deriv_missing_description :: Bool
+prop_deriv_missing_description =
+  case parseNixTextLoc "mkDerivation { name = \"foo\"; meta = { license = \"MIT\"; }; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = DerivLint.findDerivViolations "test.nix" expr
+          hasMissingDesc v = DerivLint.dvType v == DerivLint.VMissingDescription
+       in any hasMissingDesc violations
+
+-- | mkDerivation with meta.description produces no violations
+prop_deriv_has_both :: Bool
+prop_deriv_has_both =
+  case parseNixTextLoc "mkDerivation { name = \"foo\"; meta = { description = \"bar\"; }; }" of
+    Left _ -> False
+    Right expr ->
+      null (DerivLint.findDerivViolations "test.nix" expr)
+
+-- | Non-derivation expr has no derivation violations
+prop_deriv_clean :: Bool
+prop_deriv_clean =
+  case parseNixTextLoc "let x = 1; in x + x" of
+    Left _ -> False
+    Right expr ->
+      null (DerivLint.findDerivViolations "test.nix" expr)
+
+-- | mkDerivation through attribute path also detected
+prop_deriv_stdenv_path :: Bool
+prop_deriv_stdenv_path =
+  case parseNixTextLoc "stdenv.mkDerivation { name = \"foo\"; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = DerivLint.findDerivViolations "test.nix" expr
+          hasMissingMeta v = DerivLint.dvType v == DerivLint.VMissingMeta
+       in any hasMissingMeta violations
+
+-- ============================================================================
+-- Properties: Pattern lint rules
+-- ============================================================================
+
+-- | Pattern lint detects `x.y or null`
+prop_pattern_or_null_fallback :: Bool
+prop_pattern_or_null_fallback =
+  case parseNixTextLoc "x.y or null" of
+    Left _ -> False
+    Right expr ->
+      let violations = PatternLint.findPatternViolations expr
+          hasOrNull v = PatternLint.pvType v == PatternLint.VOrNullFallback
+       in any hasOrNull violations
+
+-- | Pattern lint detects `translateAttrs` call
+prop_pattern_translate_attrs :: Bool
+prop_pattern_translate_attrs =
+  case parseNixTextLoc "translateAttrs (name: value: value) attrs" of
+    Left _ -> False
+    Right expr ->
+      let violations = PatternLint.findPatternViolations expr
+          hasTranslate v = PatternLint.pvType v == PatternLint.VAttrTranslation
+       in any hasTranslate violations
+
+-- | Clean expression has no pattern violations
+prop_pattern_clean :: Bool
+prop_pattern_clean =
+  case parseNixTextLoc "let x = 1; y = x + 1; in y" of
+    Left _ -> False
+    Right expr ->
+      null (PatternLint.findPatternViolations expr)
+
+-- | Nix lint on stdenv select path detects mkDerivation
+prop_nix_lint_stdenv_path :: Bool
+prop_nix_lint_stdenv_path =
+  case parseNixTextLoc "stdenv.mkDerivation { name = \"foo\"; }" of
+    Left _ -> False
+    Right expr ->
+      let violations = findNixViolations expr
+          hasRawMkDeriv v = case NixCompile.Nix.Lint.nvType v of
+            NixCompile.Nix.Lint.VRawMkDerivation -> True
+            _ -> False
+       in any hasRawMkDeriv violations
+
+-- ============================================================================
 -- Properties: Schema defaulted vars (DESIGN-2)
 -- ============================================================================
 
@@ -2199,10 +2394,30 @@ main = do
         run "nix_lint_with" prop_nix_lint_with,
         run "nix_lint_rec" prop_nix_lint_rec,
         run "nix_lint_clean" prop_nix_lint_clean,
+        -- Nix lint (new rules N005-N012)
+        run "nix_lint_substitute_all" prop_nix_lint_substitute_all,
+        run "nix_lint_raw_mkderivation" prop_nix_lint_raw_mkderivation,
+        run "nix_lint_raw_runcommand" prop_nix_lint_raw_runcommand,
+        run "nix_lint_raw_wsa" prop_nix_lint_raw_wsa,
+        run "nix_lint_write_shell_script" prop_nix_lint_write_shell_script,
+        run "nix_lint_long_string" prop_nix_lint_long_string,
+        run "nix_lint_short_string_ok" prop_nix_lint_short_string_ok,
+        run "nix_lint_deterministic_ext" prop_nix_lint_deterministic_ext,
+        run "nix_lint_stdenv_path" prop_nix_lint_stdenv_path,
         -- Bash lint
         run "bash_lint_heredoc" prop_bash_lint_heredoc,
         run "bash_lint_backtick" prop_bash_lint_backtick,
         run "bash_lint_clean" prop_bash_lint_clean,
+        -- Derivation lint
+        run "deriv_missing_meta" prop_deriv_missing_meta,
+        run "deriv_missing_description" prop_deriv_missing_description,
+        run "deriv_has_both" prop_deriv_has_both,
+        run "deriv_clean" prop_deriv_clean,
+        run "deriv_stdenv_path" prop_deriv_stdenv_path,
+        -- Pattern lint
+        run "pattern_or_null_fallback" prop_pattern_or_null_fallback,
+        run "pattern_translate_attrs" prop_pattern_translate_attrs,
+        run "pattern_clean" prop_pattern_clean,
         -- Schema defaulted vars
         run "schema_defaulted_reported" prop_schema_defaulted_reported,
         run "schema_resolved_not_defaulted" prop_schema_resolved_not_defaulted,

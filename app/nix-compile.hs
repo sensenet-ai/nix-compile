@@ -48,6 +48,9 @@ import NixCompile.Nix.Format qualified as NixFmt
 import NixCompile.Nix.Infer qualified
 import NixCompile.Nix.Layout qualified as Layout
 import NixCompile.Nix.Lint qualified as Lint
+import NixCompile.Nix.LintDerivation qualified as Derivation
+import NixCompile.Nix.LintPackages qualified as LintPackages
+import NixCompile.Nix.LintPatterns qualified as LintPatterns
 import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
@@ -157,6 +160,27 @@ partitionNixViolations config = foldr go ([], [])
   where
     go v (suppressed, active)
       | Config.isSuppressed config (Config.nixRuleId (Lint.nvType v)) = (v : suppressed, active)
+      | otherwise = (suppressed, v : active)
+
+partitionDerivViolations :: Config.Config -> [Derivation.DerivViolation] -> ([Derivation.DerivViolation], [Derivation.DerivViolation])
+partitionDerivViolations config = foldr go ([], [])
+  where
+    go v (suppressed, active)
+      | Config.isSuppressed config (Config.derivRuleId (Derivation.dvType v)) = (v : suppressed, active)
+      | otherwise = (suppressed, v : active)
+
+partitionPackageViolations :: Config.Config -> [LintPackages.PackageViolation] -> ([LintPackages.PackageViolation], [LintPackages.PackageViolation])
+partitionPackageViolations config = foldr go ([], [])
+  where
+    go v (suppressed, active)
+      | Config.isSuppressed config (Config.packageRuleId (LintPackages.pvCode v)) = (v : suppressed, active)
+      | otherwise = (suppressed, v : active)
+
+partitionPatternViolations :: Config.Config -> [LintPatterns.PatternViolation] -> ([LintPatterns.PatternViolation], [LintPatterns.PatternViolation])
+partitionPatternViolations config = foldr go ([], [])
+  where
+    go v (suppressed, active)
+      | Config.isSuppressed config (Config.patternRuleId (LintPatterns.pvType v)) = (v : suppressed, active)
       | otherwise = (suppressed, v : active)
 
 -- ============================================================================
@@ -418,6 +442,21 @@ cmdTypeCheck config path = do
   let skipCount = length [() | r <- results, r == TCSkip]
   let failCount = length [() | r <- results, r == TCFail]
 
+  pViolations <- liftIO $ LintPackages.checkPackageDirs files
+  let (_, activePkg) = partitionPackageViolations config pViolations
+  let pkgCount = length activePkg
+
+  unless (null activePkg) $ do
+    $(logTM) ErrorS $
+      logStr $
+        T.unlines
+          [ "",
+            "================================================================",
+            "  Package Directories Missing default.nix",
+            ""
+          ]
+    $(logTM) ErrorS $ logStr $ formatPackageViolations activePkg
+
   $(logTM) InfoS $
     logStr $
       T.unlines
@@ -427,11 +466,12 @@ cmdTypeCheck config path = do
           "  " <> T.pack (show okCount <> " passed"),
           "  " <> T.pack (show skipCount <> " skipped (unsupported constructs)"),
           "  " <> T.pack (show failCount <> " failed"),
+          "  " <> T.pack (show pkgCount <> " package directory violations"),
           "================================================================",
           ""
         ]
 
-  if failCount == 0
+  if failCount == 0 && null activePkg
     then liftIO exitSuccess
     else liftIO exitFailure
   where
@@ -510,6 +550,35 @@ cmdTypeCheck config path = do
                         ""
                       ]
                 $(logTM) ErrorS $ logStr $ Lint.formatNixViolations nixActive
+
+              -- Check for derivation quality violations (missing-meta, missing-description)
+              let derivViolations = Derivation.findDerivViolations file expr
+              let (_, derivActive) = partitionDerivViolations config derivViolations
+              unless (null derivActive) $ do
+                $(logTM) WarningS $
+                  logStr $
+                    T.unlines
+                      [ "",
+                        "━━━ " <> cross <> " " <> T.pack file <> " ━━━",
+                        "",
+                        "  DERIVATION QUALITY VIOLATIONS:",
+                        ""
+                      ]
+                $(logTM) WarningS $ logStr $ Derivation.formatDerivViolations derivActive
+              -- Check for pattern violations (or-null-fallback, translateAttrs)
+              let patternViolations = LintPatterns.findPatternViolations expr
+              let (_, patternActive) = partitionPatternViolations config patternViolations
+              unless (null patternActive) $ do
+                $(logTM) WarningS $
+                  logStr $
+                    T.unlines
+                      [ "",
+                        "━━━ " <> cross <> " " <> T.pack file <> " ━━━",
+                        "",
+                        "  PATTERN VIOLATIONS:",
+                        ""
+                      ]
+                $(logTM) WarningS $ logStr $ LintPatterns.formatPatternViolations patternActive
               -- Type check the file
               result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expr of
                 Left err -> return $ Left err
@@ -540,7 +609,7 @@ cmdTypeCheck config path = do
                         ]
                   return TCFail
                 Right (Right _t) ->
-                  if null nixActive
+                  if null nixActive && null derivActive && null patternActive
                     then do
                       $(logTM) InfoS $ logStr $ check <> " " <> T.pack file
                       return TCOk
@@ -600,6 +669,15 @@ cmdTypeCheck config path = do
             isDynamicKey (DynamicKey _) = True
             isDynamicKey _ = False
 
+formatPackageViolations :: [LintPackages.PackageViolation] -> T.Text
+formatPackageViolations [] = ""
+formatPackageViolations vs =
+  T.unlines
+    [ "ALEPH-P001: Package directories must contain a `default.nix` file:",
+      ""
+    ]
+    <> T.unlines (map (\v -> "  " <> T.pack (LintPackages.pvPath v)) vs)
+
 -- | Format a Nix file with type annotations
 cmdFmt :: FilePath -> AppM ()
 cmdFmt file = do
@@ -652,12 +730,19 @@ cmdGraph config dir asDot = do
     Right graph -> do
       let rootDir = takeDirectory (Mod.mgRoot graph)
       let filtered = filterGraph config rootDir graph
+      let allGraphPaths =
+            Map.keys (Mod.mgModules filtered)
+              ++ map Mod.pfPath (Mod.mgFailures filtered)
+              ++ map Mod.lfPath (Mod.mgLintFailures filtered)
+              ++ map Mod.layPath (Mod.mgLayoutFailures filtered)
       if asDot
         then liftIO $ printDot rootDir filtered
         else do
-          liftIO $ printGraph rootDir filtered
-          -- Exit with failure if there are any violations
-          if Mod.hasViolations filtered
+          pViolations <- liftIO $ LintPackages.checkPackageDirs allGraphPaths
+          let (_, activePkg') = partitionPackageViolations config pViolations
+          let patViolations = concatMap LintPatterns.findPatternViolations (map Mod.modExpr (Map.elems (Mod.mgModules filtered)))
+          liftIO $ printGraph rootDir filtered activePkg' patViolations
+          if Mod.hasViolations filtered || not (null activePkg') || not (null patViolations)
             then liftIO exitFailure
             else liftIO exitSuccess
   where
@@ -675,8 +760,8 @@ cmdGraph config dir asDot = do
               Mod.mgLintFailures = filter keepLint (Mod.mgLintFailures g),
               Mod.mgLayoutFailures = filter keepLay (Mod.mgLayoutFailures g)
             }
-    printGraph :: FilePath -> Mod.ModuleGraph -> IO ()
-    printGraph rootDir graph = do
+    printGraph :: FilePath -> Mod.ModuleGraph -> [LintPackages.PackageViolation] -> [LintPatterns.PatternViolation] -> IO ()
+    printGraph rootDir graph pkgViolations patternViolations = do
       putStrLn "=== Module Graph ==="
       putStrLn $ "Root: " ++ makeRelative rootDir (Mod.mgRoot graph)
       putStrLn $ "Modules: " ++ show (Map.size (Mod.mgModules graph))
@@ -686,8 +771,10 @@ cmdGraph config dir asDot = do
       let layoutFailures = Mod.mgLayoutFailures graph
       let lintViolationCount = sum (map (length . Mod.lfViolations) lintFailures)
       let layoutViolationCount = sum (map (length . Mod.layViolations) layoutFailures)
+      let pkgViolationCount = length pkgViolations
+      let patternVCount = length patternViolations
 
-      if null parseFailures && null lintFailures && null layoutFailures
+      if null parseFailures && null lintFailures && null layoutFailures && null pkgViolations && null patternViolations
         then putStrLn ""
         else do
           if not (null parseFailures)
@@ -708,12 +795,30 @@ cmdGraph config dir asDot = do
               putStrLn ""
             else return ()
 
+          if not (null patternViolations)
+            then do
+              putStrLn $ "Pattern violations: " ++ show patternVCount
+              putStrLn ""
+              putStrLn "=== Pattern Violations (or-null, translateAttrs) ==="
+              mapM_ (printPatternViolation rootDir) patternViolations
+              putStrLn ""
+            else return ()
+
           if not (null layoutFailures)
             then do
               putStrLn $ "Layout violations: " ++ show layoutViolationCount ++ " in " ++ show (length layoutFailures) ++ " files"
               putStrLn ""
               putStrLn "=== Layout Failures (directory structure) ==="
               mapM_ (printLayoutFailure rootDir) layoutFailures
+              putStrLn ""
+            else return ()
+
+          if not (null pkgViolations)
+            then do
+              putStrLn $ "Package violations: " ++ show pkgViolationCount
+              putStrLn ""
+              putStrLn "=== Package Failures (default.nix missing) ==="
+              mapM_ (printPackageViolation rootDir) pkgViolations
               putStrLn ""
             else return ()
 
@@ -750,6 +855,12 @@ cmdGraph config dir asDot = do
       let code = case Lint.nvType v of
             Lint.VWith -> "ALEPH-N001"
             Lint.VRec -> "ALEPH-N002"
+            Lint.VSubstituteAll -> "ALEPH-N005"
+            Lint.VRawMkDerivation -> "ALEPH-N006"
+            Lint.VRawRunCommand -> "ALEPH-N007"
+            Lint.VRawWriteShellApplication -> "ALEPH-N008"
+            Lint.VWriteShellScript -> "ALEPH-N011"
+            Lint.VLongInlineString _ -> "ALEPH-N012"
       TIO.putStrLn $
         "    "
           <> T.pack (show (locLine (spanStart loc)))
@@ -791,6 +902,30 @@ cmdGraph config dir asDot = do
               <> Layout.lvMessage v
         Nothing ->
           TIO.putStrLn $ "    " <> code <> ": " <> Layout.lvMessage v
+
+    printPackageViolation :: FilePath -> LintPackages.PackageViolation -> IO ()
+    printPackageViolation rootDir v = do
+      let path = makeRelative rootDir (LintPackages.pvPath v)
+      TIO.putStrLn $ "  " <> T.pack path
+      let code = case LintPackages.pvCode v of
+            LintPackages.P001 -> "ALEPH-P001"
+      TIO.putStrLn $ "    " <> code <> ": " <> LintPackages.pvMessage v
+
+    printPatternViolation :: FilePath -> LintPatterns.PatternViolation -> IO ()
+    printPatternViolation _ v = do
+      let loc = LintPatterns.pvSpan v
+      let code = case LintPatterns.pvType v of
+            LintPatterns.VOrNullFallback -> "ALEPH-N009"
+            LintPatterns.VAttrTranslation -> "ALEPH-N010"
+      TIO.putStrLn $
+        "    "
+          <> T.pack (show (locLine (spanStart loc)))
+          <> ":"
+          <> T.pack (show (locCol (spanStart loc)))
+          <> " "
+          <> code
+          <> ": "
+          <> LintPatterns.pvContext v
 
     printModuleImports :: FilePath -> Mod.Module -> IO ()
     printModuleImports rootDir m = do

@@ -15,6 +15,9 @@ module NixCompile.Config
     isSuppressed,
     bashRuleId,
     nixRuleId,
+    derivRuleId,
+    packageRuleId,
+    patternRuleId,
   )
 where
 
@@ -26,6 +29,9 @@ import Dhall qualified
 import GHC.Generics (Generic)
 import NixCompile.Lint.Forbidden qualified as Bash
 import NixCompile.Nix.Lint qualified as NixLint
+import NixCompile.Nix.LintDerivation qualified as Deriv
+import NixCompile.Nix.LintPackages qualified as LintPackages
+import NixCompile.Nix.LintPatterns qualified as LintPatterns
 import System.FilePath qualified as FP
 
 -------------------------------------------------------------------------------
@@ -137,6 +143,24 @@ nixRuleId :: NixLint.ViolationType -> Text
 nixRuleId = \case
   NixLint.VWith -> "with-lib"
   NixLint.VRec -> "rec-anywhere"
+  NixLint.VSubstituteAll -> "no-substitute-all"
+  NixLint.VRawMkDerivation -> "no-raw-mkderivation"
+  NixLint.VRawRunCommand -> "no-raw-runcommand"
+  NixLint.VRawWriteShellApplication -> "no-raw-writeshellapplication"
+  NixLint.VWriteShellScript -> "prefer-write-shell-application"
+  NixLint.VLongInlineString _ -> "long-inline-string"
+
+derivRuleId :: Deriv.DerivViolationType -> Text
+derivRuleId = Deriv.derivRuleId
+
+packageRuleId :: LintPackages.PackageViolationCode -> Text
+packageRuleId = \case
+  LintPackages.P001 -> "default-nix-in-packages"
+
+patternRuleId :: LintPatterns.PatternViolationType -> Text
+patternRuleId = \case
+  LintPatterns.VOrNullFallback -> "or-null-fallback"
+  LintPatterns.VAttrTranslation -> "no-translate-attrs-outside-prelude"
 
 -------------------------------------------------------------------------------
 -- Internal: glob matching
