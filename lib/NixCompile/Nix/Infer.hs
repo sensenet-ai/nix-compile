@@ -632,6 +632,15 @@ inferBindings recursive env bindings
                         Just s -> instantiate s
                         Nothing -> freshVar
                     unify typeVar t
+                    t'' <- applyCurrentSubst typeVar
+                    case t'' of
+                      TVar v'
+                        | TVar v' == typeVar ->
+                            throwTypeError $
+                              "infinite type: rec binding '"
+                                <> name
+                                <> "' has no concrete constraint"
+                      _ -> pure ()
                     pure (name, t)
                 _ -> pure [] -- Skip complex bindings
           )
@@ -718,6 +727,16 @@ inferLet env bindings body = do
       forM_ (zip groupBindings freshVars) $ \((name, expr, sp), typeVar) -> do
         t <- infer envRecursive expr
         unify typeVar t
+
+        t'' <- applyCurrentSubst typeVar
+        case t'' of
+          TVar v'
+            | TVar v' == typeVar ->
+                throwTypeError $
+                  "infinite type: rec binding '"
+                    <> name
+                    <> "' has no concrete constraint"
+          _ -> pure ()
 
         -- Emit binding info for IDE/formatting
         t' <- applyCurrentSubst t

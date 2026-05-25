@@ -44,6 +44,7 @@ import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
+import NixCompile.Nix.Infer (inferExpr)
 import NixCompile.Nix.Types
 import NixCompile.Nix.Utils (varNameText)
 import System.Directory (doesFileExist)
@@ -323,7 +324,7 @@ inferOutputType = \case
 data FlakeTypes = FlakeTypes
   { ftOutputsType :: !NixType,
     ftPackageTypes :: !(Map Text (Map Text NixType)),
-    ftLibTypes :: !(Maybe (Map Text NixType))
+    ftLibTypes :: !(Maybe NixType)
   }
   deriving (Eq, Show)
 
@@ -333,7 +334,11 @@ inferFlake flake =
   FlakeTypes
     { ftOutputsType = flakeOutputsType,
       ftPackageTypes = Map.map (Map.map entryType) (outPackages (flakeOutputs flake)),
-      ftLibTypes = Nothing -- TODO: infer lib types
+      ftLibTypes = case outLib o of
+        Just libExpr -> case inferExpr libExpr of
+          Right (t, _) -> Just t
+          Left _ -> Nothing
+        Nothing -> Nothing
     }
   where
     flakeOutputsType = TFun flakeInputsType outputsType
