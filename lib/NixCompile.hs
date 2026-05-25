@@ -35,6 +35,18 @@ module NixCompile
     LintError (..),
     Severity (..),
 
+    -- * Config
+    Config.Config (..),
+    Config.RuleOverride (..),
+    Config.loadConfig,
+    Config.defaultConfig,
+    Config.effectiveSeverity,
+    Config.configIgnores,
+    Config.isIgnored,
+    Config.isSuppressed,
+    Config.bashRuleId,
+    Config.nixRuleId,
+
     -- * Re-exports
     module NixCompile.Types,
   )
@@ -46,6 +58,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
+import NixCompile.Config qualified as Config
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
 import NixCompile.Schema.Build (buildSchema, validateConfigPaths)

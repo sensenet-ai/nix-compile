@@ -359,6 +359,23 @@ mergeAttrs m1 m2 = do
       (Nothing, Nothing) -> throwTypeError $ "internal error: key " <> k <> " missing from both attr sets"
   pure $ TAttrs (Map.fromList fields)
 
+-- | Constrain a name from a with-scope to have its field type.
+-- If scopeT is a concrete attrset with the field, unify them.
+-- If scopeT is still a type variable, add the field as a constraint.
+fieldConstraint :: Text -> NixType -> NixType -> Infer ()
+fieldConstraint name scopeT valueT = case scopeT of
+  TAttrs m -> case Map.lookup name m of
+    Just (ft, _) -> unify valueT ft
+    Nothing -> pure () -- field not known, keep valueT unconstrained
+  TAttrsOpen m -> case Map.lookup name m of
+    Just (ft, _) -> unify valueT ft
+    Nothing -> pure ()
+  TVar _ -> do
+    -- scopeT is unknown, add a constraint that it has this field
+    let fieldType = TAttrsOpen (Map.singleton name (valueT, False))
+    unify scopeT fieldType
+  _ -> pure () -- scopeT is not an attrset, skip
+
 -- ============================================================================
 -- Instantiation
 -- ============================================================================
@@ -391,14 +408,18 @@ infer env (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp) $ case
      in case lookupEnv tyName env of
           Just scheme -> instantiate scheme
           Nothing -> case envWith env of
-            Just _scopeT -> do
+            Just scopeT -> do
               memo <- gets inferWithMemo
               case Map.lookup tyName memo of
                 Just t -> pure t
                 Nothing -> do
                   tv <- freshVar
-                  modify $ \s -> s {inferWithMemo = Map.insert tyName tv memo}
-                  pure tv
+                  -- Constrain tv to the field type from the with-scope
+                  scopeT' <- applyCurrentSubst scopeT
+                  fieldConstraint tyName scopeT' tv
+                  applyCurrentSubst tv >>= \resolved -> do
+                    modify $ \s -> s {inferWithMemo = Map.insert tyName resolved memo}
+                    pure resolved
             Nothing -> freshVar
   -- Lists: use mergeTypes for heterogeneous lists
   NList [] -> do
@@ -586,7 +607,18 @@ inferBindings recursive env bindings
                 Nix.NamedVar (StaticKey name :| []) expr pos -> do
                   t <- infer env' expr
                   case vars of
-                    (typeVar : _) -> unify typeVar t
+                    (typeVar : _) -> do
+                      unify typeVar t
+                      -- Check for self-referential binding without constraint
+                      t'' <- applyCurrentSubst typeVar
+                      case t'' of
+                        TVar v'
+                          | TVar v' == typeVar ->
+                              throwTypeError $
+                                "infinite type: rec binding '"
+                                  <> varNameText name
+                                  <> "' has no concrete constraint"
+                        _ -> pure ()
                     [] -> pure ()
                   t' <- applyCurrentSubst t
                   emitBinding (varNameText name) t' (posToSpan pos)

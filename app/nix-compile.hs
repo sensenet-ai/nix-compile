@@ -37,10 +37,11 @@ import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import NixCompile hiding (Severity)
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
+import NixCompile.Config qualified as Config
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
-import NixCompile.Lint.Forbidden (findViolations, formatViolationsAt)
+import NixCompile.Lint.Forbidden (Violation (..), findViolations, formatViolationsAt)
 import NixCompile.Log
 import NixCompile.Nix.Flake qualified as Flake
 import NixCompile.Nix.Format qualified as NixFmt
@@ -63,22 +64,34 @@ data TCResult = TCOk | TCFail | TCSkip
 main :: IO ()
 main = runLog InfoS $ do
   args <- liftIO getArgs
-  case args of
-    ["lint", file] -> cmdLint file
-    ["check", file] -> cmdCheck file
+  let (mConfigPath, restArgs) = parseConfigArg args
+  config <- case mConfigPath of
+    Just path -> either (const Config.defaultConfig) id <$> liftIO (Config.loadConfig path)
+    Nothing -> pure Config.defaultConfig
+  $(logTM) InfoS $
+    logStr $
+      "Config: profile="
+        <> Config.configProfile config
+        <> " overrides="
+        <> T.pack (show (length (Config.configOverrides config)))
+        <> " ignores="
+        <> T.pack (show (length (Config.configExtraIgnores config)))
+  case restArgs of
+    ["lint", file] -> cmdLint config file
+    ["check", file] -> cmdCheck config file
     ["infer", file] -> cmdInfer file
     ["parse", file] -> cmdParse file
     ["emit", file] -> cmdEmit file
-    ["nix", file] -> cmdNix file
+    ["nix", file] -> cmdNix config file
     ["fmt", file] -> cmdFmt file
-    ["typecheck", path] -> cmdTypeCheck path
+    ["typecheck", path] -> cmdTypeCheck config path
     ["flake"] -> cmdFlake "."
     ["flake", dir] -> cmdFlake dir
-    ["graph"] -> cmdGraph "." False
-    ["graph", dir] -> cmdGraph dir False
-    ["graph", "--dot"] -> cmdGraph "." True
-    ["graph", "--dot", dir] -> cmdGraph dir True
-    ["graph", dir, "--dot"] -> cmdGraph dir True
+    ["graph"] -> cmdGraph config "." False
+    ["graph", dir] -> cmdGraph config dir False
+    ["graph", "--dot"] -> cmdGraph config "." True
+    ["graph", "--dot", dir] -> cmdGraph config dir True
+    ["graph", dir, "--dot"] -> cmdGraph config dir True
     ["scope", file] -> cmdScope file
     ["scope", "--json", file] -> cmdScopeJSON file
     ["scope", "--dhall", file] -> cmdScopeDhall file
@@ -86,9 +99,13 @@ main = runLog InfoS $ do
     ["-h"] -> liftIO usage
     [] -> liftIO usage
     _ -> do
-      $(logTM) ErrorS $ logStr $ T.pack $ "Unknown command: " ++ unwords args
+      $(logTM) ErrorS $ logStr $ T.pack $ "Unknown command: " ++ unwords restArgs
       liftIO usage
       liftIO exitFailure
+
+parseConfigArg :: [String] -> (Maybe FilePath, [String])
+parseConfigArg ("--config" : path : rest) = (Just path, rest)
+parseConfigArg args = (Nothing, args)
 
 usage :: IO ()
 usage = do
@@ -127,6 +144,20 @@ usage = do
   putStrLn "  nix-compile check ./scripts/*.sh"
   putStrLn "  nix-compile infer ./deploy.sh | jq '.env'"
   putStrLn "  nix-compile nix ./default.nix"
+
+partitionViolations :: Config.Config -> [Violation] -> ([Violation], [Violation])
+partitionViolations config = foldr go ([], [])
+  where
+    go v (suppressed, active)
+      | Config.isSuppressed config (Config.bashRuleId (vType v)) = (v : suppressed, active)
+      | otherwise = (suppressed, v : active)
+
+partitionNixViolations :: Config.Config -> [Lint.NixViolation] -> ([Lint.NixViolation], [Lint.NixViolation])
+partitionNixViolations config = foldr go ([], [])
+  where
+    go v (suppressed, active)
+      | Config.isSuppressed config (Config.nixRuleId (Lint.nvType v)) = (v : suppressed, active)
+      | otherwise = (suppressed, v : active)
 
 -- ============================================================================
 -- Pretty-printing for bash policy violations
@@ -181,8 +212,8 @@ cmdInfer file = do
       liftIO $ BL.putStrLn (encode (scriptSchema script))
 
 -- | Lint for forbidden constructs only (heredocs, eval, backticks)
-cmdLint :: FilePath -> AppM ()
-cmdLint file = do
+cmdLint :: Config.Config -> FilePath -> AppM ()
+cmdLint config file = do
   src <- liftIO $ TIO.readFile file
   case parseBash src of
     Left err -> do
@@ -190,18 +221,23 @@ cmdLint file = do
       liftIO exitFailure
     Right ast -> do
       let violations = findViolations ast
-      if null violations
+      let (suppressed, active) = partitionViolations config violations
+      if null active
         then do
-          $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK (no forbidden constructs)"
+          $(logTM) InfoS $ logStr $ T.pack file <> ": OK" <> suppressedSuffix suppressed
           liftIO exitSuccess
         else do
-          $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
-          $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show (length violations) ++ " error(s) in " ++ file
+          $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) active
+          $(logTM) ErrorS $ logStr $ "\n" <> T.pack (show (length active)) <> " error(s) in " <> T.pack file <> suppressedSuffix suppressed
           liftIO exitFailure
+  where
+    suppressedSuffix :: [Violation] -> T.Text
+    suppressedSuffix [] = ""
+    suppressedSuffix ss = " (" <> T.pack (show (length ss)) <> " suppressed)"
 
 -- | Full check: lint + bare commands + type inference
-cmdCheck :: FilePath -> AppM ()
-cmdCheck file = do
+cmdCheck :: Config.Config -> FilePath -> AppM ()
+cmdCheck config file = do
   src <- liftIO $ TIO.readFile file
   -- First check for forbidden constructs
   case parseBash src of
@@ -209,7 +245,8 @@ cmdCheck file = do
       $(logTM) ErrorS $ logStr $ "Parse error: " <> err
       liftIO exitFailure
     Right ast -> do
-      let violations = findViolations ast
+      let allViolations = findViolations ast
+      let (_suppressed, violations) = partitionViolations config allViolations
       unless (null violations) $ do
         $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
         liftIO $ putStrLn ""
@@ -226,7 +263,7 @@ cmdCheck file = do
         Left err -> do
           $(logTM) ErrorS $ logStr $ "Type error: " <> T.pack (show err)
           liftIO exitFailure
-        Right _s -> pure ()
+        Right _ -> pure ()
 
       let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
       let dynFacts = [(var, sp) | DynamicCommand var sp <- facts]
@@ -266,8 +303,8 @@ cmdEmit file = do
       liftIO $ TIO.putStr $ emitConfigFunction (scriptSchema script)
 
 -- | Check embedded bash scripts in Nix files
-cmdNix :: FilePath -> AppM ()
-cmdNix file = do
+cmdNix :: Config.Config -> FilePath -> AppM ()
+cmdNix config file = do
   result <- liftIO $ Nix.extractBashScripts file
   case result of
     Left err -> do
@@ -275,7 +312,7 @@ cmdNix file = do
       liftIO exitFailure
     Right scripts -> do
       $(logTM) InfoS $ logStr $ T.pack $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
-      totalErrors <- sum <$> mapM checkScript scripts
+      totalErrors <- sum <$> mapM (checkScript config) scripts
       if totalErrors > 0
         then do
           $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " total error(s)"
@@ -284,8 +321,8 @@ cmdNix file = do
           $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
           liftIO exitSuccess
   where
-    checkScript :: Nix.BashScript -> AppM Int
-    checkScript bs = do
+    checkScript :: Config.Config -> Nix.BashScript -> AppM Int
+    checkScript cfg bs = do
       $(logTM) InfoS $ logStr $ "\n=== " <> Nix.bsName bs <> " ==="
       -- Parse and check the bash content
       case parseBash (Nix.bsContent bs) of
@@ -293,8 +330,9 @@ cmdNix file = do
           $(logTM) ErrorS $ logStr $ "  Parse error: " <> err
           return 1
         Right ast -> do
-          -- Check for forbidden constructs
-          let violations = findViolations ast
+          -- Check for forbidden constructs (filter suppressed)
+          let allViolations = findViolations ast
+          let (_, violations) = partitionViolations cfg allViolations
           unless (null violations) $ do
             let srcLabel = T.pack file <> ":" <> Nix.bsName bs
             $(logTM) ErrorS $ logStr $ formatViolationsAt srcLabel violations
@@ -317,7 +355,7 @@ cmdNix file = do
             Left err -> do
               $(logTM) ErrorS $ logStr $ "  Type error: " <> T.pack (show err)
               return 1
-            Right _s -> pure 0
+            Right _ -> pure 0
 
           let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
           let dynFacts = [(var, sp) | DynamicCommand var sp <- facts]
@@ -341,13 +379,17 @@ cmdNix file = do
           return errorCount
 
 -- | Recursively type check a directory or single file in parallel
-cmdTypeCheck :: FilePath -> AppM ()
-cmdTypeCheck path = do
+cmdTypeCheck :: Config.Config -> FilePath -> AppM ()
+cmdTypeCheck config path = do
   isDir <- liftIO $ doesDirectoryExist path
   files <-
     if isDir
-      then liftIO $ findAllNixFiles path
-      else return [path]
+      then liftIO $ findAllNixFiles config path
+      else do
+        let f = path
+        if Config.isIgnored config f
+          then return []
+          else return [f]
 
   $(logTM) InfoS $
     logStr $
@@ -393,36 +435,40 @@ cmdTypeCheck path = do
     then liftIO exitSuccess
     else liftIO exitFailure
   where
-    findAllNixFiles :: FilePath -> IO [FilePath]
-    findAllNixFiles root = do
+    findAllNixFiles :: Config.Config -> FilePath -> IO [FilePath]
+    findAllNixFiles cfg root = do
       canonRoot <- canonicalizePath root
       let go found _ [] = return found
           go found visited (d : worklist) = do
             canon <- canonicalizePath d
             if canon `Set.member` visited
               then go found visited worklist
-              -- Reject paths that escape the project root (e.g. via symlinks)
               else
                 if not (canonRoot `isPrefixOf` canon)
                   then go found visited worklist
                   else do
-                    entries <- listDirectory d
-                    (nixFiles, subdirs) <-
-                      foldM
-                        ( \(fs, ds) entry -> do
-                            let fullPath = d </> entry
-                            if entry `elem` [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
-                              then return (fs, ds)
-                              else do
-                                isD <- doesDirectoryExist fullPath
-                                if isD
-                                  then return (fs, fullPath : ds)
-                                  else return (if takeExtension fullPath == ".nix" then fullPath : fs else fs, ds)
-                        )
-                        ([], [])
-                        entries
-                    go (nixFiles ++ found) (Set.insert canon visited) (subdirs ++ worklist)
-      go [] Set.empty [root]
+                    let relD = makeRelative canonRoot canon
+                    if Config.isIgnored cfg relD
+                      then go found (Set.insert canon visited) worklist
+                      else do
+                        entries <- listDirectory d
+                        (nixFiles, subdirs) <-
+                          foldM
+                            ( \(fs, ds) entry -> do
+                                let fullPath = d </> entry
+                                if entry `elem` [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
+                                  then return (fs, ds)
+                                  else do
+                                    isD <- doesDirectoryExist fullPath
+                                    if isD
+                                      then return (fs, fullPath : ds)
+                                      else return (if takeExtension fullPath == ".nix" then fullPath : fs else fs, ds)
+                            )
+                            ([], [])
+                            entries
+                        go (nixFiles ++ found) (Set.insert canon visited) (subdirs ++ worklist)
+      allFiles <- go [] Set.empty [root]
+      return $ filter (not . Config.isIgnored cfg . makeRelative canonRoot) allFiles
 
     checkFileWrapper :: (LogEnv, LogContexts, Namespace) -> FilePath -> IO TCResult
     checkFileWrapper (le, ctx, ns) file = runKatipContextT le ctx ns (checkFile file)
@@ -450,6 +496,20 @@ cmdTypeCheck path = do
               $(logTM) InfoS $ logStr $ skip <> " " <> T.pack file <> " (unsupported: " <> reason <> ")"
               return TCSkip
             Nothing -> do
+              -- Check for Nix lint violations (with, rec)
+              let nixViolations = Lint.findNixViolations expr
+              let (_, nixActive) = partitionNixViolations config nixViolations
+              unless (null nixActive) $ do
+                $(logTM) ErrorS $
+                  logStr $
+                    T.unlines
+                      [ "",
+                        "━━━ " <> cross <> " " <> T.pack file <> " ━━━",
+                        "",
+                        "  NIX LINT VIOLATIONS:",
+                        ""
+                      ]
+                $(logTM) ErrorS $ logStr $ Lint.formatNixViolations nixActive
               -- Type check the file
               result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expr of
                 Left err -> return $ Left err
@@ -479,9 +539,14 @@ cmdTypeCheck path = do
                           ""
                         ]
                   return TCFail
-                Right (Right _t) -> do
-                  $(logTM) InfoS $ logStr $ check <> " " <> T.pack file
-                  return TCOk
+                Right (Right _t) ->
+                  if null nixActive
+                    then do
+                      $(logTM) InfoS $ logStr $ check <> " " <> T.pack file
+                      return TCOk
+                    else do
+                      $(logTM) InfoS $ logStr $ cross <> " " <> T.pack file <> " (lint violations)"
+                      return TCFail
       where
         check = "[OK]"
         cross = "[XX]"
@@ -577,8 +642,8 @@ cmdFlake dir = do
     prettyType = NixCompile.Nix.Types.prettyType
 
 -- | Show module dependency graph
-cmdGraph :: FilePath -> Bool -> AppM ()
-cmdGraph dir asDot = do
+cmdGraph :: Config.Config -> FilePath -> Bool -> AppM ()
+cmdGraph config dir asDot = do
   result <- liftIO $ Mod.buildModuleGraphFromFlake dir
   case result of
     Left err -> do
@@ -586,15 +651,30 @@ cmdGraph dir asDot = do
       liftIO exitFailure
     Right graph -> do
       let rootDir = takeDirectory (Mod.mgRoot graph)
+      let filtered = filterGraph config rootDir graph
       if asDot
-        then liftIO $ printDot rootDir graph
+        then liftIO $ printDot rootDir filtered
         else do
-          liftIO $ printGraph rootDir graph
+          liftIO $ printGraph rootDir filtered
           -- Exit with failure if there are any violations
-          if Mod.hasViolations graph
+          if Mod.hasViolations filtered
             then liftIO exitFailure
             else liftIO exitSuccess
   where
+    filterGraph :: Config.Config -> FilePath -> Mod.ModuleGraph -> Mod.ModuleGraph
+    filterGraph cfg rootDir g =
+      let keep p = not (Config.isIgnored cfg (makeRelative rootDir p))
+          keepMod m = keep (Mod.modPath m)
+          keepFail pf = keep (Mod.pfPath pf)
+          keepLint lf = keep (Mod.lfPath lf)
+          keepLay lf = keep (Mod.layPath lf)
+       in g
+            { Mod.mgModules = Map.filter keepMod (Mod.mgModules g),
+              Mod.mgOrder = filter keep (Mod.mgOrder g),
+              Mod.mgFailures = filter keepFail (Mod.mgFailures g),
+              Mod.mgLintFailures = filter keepLint (Mod.mgLintFailures g),
+              Mod.mgLayoutFailures = filter keepLay (Mod.mgLayoutFailures g)
+            }
     printGraph :: FilePath -> Mod.ModuleGraph -> IO ()
     printGraph rootDir graph = do
       putStrLn "=== Module Graph ==="

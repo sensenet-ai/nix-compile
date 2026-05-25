@@ -194,9 +194,19 @@ emitConfigFunction schema =
       "}"
     ]
 
+-- | Check whether an env var is required according to the schema.
+-- Returns True when the variable is either:
+--   - explicitly marked as required in the schema (envRequired = True), or
+--   - not present in the schema at all (conservative: assume required).
+isRequiredEnv :: Map Text EnvSpec -> Text -> Bool
+isRequiredEnv env var = case Map.lookup var env of
+  Just es -> envRequired es
+  Nothing -> True
+
 -- | Emit preflight guards before producing output.
 -- Guards must run outside command substitutions: bash does not reliably abort
 -- the outer printf when ${VAR:?} fails inside $(...).
+-- Only generates guards for variables marked as required in the schema env.
 renderRuntimeGuards :: Schema -> Text
 renderRuntimeGuards schema =
   T.unlines
@@ -205,16 +215,20 @@ renderRuntimeGuards schema =
       guardLine <- renderGuards spec
     ]
   where
-    renderGuards ConfigSpec {cfgFrom = Just var, cfgType = ty, cfgQuoted = quoted} =
-      if quoted == Just Quoted
-        then [presenceGuard var]
-        else case ty of
-          TInt -> [intGuard var]
-          TNumeric -> [intGuard var]
-          TBool -> [boolGuard var]
-          _ -> [presenceGuard var]
+    env = schemaEnv schema
+
+    renderGuards ConfigSpec {cfgFrom = Just var, cfgType = ty, cfgQuoted = quoted}
+      | isRequiredEnv env var =
+          if quoted == Just Quoted
+            then [presenceGuard var]
+            else case ty of
+              TInt -> [intGuard var]
+              TNumeric -> [intGuard var]
+              TBool -> [boolGuard var]
+              _ -> [presenceGuard var]
+      | otherwise = []
     renderGuards ConfigSpec {cfgTemplate = Just parts} =
-      [presenceGuard var | var <- requiredTemplateVars parts]
+      [presenceGuard var | var <- requiredTemplateVars parts, isRequiredEnv env var]
     renderGuards _ = []
 
     presenceGuard var = "  : \"${" <> var <> ":?" <> var <> " is required}\""
@@ -229,8 +243,9 @@ renderRuntimeGuards schema =
 -- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text
 emitConfigJson schema =
-  let tree = buildConfigTree (schemaConfig schema)
-   in emitTemplate (renderJsonTree 0 tree)
+  let env = schemaEnv schema
+      tree = buildConfigTree (schemaConfig schema)
+   in emitTemplate (renderJsonTree env 0 tree)
 
 -- | Escape a string for use in single-quoted printf argument
 escapeForPrintf :: Text -> Text
@@ -275,8 +290,8 @@ intersperseTemplate _ [x] = [x]
 intersperseTemplate sep (x : xs) = x : sep : intersperseTemplate sep xs
 
 -- | NixCompile config tree as JSON
-renderJsonTree :: Int -> ConfigTree -> Template
-renderJsonTree indent = \case
+renderJsonTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
+renderJsonTree env indent = \case
   ConfigBranch m | Map.null m -> literalTemplate "{}"
   ConfigBranch m ->
     let entries = Map.toList m
@@ -287,31 +302,34 @@ renderJsonTree indent = \case
           [literalTemplate "{\n"]
             ++ intersperseTemplate (literalTemplate ",\n") (map (appendTemplate (literalTemplate nextIndent)) rendered)
             ++ [literalTemplate ("\n" <> indentStr <> "}")]
-  ConfigLeaf spec -> renderJsonValue spec
+  ConfigLeaf spec -> renderJsonValue env spec
   where
     renderEntry ind (key, subtree) =
-      literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJsonTree (ind + 1) subtree
+      literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJsonTree env (ind + 1) subtree
 
 -- | NixCompile a config value as JSON
 -- Uses bash variable expansion, with quoting based on type.
--- All variable references use ${VAR:?} to fail fast if unset,
--- preventing malformed output at runtime.
-renderJsonValue :: ConfigSpec -> Template
-renderJsonValue ConfigSpec {..} =
+-- Required env vars use ${VAR:?} to fail fast if unset;
+-- optional vars use ${VAR:-} to default to empty string.
+renderJsonValue :: Map Text EnvSpec -> ConfigSpec -> Template
+renderJsonValue env ConfigSpec {..} =
   case (cfgFrom, cfgLit, cfgTemplate) of
     (_, Just lit, _) ->
       literalTemplate (renderJsonLit lit)
     (_, _, Just parts) ->
       literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
     (Just var, _, _) ->
-      let forceString = cfgQuoted == Just Quoted
+      let required = isRequiredEnv env var
+          forceString = cfgQuoted == Just Quoted
           asString =
             forceString || case cfgType of
               TString -> True
               TPath -> True
               TVar _ -> True
               _ -> False
-          guardedVar = "${" <> var <> ":?" <> var <> " is required}"
+          guardedVar
+            | required = "${" <> var <> ":?" <> var <> " is required}"
+            | otherwise = "${" <> var <> ":-}"
        in if asString
             then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
             else dynamicTemplate guardedVar
@@ -321,44 +339,48 @@ renderJsonValue ConfigSpec {..} =
 -- | Generate YAML output command using printf (no heredocs)
 emitConfigYaml :: Schema -> Text
 emitConfigYaml schema =
-  let tree = buildConfigTree (schemaConfig schema)
-   in emitTemplate (renderYamlTree 0 tree)
+  let env = schemaEnv schema
+      tree = buildConfigTree (schemaConfig schema)
+   in emitTemplate (renderYamlTree env 0 tree)
 
 -- | NixCompile config tree as YAML
-renderYamlTree :: Int -> ConfigTree -> Template
-renderYamlTree indent = \case
+renderYamlTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
+renderYamlTree env indent = \case
   ConfigBranch m | Map.null m -> literalTemplate "{}"
   ConfigBranch m ->
     let entries = sortOn fst (Map.toList m)
         rendered = map (renderYamlEntry indent) entries
      in concatTemplates (intersperseTemplate (literalTemplate "\n") rendered)
-  ConfigLeaf spec -> renderYamlValue spec
+  ConfigLeaf spec -> renderYamlValue env spec
   where
     renderYamlEntry ind (key, subtree) =
       let indentStr = T.replicate ind "  "
        in case subtree of
             ConfigBranch _ ->
-              literalTemplate (indentStr <> key <> ":\n") `appendTemplate` renderYamlTree (ind + 1) subtree
-            ConfigLeaf spec ->
-              literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue spec
+              literalTemplate (indentStr <> key <> ":\n") `appendTemplate` renderYamlTree env (ind + 1) subtree
+            ConfigLeaf spec' ->
+              literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue env spec'
 
 -- | NixCompile a config value as YAML
-renderYamlValue :: ConfigSpec -> Template
-renderYamlValue ConfigSpec {..} =
+renderYamlValue :: Map Text EnvSpec -> ConfigSpec -> Template
+renderYamlValue env ConfigSpec {..} =
   case (cfgFrom, cfgLit, cfgTemplate) of
     (_, Just lit, _) ->
       literalTemplate (renderYamlLit lit)
     (_, _, Just parts) ->
       literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
     (Just var, _, _) ->
-      let forceString = cfgQuoted == Just Quoted
+      let required = isRequiredEnv env var
+          forceString = cfgQuoted == Just Quoted
           asString =
             forceString || case cfgType of
               TString -> True
               TPath -> True
               TVar _ -> True
               _ -> False
-          guardedVar = "${" <> var <> ":?" <> var <> " is required}"
+          guardedVar
+            | required = "${" <> var <> ":?" <> var <> " is required}"
+            | otherwise = "${" <> var <> ":-}"
        in if asString
             then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
             else dynamicTemplate guardedVar
@@ -368,12 +390,13 @@ renderYamlValue ConfigSpec {..} =
 -- | Generate TOML output command using printf (no heredocs)
 emitConfigToml :: Schema -> Text
 emitConfigToml schema =
-  let tree = buildConfigTree (schemaConfig schema)
-   in emitTemplate (renderTomlTree [] tree)
+  let env = schemaEnv schema
+      tree = buildConfigTree (schemaConfig schema)
+   in emitTemplate (renderTomlTree env [] tree)
 
 -- | NixCompile config tree as TOML
-renderTomlTree :: [Text] -> ConfigTree -> Template
-renderTomlTree path = \case
+renderTomlTree :: Map Text EnvSpec -> [Text] -> ConfigTree -> Template
+renderTomlTree env path = \case
   ConfigBranch m | Map.null m -> literalTemplate ""
   ConfigBranch m ->
     let (leaves, branches) = Map.partitionWithKey isLeaf m
@@ -393,29 +416,32 @@ renderTomlTree path = \case
   ConfigLeaf _ -> literalTemplate "" -- shouldn't be called at top level
   where
     renderTomlLeaf (key, ConfigLeaf spec) =
-      literalTemplate (key <> " = ") `appendTemplate` renderTomlValue spec
+      literalTemplate (key <> " = ") `appendTemplate` renderTomlValue env spec
     renderTomlLeaf _ = literalTemplate ""
 
     renderTomlBranch parentPath (key, subtree) =
-      renderTomlTree (parentPath ++ [key]) subtree
+      renderTomlTree env (parentPath ++ [key]) subtree
 
 -- | NixCompile a config value as TOML
-renderTomlValue :: ConfigSpec -> Template
-renderTomlValue ConfigSpec {..} =
+renderTomlValue :: Map Text EnvSpec -> ConfigSpec -> Template
+renderTomlValue env ConfigSpec {..} =
   case (cfgFrom, cfgLit, cfgTemplate) of
     (_, Just lit, _) ->
       literalTemplate (renderTomlLit lit)
     (_, _, Just parts) ->
       literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
     (Just var, _, _) ->
-      let forceString = cfgQuoted == Just Quoted
+      let required = isRequiredEnv env var
+          forceString = cfgQuoted == Just Quoted
           asString =
             forceString || case cfgType of
               TString -> True
               TPath -> True
               TVar _ -> True
               _ -> False
-          guardedVar = "${" <> var <> ":?" <> var <> " is required}"
+          guardedVar
+            | required = "${" <> var <> ":?" <> var <> " is required}"
+            | otherwise = "${" <> var <> ":-}"
        in if asString
             then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
             else dynamicTemplate guardedVar

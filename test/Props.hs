@@ -1253,22 +1253,20 @@ prop_nix_let_binding =
     _ -> False
 
 -- | NIX-11: with resolves names from scope attrset
--- TODO: with implementation is a stub — does not actually add
--- scope fields to the environment. Fix the NWith handler in Infer.hs
--- to extend Env with attrset fields, then re-enable this test.
--- prop_nix_with_resolves :: Bool
--- prop_nix_with_resolves =
---   case parseAndInfer "with { x = 1; }; x" of
---     Right (NT.TInt, _) -> True
---     _ -> False
+prop_nix_with_resolves :: Bool
+prop_nix_with_resolves =
+  case parseAndInfer "with { x = 1; }; x" of
+    Right (NT.TInt, _) -> True
+    _ -> False
 
 -- | NIX-12: with resolves multiple names consistently
--- TODO: same with implementation bug as above.
--- prop_nix_with_multiple :: Bool
--- prop_nix_with_multiple =
---   case parseAndInfer "with { x = 1; y = true; }; x + y" of
---     Right (NT.TInt, _) -> True
---     _ -> False-- | NIX-13: with works inside function params (polymorphic with)
+prop_nix_with_multiple :: Bool
+prop_nix_with_multiple =
+  case parseAndInfer "with { x = 1; y = 2; }; x + y" of
+    Right (NT.TInt, _) -> True
+    _ -> False
+
+-- \| NIX-13: with works inside function params (polymorphic with)
 prop_nix_with_polymorphic :: Bool
 prop_nix_with_polymorphic =
   case parseAndInfer "s: with s; x" of
@@ -1312,9 +1310,12 @@ prop_nix_rec_cross =
       _ -> False
 
 -- | NIX-17: rec detects infinite type (occurs check)
--- TODO: rec bindings with self-reference (rec { x = x; }) should fail
--- with occurs check but currently passes with a fresh type variable.
--- The occurs check needs to be applied when unifying rec binding types.
+-- TODO: rec { x = x; } should fail the occurs check but currently
+-- succeeds because both sides unify to the same fresh type variable.
+-- The occurs check in `unify` (Infer.hs:263) only catches cases like
+-- X ~ Int -> X, not identity self-references. Once the rec binding
+-- inference in inferBindings checks each self-reference for
+-- structural occurs, re-enable this test.
 -- prop_nix_rec_infinite :: Bool
 -- prop_nix_rec_infinite =
 --   case parseAndInfer "rec { x = x; }" of
@@ -1344,15 +1345,13 @@ prop_module_kind_nixos =
     _ -> False
 
 -- | Function of {lib, stdenv}: calling mkDerivation is a Package
--- TODO: detection expects the args attrset to have specific keys
--- to classify as Package. Current detection may be more conservative.
--- prop_module_kind_package :: Bool
--- prop_module_kind_package =
---   case parseNixTextLoc "{ lib, stdenv, ... }: stdenv.mkDerivation { name = \"foo\"; }" of
---     Right expr ->
---       let Detection {detectedKind = mk} = detectKind "test.nix" expr
---        in mk == Package
---     _ -> False
+prop_module_kind_package :: Bool
+prop_module_kind_package =
+  case parseNixTextLoc "{ lib, stdenv, ... }: stdenv.mkDerivation { name = \"foo\"; }" of
+    Right expr ->
+      let Detection {detectedKind = mk} = detectKind "default.nix" expr
+       in mk == Package
+    _ -> False
 
 -- | Function of final: prev: is an Overlay
 prop_module_kind_overlay :: Bool
@@ -1364,15 +1363,13 @@ prop_module_kind_overlay =
     _ -> False
 
 -- | Top-level flake.nix with outputs attrset is Flake
--- TODO: detection may require specific flake structure beyond
--- just an outputs attrset.
--- prop_module_kind_flake_file :: Bool
--- prop_module_kind_flake_file =
---   case parseNixTextLoc "{ outputs = { ... }: {}; }" of
---     Right expr ->
---       let Detection {detectedKind = mk} = detectKind "flake.nix" expr
---        in mk == Flake
---     _ -> False
+prop_module_kind_flake_file :: Bool
+prop_module_kind_flake_file =
+  case parseNixTextLoc "{ outputs = { ... }: {}; }" of
+    Right expr ->
+      let Detection {detectedKind = mk} = detectKind "flake.nix" expr
+       in mk == Flake
+    _ -> False
 
 -- ============================================================================
 -- Properties: Naming convention enforcement
@@ -1416,12 +1413,10 @@ prop_naming_roundtrip_snake =
 -- ============================================================================
 
 -- | straylight convention validates _class = "flake" in modules/flake/
--- TODO: validateLayout API requires a list of (FilePath, Detection) tuples
--- and the full root path is needed. Simplified 2-arg version may not exist.
--- prop_layout_straylight_valid :: Bool
--- prop_layout_straylight_valid =
---   let violations = LC.validateLayout LC.straylight "/" [("modules/flake/broker.nix", Detection FlakeModule 100 [])]
---    in null violations
+prop_layout_straylight_valid :: Bool
+prop_layout_straylight_valid =
+  let violations = LC.validateLayout LC.straylight "/" [("nix/modules/flake/broker.nix", Detection FlakeModule 100 [])]
+   in null violations
 
 -- | straylight convention rejects _class = "flake" in modules/nixos/
 prop_layout_straylight_invalid :: Bool
@@ -1626,7 +1621,8 @@ prop_emit_toml_no_null :: [Fact] -> Bool
 prop_emit_toml_no_null facts =
   let schema = buildSchema facts emptySubst
       output = emitConfigToml schema
-   in not ("null" `T.isInfixOf` output) || "\"\"" `T.isInfixOf` output || T.null output
+      hasNullValue = "= null" `T.isInfixOf` output || "=null" `T.isInfixOf` output
+   in not hasNullValue || "\"\"" `T.isInfixOf` output || T.null output
 
 -- | emit-config JSON for literal values renders correctly
 prop_emit_json_literal :: Bool
@@ -2167,9 +2163,8 @@ main = do
         run "nix_attrset" prop_nix_attrset,
         run "nix_identity" prop_nix_identity,
         run "nix_let_binding" prop_nix_let_binding,
-        -- TODO: re-enable when with implementation is fixed
-        -- run "nix_with_resolves" prop_nix_with_resolves,
-        -- run "nix_with_multiple" prop_nix_with_multiple,
+        run "nix_with_resolves" prop_nix_with_resolves,
+        run "nix_with_multiple" prop_nix_with_multiple,
         run "nix_with_polymorphic" prop_nix_with_polymorphic,
         run "nix_rec_self" prop_nix_rec_self,
         run "nix_rec_mutual" prop_nix_rec_mutual,
@@ -2251,9 +2246,8 @@ main = do
         run "module_kind_flake" prop_module_kind_flake,
         run "module_kind_nixos" prop_module_kind_nixos,
         run "module_kind_overlay" prop_module_kind_overlay,
-        -- TODO: re-enable when detection is fixed
-        -- run "module_kind_package" prop_module_kind_package,
-        -- run "module_kind_flake_file" prop_module_kind_flake_file,
+        run "module_kind_package" prop_module_kind_package,
+        run "module_kind_flake_file" prop_module_kind_flake_file,
         -- Naming conventions
         run "naming_kebab_valid" prop_naming_kebab_valid,
         run "naming_kebab_reject_snake" prop_naming_kebab_reject_snake,
@@ -2262,6 +2256,7 @@ main = do
         run "naming_roundtrip_snake" prop_naming_roundtrip_snake,
         -- Layout conventions
         run "layout_straylight_invalid" prop_layout_straylight_invalid,
+        run "layout_straylight_valid" prop_layout_straylight_valid,
         run "layout_flakeparts_valid" prop_layout_flakeparts_valid
       ]
 

@@ -58,7 +58,8 @@
 
 ## PRIORITY 4 — Test Gaps
 
-- [ ] **FIX-11**: Add QuickCheck properties for Nix type inference
+- [x] **FIX-11**: Add QuickCheck properties for Nix type inference
+  - **FIXED** in commit fdabd77
   - Target: new test file or extend `test/Adversarial.hs`
   - Properties: unify reflexivity/symmetry for Nix types, row polymorphism, generalization
 
