@@ -21,11 +21,17 @@ library
         NixCompile.Bash.Facts
         NixCompile.Bash.Parse
         NixCompile.Bash.Patterns
+        NixCompile.Docs.Extract
+        NixCompile.Docs.Search
+        NixCompile.Docs.Types
         NixCompile.Emit.Config
         NixCompile.Infer.Constraint
         NixCompile.Infer.Unify
         NixCompile.Lint.Forbidden
         NixCompile.Log
+        NixCompile.LSP.Handlers
+        NixCompile.LSP.Server
+        NixCompile.Nix.Annotate
         NixCompile.Nix.Effect
         NixCompile.Nix.Flake
         NixCompile.Nix.Format
@@ -38,6 +44,7 @@ library
         NixCompile.Nix.Scope
         NixCompile.Nix.Types
         NixCompile.Nix.Utils
+        NixCompile.Pretty
         NixCompile.Schema.Build
         NixCompile.Types
     build-depends:
@@ -52,8 +59,12 @@ library
         filepath >= 1.4 && < 1.6,
         hnix >= 0.17 && < 0.18,
         katip >= 0.8 && < 0.9,
+        lsp >= 2.7 && < 2.8,
+        lsp-types >= 2.3 && < 2.4,
         megaparsec >= 9.0 && < 10.0,
         mtl >= 2.3 && < 2.4,
+        prettyprinter >= 1.7 && < 1.8,
+        prettyprinter-ansi-terminal >= 1.1 && < 1.2,
         ShellCheck >= 0.9 && < 0.12,
         text >= 2.0 && < 2.2,
         transformers >= 0.5 && < 0.7
