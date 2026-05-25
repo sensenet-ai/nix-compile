@@ -27,7 +27,8 @@
   - `import ../../etc/passwd` would be accepted if file exists
   - **FIXED**: Threaded `rootDir` through `buildModules` → `processImport`; canonicalized path checked against root prefix.
 
-- [ ] **FIX-5**: `unsafePerformIO` in test suite
+- [x] **FIX-5**: `unsafePerformIO` in test suite
+  - **FIXED** in commit 535d451
   - File: `test/Adversarial.hs:653`
   - Remove; use proper IO-based timeout or drop the bounded-time property
 
@@ -52,7 +53,8 @@
   - Analysis: Both entries share `resolveType subst var`, so `envType e1 == envType e2` always. The merge is correct; just had a misleading comment.
   - **FIXED**: Clarified comment.
 
-- [ ] **FIX-10**: `//` in `isStorePath` blocks possibly-valid store paths
+- [x] **FIX-10**: `//` in `isStorePath` blocks possibly-valid store paths
+  - **FIXED** in commit 535d451
   - Files: `lib/NixCompile/Types.hs:272`, `lib/NixCompile/Bash/Patterns.hs:246`
   - Spec only requires blocking `..`; `//` is extra-conservative (safe to keep, low priority)
 
@@ -63,11 +65,13 @@
   - Target: new test file or extend `test/Adversarial.hs`
   - Properties: unify reflexivity/symmetry for Nix types, row polymorphism, generalization
 
-- [ ] **FIX-12**: `checks.nix-compile-test` runs actual test suites
+- [x] **FIX-12**: `checks.nix-compile-test` runs actual test suites
+  - **FIXED** in commit 535d451 (flake.nix: checks now uses haskell.lib.doCheck)
   - File: `flake.nix:59-70`
   - Currently only runs `--help`; should run `cabal test` or equivalent
 
-- [ ] **FIX-13**: `prop_schema_deterministic` in Adversarial uses `emptySubst`
+- [x] **FIX-13**: `prop_schema_deterministic` in Adversarial uses `emptySubst`
+  - **FIXED** in commit 8dc2542 (this session)
   - File: `test/Adversarial.hs:416`
   - Should use a solved substitution like the Props.hs version does
 
@@ -77,7 +81,8 @@
 
 ## PRIORITY 5 — Cleanup
 
-- [ ] **FIX-15**: Deduplicate `srcSpanToSpan`/`toSpan` across 7 modules
+- [x] **FIX-15**: Deduplicate `srcSpanToSpan`/`toSpan` across 7 modules
+  - **FIXED** in commit 535d451 (Infer, Parse, Flake → Utils)
   - All should import from `NixCompile.Nix.Utils`
 
 - [x] **FIX-16**: Remove `eval` from `shellBuiltins` list

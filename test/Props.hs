@@ -1310,17 +1310,11 @@ prop_nix_rec_cross =
       _ -> False
 
 -- | NIX-17: rec detects infinite type (occurs check)
--- TODO: rec { x = x; } should fail the occurs check but currently
--- succeeds because both sides unify to the same fresh type variable.
--- The occurs check in `unify` (Infer.hs:263) only catches cases like
--- X ~ Int -> X, not identity self-references. Once the rec binding
--- inference in inferBindings checks each self-reference for
--- structural occurs, re-enable this test.
--- prop_nix_rec_infinite :: Bool
--- prop_nix_rec_infinite =
---   case parseAndInfer "rec { x = x; }" of
---     Left _ -> True  -- should be rejected
---     _ -> False
+prop_nix_rec_infinite :: Bool
+prop_nix_rec_infinite =
+  case parseAndInfer "rec { x = x; }" of
+    Left _ -> True -- should be rejected
+    _ -> False
 
 -- ============================================================================
 -- Properties: Module kind detection
@@ -2169,8 +2163,7 @@ main = do
         run "nix_rec_self" prop_nix_rec_self,
         run "nix_rec_mutual" prop_nix_rec_mutual,
         run "nix_rec_cross" prop_nix_rec_cross,
-        -- TODO: re-enable when rec occurs check is fixed
-        -- run "nix_rec_infinite" prop_nix_rec_infinite,
+        run "nix_rec_infinite" prop_nix_rec_infinite,
         -- Merge correctness
         run "merge_preserves_required" prop_merge_preserves_required,
         run "merge_keeps_default" prop_merge_keeps_default,
