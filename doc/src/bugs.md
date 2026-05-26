@@ -11,17 +11,16 @@ Current status of known issues. See [BUGS.md](https://github.com/sensenet-ai/nix
 | CRIT-3 | Multi-token config values truncated to first token |
 | CRIT-4 | `detectUnsupported` misses `rec` attrsets |
 | BUG-1 | `unifyUnion` checks membership against un-substituted types |
-| BUG-3 | `findValueTokens` assumes `=` at suffix of Literal token |
 | BUG-4 | `cmdCheck` discards solved substitution |
 | DESIGN-1 | Scope graph edge priority not implemented |
-| DESIGN-2 | `TVar -> TString` default masks inference failures (now tracked via `schemaDefaultedVars`) |
+| DESIGN-2 | `TVar -> TString` default masks inference failures (accepted trade-off; `schemaDefaultedVars` tracks unresolved vars) |
 | DESIGN-3 | `emit-config` emits unguarded `$VAR` references (now uses `${VAR:?}`) |
 | NEW-1 | `innerToText` catch-all produces phantom bare-command facts |
 | NEW-2 | Type error not counted in `cmdNix` error tally |
 | NEW-3 | `error "impossible"` in production code |
 | NEW-4 | `NWith` scope edges both point to lexical parent |
 | NEW-5 | `fromModuleGraph` drops all but first scope graph |
-| NEW-6 | `FlakeOutputs` `Eq` only compares packages |
+| NEW-6 | `FlakeOutputs` `Eq` only compares packages (won't fix — low impact) |
 | NEW-7 | `mergeSchemas` drops overlapping env specs |
 | NEW-8 | `buildConfigSchema` last-writer-wins semantics inverted |
 | NEW-9 | `mapConcurrently` unbounded parallelism |
@@ -47,4 +46,18 @@ Current status of known issues. See [BUGS.md](https://github.com/sensenet-ai/nix
 
 ## Open
 
-None.
+| ID | Description |
+|----|-------------|
+| SPECDEV-2 | ShellCheck AST token IDs stored in `locLine` instead of actual source line numbers. Bash line/column mapping is a known TODO. |
+| BUG-3 | `findValueTokens` loses `Quoted` metadata on text-based fallback path. Depends on ShellCheck tokenization behavior. |
+| REVIEW-4 | `ALEPH-B00N` error code scheme not fully implemented (cf. HACKING.md). |
+| REVIEW-7 | `ConfigSpec` record has mutually-exclusive fields (var vs literal); sum-type refactor deferred to Lean 4 port. |
+
+## Untested
+
+| Target | Coverage Gap |
+|--------|-------------|
+| Config glob matching | No unit tests for `matchGlob` / `tokenise` / `charMatch` |
+| Layout conventions | 6 of 7 validation paths untested (nixpkgsByName, nixosConfig, validateAttrName, validateIdentifier, validateForbidden, validateFlakeModReq) |
+| Layout.hs | L001-L002 fixture gaps; CamelCase/PascalCase naming untested |
+| Config rules | Rule IDs in Dhall config schema (non-lisp-case, missing-*, cpp-*) lack enforcement code mapping |
