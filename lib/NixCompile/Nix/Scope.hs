@@ -45,6 +45,7 @@ module NixCompile.Nix.Scope
     fromNixExpr,
     fromNixFile,
     fromModuleGraph,
+    mergeGraphs,
 
     -- * Resolution
     resolve,

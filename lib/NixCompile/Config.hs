@@ -39,10 +39,10 @@ import System.FilePath qualified as FP
 -------------------------------------------------------------------------------
 
 data Severity
-  = SevError
-  | SevWarning
+  = SevOff
   | SevInfo
-  | SevOff
+  | SevWarning
+  | SevError
   deriving stock (Eq, Ord, Show, Generic)
 
 instance FromDhall Severity where
