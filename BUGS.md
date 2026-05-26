@@ -12,17 +12,17 @@ The following items from the prior review cycle have been subsumed or are stale:
 | FIXES P1 | FIX-2 (config path validation) | Fixed |
 | FIXES P1 | FIX-3 (symlink cycles) | Fixed |
 | FIXES P2 | FIX-4 (path traversal) | Fixed |
-| FIXES P2 | FIX-5 (unsafePerformIO) | Open — still relevant |
+| FIXES P2 | FIX-5 (unsafePerformIO) | Fixed |
 | FIXES P3 | FIX-6 (applyDefaults dead code) | No action |
 | FIXES P3 | FIX-7 (NPlus missing constraint) | Fixed |
 | FIXES P3 | FIX-8 (unifyUnion multi-element) | Fixed |
 | FIXES P3 | FIX-9 (mergeSchemas comment) | Fixed |
-| FIXES P3 | FIX-10 (// in isStorePath) | Open — still relevant |
+| FIXES P3 | FIX-10 (// in isStorePath) | Accepted |
 | FIXES P4 | FIX-11 (QC for Nix infer) | Fixed |
-| FIXES P4 | FIX-12 (CI test exec) | Open |
-| FIXES P4 | FIX-13 (emptySubst in test) | Open |
+| FIXES P4 | FIX-12 (CI test exec) | Fixed |
+| FIXES P4 | FIX-13 (emptySubst in test) | Fixed |
 | FIXES P4 | FIX-14 (DynamicKey in NHasAttr) | Fixed |
-| FIXES P5 | FIX-15 (srcSpanToSpan dedup) | Open |
+| FIXES P5 | FIX-15 (srcSpanToSpan dedup) | Fixed |
 | FIXES P5 | FIX-16 (eval in shellBuiltins) | Fixed |
 | FIXES P5 | FIX-17 (token ID in span) | Fixed |
 | REVIEW | BUG-1 (extractSimpleVar guard order) | Fixed |
@@ -107,7 +107,7 @@ Text-based fallback partially mitigates this, but quoting detection (`Quoted` vs
 
 **Impact:** Wasted computation. Unresolved types silently ignored.
 
-### BUG-5: `mergeEnvSpec` picks first fact's type over second
+### BUG-5: `mergeEnvSpec` picks first fact's type over second [ACCEPTED]
 
 **File:** `lib/NixCompile/Schema/Build.hs:62-69`
 
