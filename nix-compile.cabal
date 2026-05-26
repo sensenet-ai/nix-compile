@@ -106,7 +106,7 @@ test-suite nix-compile-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Props.hs
-    other-modules:    Adversarial
+    other-modules: Adversarial, NixAdversarial
     build-depends:
         aeson >= 2.0 && < 2.3,
         async >= 2.2 && < 2.3,

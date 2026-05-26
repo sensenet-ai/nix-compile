@@ -19,7 +19,7 @@ module Main (main) where
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (forConcurrently)
 import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
-import Control.Exception (SomeException, bracket_, try)
+import Control.Exception (IOException, SomeException, bracket_, try)
 import Control.Monad (foldM, forM_, unless)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (encode)
@@ -235,86 +235,101 @@ cmdInfer file = do
     Right script -> do
       liftIO $ BL.putStrLn (encode (scriptSchema script))
 
+-- | Safe file read that catches encoding errors
+safeReadFile :: FilePath -> IO (Either T.Text T.Text)
+safeReadFile path = do
+  result <- try (TIO.readFile path)
+  case result of
+    Left (e :: IOException) -> pure (Left (T.pack (show e)))
+    Right txt -> pure (Right txt)
+
+suppressedSuffix :: [Violation] -> T.Text
+suppressedSuffix [] = ""
+suppressedSuffix ss = " (" <> T.pack (show (length ss)) <> " suppressed)"
+
 -- | Lint for forbidden constructs only (heredocs, eval, backticks)
 cmdLint :: Config.Config -> FilePath -> AppM ()
 cmdLint config file = do
-  src <- liftIO $ TIO.readFile file
-  case parseBash src of
+  src <- liftIO $ safeReadFile file
+  case src of
     Left err -> do
-      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      $(logTM) ErrorS $ logStr $ "I/O error: " <> err
       liftIO exitFailure
-    Right ast -> do
-      let violations = findViolations ast
-      let (suppressed, active) = partitionViolations config violations
-      if null active
-        then do
-          $(logTM) InfoS $ logStr $ T.pack file <> ": OK" <> suppressedSuffix suppressed
-          liftIO exitSuccess
-        else do
-          $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) active
-          $(logTM) ErrorS $ logStr $ "\n" <> T.pack (show (length active)) <> " error(s) in " <> T.pack file <> suppressedSuffix suppressed
-          liftIO exitFailure
-  where
-    suppressedSuffix :: [Violation] -> T.Text
-    suppressedSuffix [] = ""
-    suppressedSuffix ss = " (" <> T.pack (show (length ss)) <> " suppressed)"
+    Right txt -> case parseBash txt of
+      Left err -> do
+        $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+        liftIO exitFailure
+      Right ast -> do
+        let allViolations = findViolations ast
+        let (suppressed, active) = partitionViolations config allViolations
+        if null active
+          then do
+            $(logTM) InfoS $ logStr $ T.pack file <> ": OK" <> suppressedSuffix suppressed
+            liftIO exitSuccess
+          else do
+            $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) active
+            $(logTM) ErrorS $ logStr $ "\n" <> T.pack (show (length active)) <> " error(s) in " <> T.pack file <> suppressedSuffix suppressed
+            liftIO exitFailure
 
 -- | Full check: lint + bare commands + type inference
 cmdCheck :: Config.Config -> FilePath -> AppM ()
 cmdCheck config file = do
-  src <- liftIO $ TIO.readFile file
-  -- First check for forbidden constructs
-  case parseBash src of
+  src <- liftIO $ safeReadFile file
+  case src of
     Left err -> do
-      $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+      $(logTM) ErrorS $ logStr $ "I/O error: " <> err
       liftIO exitFailure
-    Right ast -> do
-      let allViolations = findViolations ast
-      let (_suppressed, violations) = partitionViolations config allViolations
-      unless (null violations) $ do
-        $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
-        liftIO $ putStrLn ""
+    Right txt -> case parseBash txt of
+      Left err -> do
+        $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+        liftIO exitFailure
+      Right ast -> do
+        let allViolations = findViolations ast
+        let (_suppressed, violations) = partitionViolations config allViolations
+        unless (null violations) $ do
+          $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
+          liftIO $ putStrLn ""
 
-      -- Then do type inference and check policy violations
-      let facts = extractFacts ast
-      case validateConfigPaths facts of
-        Left err -> do
-          $(logTM) ErrorS $ logStr $ "Config error: " <> err
-          liftIO exitFailure
-        Right () -> pure ()
-      let constraints = factsToConstraints facts
-      case solve constraints of
-        Left err -> do
-          $(logTM) ErrorS $ logStr $ "Type error: " <> T.pack (show err)
-          liftIO exitFailure
-        Right _ -> pure ()
+        -- Then do type inference and check policy violations
+        let facts = extractFacts ast
+        case validateConfigPaths facts of
+          Left err -> do
+            $(logTM) ErrorS $ logStr $ "Config error: " <> err
+            liftIO exitFailure
+          Right () -> pure ()
+        let constraints = factsToConstraints facts
+        case solve constraints of
+          Left err -> do
+            $(logTM) ErrorS $ logStr $ "Type error: " <> T.pack (show err)
+            liftIO exitFailure
+          Right _ -> pure ()
 
-      let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
-      let dynFacts = [(var, sp) | DynamicCommand var sp <- facts]
-      let bareCount = length bareFacts
-      let dynCount = length dynFacts
-      let violationCount = length violations
+        let bareFacts = [(cmd, sp) | BareCommand cmd sp <- facts]
+        let dynFacts = [(var, sp) | DynamicCommand var sp <- facts]
+        let bareCount = length bareFacts
+        let dynCount = length dynFacts
+        let violationCount = length violations
 
-      -- Report bare commands
-      unless (null bareFacts) $ do
-        liftIO $ TIO.putStrLn ""
-        liftIO $ TIO.putStrLn "Bare commands (external commands must use store paths; shell builtins allowed):"
-        liftIO $ mapM_ (TIO.putStr . formatBareCommand (T.pack file)) bareFacts
+        -- Report bare commands
+        unless (null bareFacts) $ do
+          liftIO $ TIO.putStrLn ""
+          liftIO $ TIO.putStrLn "Bare commands (external commands must use store paths; shell builtins allowed):"
+          liftIO $ mapM_ (TIO.putStr . formatBareCommand (T.pack file)) bareFacts
 
-      -- Report dynamic commands
-      unless (null dynFacts) $ do
-        liftIO $ TIO.putStrLn ""
-        liftIO $ TIO.putStrLn "Dynamic commands (cannot analyze):"
-        liftIO $ mapM_ (TIO.putStr . formatDynamicCommand (T.pack file)) dynFacts
+        -- Report dynamic commands
+        unless (null dynFacts) $ do
+          liftIO $ TIO.putStrLn ""
+          liftIO $ TIO.putStrLn "Dynamic commands (cannot analyze):"
+          liftIO $ mapM_ (TIO.putStr . formatDynamicCommand (T.pack file)) dynFacts
 
-      let totalErrors = violationCount + bareCount + dynCount
-      if totalErrors > 0
-        then do
-          $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " error(s) in " ++ file
-          liftIO exitFailure
-        else do
-          $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
-          liftIO exitSuccess
+        let totalErrors = violationCount + bareCount + dynCount
+        if totalErrors > 0
+          then do
+            $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " error(s) in " ++ file
+            liftIO exitFailure
+          else do
+            $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
+            liftIO exitSuccess
 
 cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do

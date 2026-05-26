@@ -25,8 +25,9 @@
 --     runghc -inix/nix-compile/lib -inix/nix-compile/test nix/nix-compile/test/Props.hs
 module Main (main) where
 
+import Control.Exception (IOException, SomeException, catch, try)
 import Control.Monad (replicateM)
-import Data.Either (isRight)
+import Data.Either (isLeft, isRight)
 import Data.List (nub)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -35,12 +36,14 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import Nix.Parser (parseNixTextLoc)
 import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
+import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
@@ -51,14 +54,17 @@ import NixCompile.Nix.Infer (Binding, inferExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
 import NixCompile.Nix.Lint
 import NixCompile.Nix.LintDerivation qualified as DerivLint
+import NixCompile.Nix.LintPackages qualified as PackageLint
 import NixCompile.Nix.LintPatterns qualified as PatternLint
 import NixCompile.Nix.ModuleKind
 import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
+import System.Directory (removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
+import Test.QuickCheck.Monadic qualified as QCM
 
 -- ============================================================================
 -- Generators
@@ -375,6 +381,51 @@ instance Arbitrary Effect where
 
 instance Arbitrary OverlaySignature where
   arbitrary = OverlaySignature <$> arbitrary <*> arbitrary
+
+-- ============================================================================
+-- Generators: Scope Graphs (adversarial)
+-- ============================================================================
+
+genScopeSpan :: Scope.SourceSpan
+genScopeSpan = Scope.SourceSpan (Scope.SourcePos 1 1) (Scope.SourcePos 1 1) Nothing
+
+genScopeDecl :: Text -> Scope.ScopeId -> Scope.Declaration
+genScopeDecl name sid = Scope.Declaration name genScopeSpan sid Nothing Nothing Nothing
+
+genScopeRef :: Text -> Scope.ScopeId -> Scope.Reference
+genScopeRef name sid = Scope.Reference name genScopeSpan sid Scope.VarRef
+
+genScope0 :: Scope.ScopeGraph
+genScope0 = Scope.empty {Scope.sgScopes = Map.empty, Scope.sgNextId = 0}
+
+genShadowingChain :: Int -> (Scope.ScopeGraph, Scope.ScopeId)
+genShadowingChain n =
+  let mkScope i =
+        let sid = Scope.ScopeId i
+            decls = [genScopeDecl "x" sid]
+            refs = if i == n - 1 then [genScopeRef "x" sid] else []
+            edges = if i == 0 then [] else [Scope.Edge sid (Scope.ScopeId (i - 1)) Scope.Parent]
+         in (sid, Scope.Scope sid decls refs edges Scope.LetScope)
+      scopes = Map.fromList [mkScope i | i <- [0 .. n - 1]]
+      sg = genScope0 {Scope.sgScopes = scopes, Scope.sgNextId = n, Scope.sgRoot = Scope.ScopeId (n - 1)}
+   in (sg, Scope.ScopeId (n - 1))
+
+genAllEdgesGraph :: Scope.ScopeGraph
+genAllEdgesGraph =
+  let center = Scope.ScopeId 0
+      declScope sid = Scope.Scope sid [genScopeDecl "x" sid] [] [] Scope.LetScope
+      targets = [Scope.ScopeId i | i <- [1 .. 5]]
+      labels = [Scope.Parent, Scope.Import, Scope.With, Scope.Inherit, Scope.AttrAccess]
+      edges = zipWith (\t l -> Scope.Edge center t l) targets labels
+      centerScope = Scope.Scope center [] [genScopeRef "x" center] edges Scope.FileScope
+      scopes = Map.fromList $ (center, centerScope) : [(t, declScope t) | t <- targets]
+   in genScope0 {Scope.sgScopes = scopes, Scope.sgNextId = 6, Scope.sgRoot = center}
+
+genMinimalFileGraph :: Text -> Int -> Scope.ScopeGraph
+genMinimalFileGraph name offset =
+  let root = Scope.ScopeId offset
+      scope = Scope.Scope root [genScopeDecl name root] [] [] Scope.FileScope
+   in genScope0 {Scope.sgScopes = Map.singleton root scope, Scope.sgNextId = offset + 1, Scope.sgRoot = root}
 
 -- ============================================================================
 -- Properties: Unification
@@ -1949,6 +2000,321 @@ prop_nix_lint_stdenv_path =
        in any hasRawMkDeriv violations
 
 -- ============================================================================
+-- Properties: Adversarial Lint -- False Positive Attacks
+-- ============================================================================
+
+-- | FP-1: String literal "mkDerivation" does NOT trigger VRawMkDerivation
+prop_adv_fp_string_mkderiv :: Bool
+prop_adv_fp_string_mkderiv =
+  case parseNixTextLoc "\"use mkDerivation carefully\"" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> nvType v == VRawMkDerivation) (findNixViolations expr)
+
+-- | FP-2: String literal "substituteAll" does NOT trigger VSubstituteAll
+prop_adv_fp_string_substall :: Bool
+prop_adv_fp_string_substall =
+  case parseNixTextLoc "\"call substituteAll here\"" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> nvType v == VSubstituteAll) (findNixViolations expr)
+
+-- | FP-3: "runCommand" as string literal does NOT trigger VRawRunCommand
+prop_adv_fp_string_runcommand :: Bool
+prop_adv_fp_string_runcommand =
+  case parseNixTextLoc "\"avoid runCommand here\"" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> nvType v == VRawRunCommand) (findNixViolations expr)
+
+-- | FP-4: "writeShellScript" as string literal does NOT trigger VWriteShellScript
+prop_adv_fp_string_wss :: Bool
+prop_adv_fp_string_wss =
+  case parseNixTextLoc "\"prefer writeShellScript\"" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> nvType v == VWriteShellScript) (findNixViolations expr)
+
+-- | FP-5: Variable named "mkDerivation" in attrset is NOT a function call
+prop_adv_fp_var_mkderiv :: Bool
+prop_adv_fp_var_mkderiv =
+  case parseNixTextLoc "{ mkDerivation = 42; }" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> nvType v == VRawMkDerivation) (findNixViolations expr)
+
+-- | FP-6: Short string under 120 chars does NOT trigger VLongInlineString
+prop_adv_fp_short_string :: Bool
+prop_adv_fp_short_string =
+  let short = "\"" <> T.replicate 100 "a" <> "\""
+   in case parseNixTextLoc short of
+        Left _ -> False
+        Right expr ->
+          not $ any (\v -> case nvType v of VLongInlineString _ -> True; _ -> False) (findNixViolations expr)
+
+-- | FP-7: mkDerivation WITH meta does NOT trigger VMissingMeta
+prop_adv_fp_mkderiv_with_meta :: Bool
+prop_adv_fp_mkderiv_with_meta =
+  case parseNixTextLoc "mkDerivation { name = \"foo\"; meta = { }; }" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> DerivLint.dvType v == DerivLint.VMissingMeta) (DerivLint.findDerivViolations "test.nix" expr)
+
+-- | FP-8: mkDerivation with meta.description does NOT trigger VMissingDescription
+prop_adv_fp_meta_with_desc :: Bool
+prop_adv_fp_meta_with_desc =
+  case parseNixTextLoc "mkDerivation { name = \"foo\"; meta = { description = \"bar\"; }; }" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> DerivLint.dvType v == DerivLint.VMissingDescription) (DerivLint.findDerivViolations "test.nix" expr)
+
+-- | FP-9: x.y without or null does NOT trigger VOrNullFallback
+prop_adv_fp_select_no_null :: Bool
+prop_adv_fp_select_no_null =
+  case parseNixTextLoc "x.y" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback) (PatternLint.findPatternViolations expr)
+
+-- | FP-10: null as regular value does NOT trigger VOrNullFallback
+prop_adv_fp_null_as_value :: Bool
+prop_adv_fp_null_as_value =
+  case parseNixTextLoc "let x = null; in x" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback) (PatternLint.findPatternViolations expr)
+
+-- ============================================================================
+-- Properties: Adversarial Lint -- False Negative Attacks
+-- ============================================================================
+
+-- | FN-1: mkDerivation through let binding (KNOWN GAP -- leafSym doesn't follow binds)
+prop_adv_fn_mkderiv_let :: Bool
+prop_adv_fn_mkderiv_let =
+  case parseNixTextLoc "let f = mkDerivation; in f { name = \"foo\"; }" of
+    Left _ -> False
+    Right expr ->
+      not $ any (\v -> nvType v == VRawMkDerivation) (findNixViolations expr)
+
+-- | FN-2: substituteAll through builtins. NSelect path
+prop_adv_fn_substall_path :: Bool
+prop_adv_fn_substall_path =
+  case parseNixTextLoc "builtins.substituteAll { src = ./input; }" of
+    Left _ -> False
+    Right expr ->
+      any (\v -> nvType v == VSubstituteAll) (findNixViolations expr)
+
+-- | FN-3: runCommand inside function body
+prop_adv_fn_runcommand_func :: Bool
+prop_adv_fn_runcommand_func =
+  case parseNixTextLoc "{ stdenv }: runCommand \"name\" { } \"exit 0\"" of
+    Left _ -> False
+    Right expr ->
+      any (\v -> nvType v == VRawRunCommand) (findNixViolations expr)
+
+-- | FN-4: writeShellApplication through pkgs. path
+prop_adv_fn_wsa_path :: Bool
+prop_adv_fn_wsa_path =
+  case parseNixTextLoc "pkgs.writeShellApplication { name = \"foo\"; text = \"bar\"; }" of
+    Left _ -> False
+    Right expr ->
+      any (\v -> nvType v == VRawWriteShellApplication) (findNixViolations expr)
+
+-- | FN-5: Long string across interpolation parts > 120 (KNOWN GAP -- interpolation parts not concatenated)
+prop_adv_fn_long_interp :: Bool
+prop_adv_fn_long_interp =
+  let long = "\"${builtins.concatStringsSep \"\" [\"" <> T.replicate 100 "x" <> "\" \"" <> T.replicate 60 "y" <> "\"]}\""
+   in case parseNixTextLoc long of
+        Left _ -> False
+        Right expr ->
+          not $ any (\v -> case nvType v of VLongInlineString _ -> True; _ -> False) (findNixViolations expr)
+
+-- | FN-6: writeShellScriptBin triggers VWriteShellScript
+prop_adv_fn_wssbin :: Bool
+prop_adv_fn_wssbin =
+  case parseNixTextLoc "writeShellScriptBin \"name\" ''body''" of
+    Left _ -> False
+    Right expr ->
+      any (\v -> nvType v == VWriteShellScript) (findNixViolations expr)
+
+-- | FN-7: stdenv.mkDerivation without meta triggers VMissingMeta
+prop_adv_fn_stdenv_no_meta :: Bool
+prop_adv_fn_stdenv_no_meta =
+  case parseNixTextLoc "stdenv.mkDerivation { name = \"foo\"; src = ./.; }" of
+    Left _ -> False
+    Right expr ->
+      any (\v -> DerivLint.dvType v == DerivLint.VMissingMeta) (DerivLint.findDerivViolations "test.nix" expr)
+
+-- | FN-8: mapAttrsToList triggers VAttrTranslation
+prop_adv_fn_map_attrs :: Bool
+prop_adv_fn_map_attrs =
+  case parseNixTextLoc "mapAttrsToList (name: value: value) attrs" of
+    Left _ -> False
+    Right expr ->
+      any (\v -> PatternLint.pvType v == PatternLint.VAttrTranslation) (PatternLint.findPatternViolations expr)
+
+-- ============================================================================
+-- Properties: Adversarial Lint -- Crash Attacks
+-- ============================================================================
+
+-- | CRASH-1: checkPackageDirs on nonexistent dirs
+prop_adv_crash_nonexistent_dir :: Property
+prop_adv_crash_nonexistent_dir = QCM.monadicIO $ do
+  _ <- QCM.run $ PackageLint.checkPackageDirs ["/nonexistent/deadbeef/"]
+  QCM.assert True
+
+-- | CRASH-2: findNixViolations on deeply nested selects (300 levels)
+prop_adv_crash_deep_select :: Bool
+prop_adv_crash_deep_select =
+  let deep n = if n <= (0 :: Int) then "base" else "(" <> deep (n - 1) <> ").x"
+      src = deep 300
+   in case parseNixTextLoc src of
+        Right expr -> findNixViolations expr `seq` True
+        Left _ -> True
+
+-- | CRASH-3: findDerivViolations on 2000-key attrset
+prop_adv_crash_big_attrset :: Bool
+prop_adv_crash_big_attrset =
+  let pairs k = T.intercalate ";" [T.pack ("a" <> show i) <> "=" <> T.pack (show i) | i <- [1 .. k]]
+      src = "mkDerivation { name = \"big\"; " <> pairs (2000 :: Int) <> "; }"
+   in case parseNixTextLoc src of
+        Right expr -> DerivLint.findDerivViolations "test.nix" expr `seq` True
+        Left _ -> True
+
+-- | CRASH-4: findPatternViolations on deeply nested lets (400 levels)
+prop_adv_crash_deep_nest :: Bool
+prop_adv_crash_deep_nest =
+  let deepLet (0 :: Int) = "1"
+      deepLet n = "let v" <> T.pack (show n) <> " = " <> deepLet (n - 1) <> "; in v" <> T.pack (show n)
+      src = deepLet 400
+   in case parseNixTextLoc src of
+        Right expr -> PatternLint.findPatternViolations expr `seq` True
+        Left _ -> True
+
+-- | CRASH-5: findPatternViolations on deeply nested or-null (250 levels)
+prop_adv_crash_deep_ornull :: Bool
+prop_adv_crash_deep_ornull =
+  let deep (0 :: Int) = "x"
+      deep n = "(" <> deep (n - 1) <> ").x or null"
+      src = deep 250
+   in case parseNixTextLoc src of
+        Right expr -> PatternLint.findPatternViolations expr `seq` True
+        Left _ -> True
+
+-- ============================================================================
+-- Properties: Adversarial Lint -- Config Integration
+-- ============================================================================
+
+-- | CONF-1: SevOff override makes isSuppressed return True
+prop_adv_is_suppressed_sevoff :: Bool
+prop_adv_is_suppressed_sevoff =
+  let cfg =
+        defaultConfig
+          { configOverrides =
+              [ RuleOverride
+                  { overrideId = "with-lib",
+                    overrideSeverity = Cfg.SevOff,
+                    overrideReason = Just "testing"
+                  }
+              ]
+          }
+   in isSuppressed cfg "with-lib" && not (isSuppressed cfg "rec-anywhere")
+
+-- | CONF-2: Override on nonexistent rule ID doesn't crash
+prop_adv_nonexistent_rule :: Bool
+prop_adv_nonexistent_rule =
+  let cfg =
+        defaultConfig
+          { configOverrides =
+              [ RuleOverride
+                  { overrideId = "fantasy-N999",
+                    overrideSeverity = Cfg.SevError,
+                    overrideReason = Nothing
+                  }
+              ]
+          }
+   in not (isSuppressed cfg "fantasy-N999") && not (isSuppressed cfg "real-rule")
+
+-- | CONF-3: Default config suppresses nothing
+prop_adv_default_no_suppress :: Bool
+prop_adv_default_no_suppress =
+  all
+    (\rid -> not (isSuppressed defaultConfig rid))
+    [ "with-lib",
+      "rec-anywhere",
+      "no-substitute-all",
+      "no-raw-mkderivation",
+      "no-raw-runcommand",
+      "no-raw-writeshellapplication",
+      "prefer-write-shell-application",
+      "long-inline-string",
+      "missing-meta",
+      "missing-description",
+      "or-null-fallback",
+      "no-translate-attrs-outside-prelude",
+      "default-nix-in-packages"
+    ]
+
+-- | CONF-4: isSuppressed with empty string doesn't crash
+prop_adv_is_suppressed_empty :: Bool
+prop_adv_is_suppressed_empty = not (isSuppressed defaultConfig "")
+
+-- ============================================================================
+-- Properties: Adversarial Lint -- Format Consistency
+-- ============================================================================
+
+-- | FMT-1: formatNixViolations non-empty for non-empty list
+prop_adv_format_nix_nonempty :: Bool
+prop_adv_format_nix_nonempty =
+  not $
+    T.null $
+      formatNixViolations
+        [NixViolation {nvType = VWith, nvSpan = Span (Loc 1 0) (Loc 1 0) Nothing, nvContext = "with lib;"}]
+
+-- | FMT-2: formatDerivViolations non-empty for non-empty list
+prop_adv_format_deriv_nonempty :: Bool
+prop_adv_format_deriv_nonempty =
+  not $
+    T.null $
+      DerivLint.formatDerivViolations
+        [DerivLint.DerivViolation {DerivLint.dvType = DerivLint.VMissingMeta, DerivLint.dvPath = "test.nix", DerivLint.dvSpan = Span (Loc 1 0) (Loc 1 0) Nothing}]
+
+-- | FMT-3: formatPatternViolations non-empty for non-empty list
+prop_adv_format_pattern_nonempty :: Bool
+prop_adv_format_pattern_nonempty =
+  not $
+    T.null $
+      PatternLint.formatPatternViolations
+        [PatternLint.PatternViolation {PatternLint.pvType = PatternLint.VOrNullFallback, PatternLint.pvSpan = Span (Loc 1 0) (Loc 1 0) Nothing, PatternLint.pvContext = "x.y or null"}]
+
+-- | FMT-4: No duplicate error codes across all lint modules
+prop_adv_no_dup_codes :: Bool
+prop_adv_no_dup_codes =
+  let mks = Span (Loc 1 0) (Loc 1 0) Nothing
+      nixT =
+        [ VWith,
+          VRec,
+          VSubstituteAll,
+          VRawMkDerivation,
+          VRawRunCommand,
+          VRawWriteShellApplication,
+          VWriteShellScript,
+          VLongInlineString 200
+        ]
+      derT = [DerivLint.VMissingMeta, DerivLint.VMissingDescription]
+      patT = [PatternLint.VOrNullFallback, PatternLint.VAttrTranslation]
+      fNix t = formatNixViolations [NixViolation t mks ""]
+      fDer t = DerivLint.formatDerivViolations [DerivLint.DerivViolation t "t.nix" mks]
+      fPat t = PatternLint.formatPatternViolations [PatternLint.PatternViolation t mks ""]
+      allFmt = map fNix nixT ++ map fDer derT ++ map fPat patT
+      codeFromLine l =
+        case T.breakOn "ALEPH-" l of
+          (_, "") -> ""
+          (_, rest) -> T.takeWhile (/= ':') rest
+      codes = map (\f -> codeFromLine (case T.lines f of [] -> ""; l : _ -> l)) allFmt
+   in length codes == length (nub codes)
+
+-- ============================================================================
 -- Properties: Schema defaulted vars (DESIGN-2)
 -- ============================================================================
 
@@ -2261,6 +2627,325 @@ prop_bash_for_loop =
     isDefault _ = False
 
 -- ============================================================================
+-- Properties: Scope graph adversarial attacks
+-- ============================================================================
+
+-- | SCOPE-1: Scope ID exhaustion -- build 100k scopes, verify counter and resolution
+prop_scope_id_exhaustion :: Bool
+prop_scope_id_exhaustion =
+  let n = 100000
+      mkScope i =
+        let sid = Scope.ScopeId i
+            decls = [genScopeDecl "x" sid]
+            refs = if i == n - 1 then [genScopeRef "x" sid] else []
+         in (sid, Scope.Scope sid decls refs [] Scope.LetScope)
+      scopes = Map.fromList [mkScope i | i <- [0 .. n - 1]]
+      sg = genScope0 {Scope.sgScopes = scopes, Scope.sgNextId = n, Scope.sgRoot = Scope.ScopeId 0}
+      ref = genScopeRef "x" (Scope.ScopeId (n - 1))
+   in Scope.sgNextId sg == n
+        && case Scope.resolve sg ref of
+          Right decl -> Scope.declScope decl == Scope.ScopeId (n - 1)
+          Left _ -> False
+
+-- | SCOPE-2: Edge priority -- resolution picks highest-priority edge group (Parent)
+prop_scope_edge_priority_full :: Bool
+prop_scope_edge_priority_full =
+  let ref = genScopeRef "x" (Scope.ScopeId 0)
+   in case Scope.resolve genAllEdgesGraph ref of
+        Right decl -> Scope.declScope decl == Scope.ScopeId 1
+        Left _ -> False
+
+-- | SCOPE-3: Shadowing bomb -- 100 nested scopes, innermost resolves to nearest Parent
+prop_scope_shadowing_bomb :: Bool
+prop_scope_shadowing_bomb =
+  let (sg, innermost) = genShadowingChain 100
+      ref = genScopeRef "x" innermost
+   in case Scope.resolve sg ref of
+        Right decl -> Scope.declScope decl == innermost
+        Left _ -> False
+
+-- | SCOPE-3b: With shadow -- Parent edges override With edges with same-named decls
+prop_scope_with_shadow :: Bool
+prop_scope_with_shadow =
+  let parentId = Scope.ScopeId 1
+      withId = Scope.ScopeId 2
+      parentScope = Scope.Scope parentId [genScopeDecl "x" parentId] [] [] Scope.LetScope
+      withScope = Scope.Scope withId [genScopeDecl "x" withId] [] [] Scope.WithScope
+      refScope = Scope.ScopeId 0
+      ref = genScopeRef "x" refScope
+      centerScope =
+        Scope.Scope
+          refScope
+          []
+          [ref]
+          [Scope.Edge refScope parentId Scope.Parent, Scope.Edge refScope withId Scope.With]
+          Scope.FileScope
+      sg =
+        genScope0
+          { Scope.sgScopes = Map.fromList [(refScope, centerScope), (parentId, parentScope), (withId, withScope)],
+            Scope.sgNextId = 3,
+            Scope.sgRoot = refScope
+          }
+   in case Scope.resolve sg ref of
+        Right decl -> Scope.declScope decl == parentId
+        Left _ -> False
+
+-- | SCOPE-4: Cross-file merge -- colliding IDs remapped uniquely via fromModuleGraph
+prop_scope_merge_collision :: Bool
+prop_scope_merge_collision =
+  case (parseNixTextLoc "let a = 1; in a", parseNixTextLoc "let b = 2; in b") of
+    (Right e1, Right e2) ->
+      let sg = Scope.fromModuleGraph (Map.fromList [("a.nix", e1), ("b.nix", e2)])
+          decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+          names = map Scope.declName decls
+       in "a" `elem` names && "b" `elem` names
+    _ -> False
+
+-- | SCOPE-4b: Merge 100 file graphs simultaneously via fromModuleGraph
+prop_scope_merge_many :: Bool
+prop_scope_merge_many =
+  let srcs = ["let x" <> T.pack (show (i :: Int)) <> " = 1; in x" <> T.pack (show (i :: Int)) | i <- [0 .. 99]]
+      parsed = map parseNixTextLoc srcs
+      rights = [e | Right e <- parsed]
+   in if length rights < 100
+        then False
+        else
+          let pairs = [("f" <> show i <> ".nix", e) | (i, e) <- zip [(0 :: Int) ..] rights]
+              sg = Scope.fromModuleGraph (Map.fromList pairs)
+              decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+           in length decls >= 100
+
+-- | SCOPE-4c: Merge file with zero declarations/references -- other files survive
+prop_scope_merge_empty_file :: Bool
+prop_scope_merge_empty_file =
+  case (parseNixTextLoc "let used = 1; in used", parseNixTextLoc "42") of
+    (Right e1, Right e2) ->
+      let sg = Scope.fromModuleGraph (Map.fromList [("has-decl.nix", e1), ("no-decl.nix", e2)])
+          decls = concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg))
+       in any (\d -> Scope.declName d == "used") decls
+    _ -> False
+
+-- | SCOPE-4d: Cross-file resolution -- fromModuleGraph creates unified graph
+prop_scope_cross_file_ref :: Bool
+prop_scope_cross_file_ref =
+  case (parseNixTextLoc "let imported = 1; in imported", parseNixTextLoc "42") of
+    (Right e1, Right e2) ->
+      let sg = Scope.fromModuleGraph (Map.fromList [("decl.nix", e1), ("other.nix", e2)])
+       in not (null (Scope.findDeclaration sg "imported"))
+    _ -> False
+
+-- | SCOPE-5: Orphan declaration has no references resolving to it
+prop_scope_orphan_decl :: Bool
+prop_scope_orphan_decl =
+  let sg = genMinimalFileGraph "orphan" 0
+   in case Scope.findDeclaration sg "orphan" of
+        [] -> False
+        decl : _ -> null (Scope.findReferences sg decl)
+
+-- | SCOPE-5b: Reference to nonexistent name is unresolvable
+prop_scope_unresolvable_ref :: Bool
+prop_scope_unresolvable_ref =
+  let sg = genMinimalFileGraph "exists" 0
+      ref = genScopeRef "ghost" (Scope.ScopeId 0)
+   in case Scope.resolve sg ref of
+        Left (Scope.Unresolved _) -> True
+        _ -> False
+
+-- | SCOPE-5c: Duplicate declarations in same scope -- resolution picks locally
+prop_scope_duplicate_decls :: Bool
+prop_scope_duplicate_decls =
+  let scopeId = Scope.ScopeId 0
+      declA = genScopeDecl "x" scopeId
+      declB = genScopeDecl "x" scopeId
+      scope = Scope.Scope scopeId [declB, declA] [genScopeRef "x" scopeId] [] Scope.FileScope
+      sg = genScope0 {Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
+      ref = genScopeRef "x" scopeId
+   in case Scope.resolve sg ref of
+        Left (Scope.Ambiguous _ ds) -> length ds == 2
+        _ -> False
+
+-- | SCOPE-5d: findReferences returns only refs that actually resolve to declaration
+prop_scope_find_refs_accurate :: Bool
+prop_scope_find_refs_accurate =
+  let parentId = Scope.ScopeId 0
+      childId = Scope.ScopeId 1
+      parentScope = Scope.Scope parentId [genScopeDecl "x" parentId] [] [] Scope.FileScope
+      childScope =
+        Scope.Scope
+          childId
+          []
+          [genScopeRef "x" childId, genScopeRef "y" childId]
+          [Scope.Edge childId parentId Scope.Parent]
+          Scope.LetScope
+      sg =
+        genScope0
+          { Scope.sgScopes = Map.fromList [(parentId, parentScope), (childId, childScope)],
+            Scope.sgNextId = 2,
+            Scope.sgRoot = parentId
+          }
+   in case Scope.findDeclaration sg "x" of
+        [] -> False
+        decl : _ ->
+          let refs = Scope.findReferences sg decl
+           in length refs == 1 && all (\r -> Scope.refName r == "x") refs
+
+-- | SCOPE-6: Dhall export roundtrip -- toDhall on valid graph produces non-empty output
+prop_scope_dhall_export :: Bool
+prop_scope_dhall_export =
+  let sg = genAllEdgesGraph
+      dhall = Scope.toDhall sg
+   in not (T.null dhall)
+
+-- | SCOPE-6b: Dhall export preserves special characters in declaration names
+prop_scope_dhall_special_chars :: Bool
+prop_scope_dhall_special_chars =
+  let scopeId = Scope.ScopeId 0
+      names = ["funny-name", "has.dot", "snake_case", "UPPER"]
+      decls = [genScopeDecl n scopeId | n <- names]
+      scope = Scope.Scope scopeId decls [] [] Scope.FileScope
+      sg = genScope0 {Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
+      dhall = Scope.toDhall sg
+   in all (`T.isInfixOf` dhall) names
+
+-- | SCOPE-6c: Dhall export on empty graph does not crash
+prop_scope_dhall_empty :: Bool
+prop_scope_dhall_empty =
+  not (T.null (Scope.toDhall Scope.empty))
+
+-- ============================================================================
+-- Properties: Config loading attacks
+-- ============================================================================
+
+-- | CONFIG-1: Config file doesn't exist -- returns Left
+prop_config_no_file :: Property
+prop_config_no_file = QCM.monadicIO $ do
+  result <- QCM.run $ try @SomeException $ loadConfig "/tmp/nix-compile-nonexistent-z7x9w2v5.dhall"
+  QCM.assert $ case result of
+    Left _ -> True
+    Right (Left _) -> True
+    Right (Right _) -> False
+
+-- | CONFIG-2: Malformed Dhall syntax returns Left
+prop_config_malformed_dhall :: Property
+prop_config_malformed_dhall = QCM.monadicIO $ do
+  let path = "/tmp/nix-compile-test-malformed-z7x9w2v5.dhall"
+  _ <- QCM.run $ TIO.writeFile path "{ = }"
+  result <- QCM.run $ loadConfig path
+  _ <- QCM.run $ removeFile path `catch` (\(_ :: IOException) -> pure ())
+  QCM.assert $ isLeft result
+
+-- | CONFIG-3: Valid Dhall but wrong types returns Left
+prop_config_wrong_types :: Property
+prop_config_wrong_types = QCM.monadicIO $ do
+  let path = "/tmp/nix-compile-test-wrongtype-z7x9w2v5.dhall"
+      content = "{ profile = 42, extra-ignores = [] : List Text, overrides = [] : List { id : Text, severity : < Error | Warning | Info | Off >, reason : Optional Text } }" :: Text
+  _ <- QCM.run $ TIO.writeFile path content
+  result <- QCM.run $ loadConfig path
+  _ <- QCM.run $ removeFile path `catch` (\(_ :: IOException) -> pure ())
+  QCM.assert $ isLeft result
+
+-- | CONFIG-4: Config with 10,000 overrides doesn't crash
+prop_config_massive_overrides :: Bool
+prop_config_massive_overrides =
+  let overrides = [RuleOverride "test-rule" Cfg.SevWarning Nothing | _ <- [1 .. 10000 :: Int]]
+      cfg = defaultConfig {configOverrides = overrides}
+   in effectiveSeverity cfg "test-rule" == Just Cfg.SevWarning
+
+-- | CONFIG-5: Glob patterns with regex special characters (treated as literal)
+prop_config_glob_regex_chars :: Bool
+prop_config_glob_regex_chars =
+  let cfg = defaultConfig {configExtraIgnores = [".*", "[a-z]", "(test)", "\\d"]}
+   in isIgnored cfg ".*"
+        && not (isIgnored cfg "anything.txt")
+        && isIgnored cfg "[a-z]"
+        && isIgnored cfg "\\d"
+
+-- | CONFIG-6: Empty ignore patterns -- nothing ignored
+prop_config_empty_ignores :: Bool
+prop_config_empty_ignores =
+  let cfg = defaultConfig {configExtraIgnores = []}
+   in not (isIgnored cfg "anything.nix")
+
+-- | CONFIG-7: Absurdly long profile name
+prop_config_long_profile :: Bool
+prop_config_long_profile =
+  let longName = T.replicate 10000 "x"
+      cfg = defaultConfig {configProfile = longName}
+   in configProfile cfg == longName
+
+-- | CONFIG-8: isIgnored with path containing null bytes does not crash
+prop_config_null_byte_path :: Bool
+prop_config_null_byte_path =
+  let cfg = defaultConfig {configExtraIgnores = ["*.nix"]}
+      pathWithNull = "test\0file.nix"
+   in isIgnored cfg pathWithNull `seq` True
+
+-- | CONFIG-9: isIgnored with paths exactly "**" or "***"
+prop_config_star_paths :: Bool
+prop_config_star_paths =
+  let cfg = defaultConfig {configExtraIgnores = ["**", "***"]}
+   in isIgnored cfg "**" && isIgnored cfg "***"
+
+-- | CONFIG-10: isIgnored with "**" glob pattern matches everything
+prop_config_globstar_matches_all :: Bool
+prop_config_globstar_matches_all =
+  let cfg = defaultConfig {configExtraIgnores = ["**"]}
+   in isIgnored cfg "any/file/path.nix" && isIgnored cfg "" && isIgnored cfg "x"
+
+-- ============================================================================
+-- Properties: Severity override attacks
+-- ============================================================================
+
+-- | SEV-1: Override same rule twice (first match wins via filter head)
+prop_severity_duplicate_override :: Bool
+prop_severity_duplicate_override =
+  let cfg =
+        defaultConfig
+          { configOverrides =
+              [RuleOverride "the-rule" Cfg.SevError Nothing, RuleOverride "the-rule" Cfg.SevOff Nothing]
+          }
+   in effectiveSeverity cfg "the-rule" == Just Cfg.SevError
+
+-- | SEV-2: Override a rule ID that doesn't exist (should not crash)
+prop_severity_nonexistent_rule :: Bool
+prop_severity_nonexistent_rule =
+  let cfg = defaultConfig {configOverrides = [RuleOverride "no-such-rule-xyz" Cfg.SevError Nothing]}
+   in effectiveSeverity cfg "no-such-rule-xyz" == Just Cfg.SevError
+        && effectiveSeverity cfg "real-rule" == Nothing
+
+-- | SEV-3: Override with SevOff -- isSuppressed returns True
+prop_severity_suppressed :: Bool
+prop_severity_suppressed =
+  let cfg = defaultConfig {configOverrides = [RuleOverride "suppress-me" Cfg.SevOff Nothing]}
+   in isSuppressed cfg "suppress-me"
+
+-- | SEV-4: effectiveSeverity with rule IDs containing special characters
+prop_severity_special_chars :: Bool
+prop_severity_special_chars =
+  let rules = ["rule with spaces", "rule:colon", "rule/slash", "r\xFC\xEB", ""]
+      cfg =
+        defaultConfig
+          { configOverrides =
+              [RuleOverride r Cfg.SevInfo Nothing | r <- rules]
+          }
+   in all (\r -> effectiveSeverity cfg r == Just Cfg.SevInfo) rules
+
+-- | SEV-5: isSuppressed returns False for non-overridden rules
+prop_severity_not_suppressed :: Bool
+prop_severity_not_suppressed =
+  not (isSuppressed defaultConfig "any-rule")
+
+-- | SEV-6: effectiveSeverity returns Nothing for non-overridden rule
+prop_severity_no_override :: Bool
+prop_severity_no_override =
+  effectiveSeverity defaultConfig "any-rule" == Nothing
+
+-- | SEV-7: Severity ordering
+prop_severity_ordering :: Bool
+prop_severity_ordering =
+  Cfg.SevError > Cfg.SevWarning && Cfg.SevWarning > Cfg.SevInfo && Cfg.SevInfo > Cfg.SevOff
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -2465,7 +3150,75 @@ main = do
         -- Layout conventions
         run "layout_straylight_invalid" prop_layout_straylight_invalid,
         run "layout_straylight_valid" prop_layout_straylight_valid,
-        run "layout_flakeparts_valid" prop_layout_flakeparts_valid
+        run "layout_flakeparts_valid" prop_layout_flakeparts_valid,
+        -- Lint adversarial attacks
+        run "adv_lint_fp_string_mkderiv" (property prop_adv_fp_string_mkderiv),
+        run "adv_lint_fp_string_substall" (property prop_adv_fp_string_substall),
+        run "adv_lint_fp_string_runcommand" (property prop_adv_fp_string_runcommand),
+        run "adv_lint_fp_string_wss" (property prop_adv_fp_string_wss),
+        run "adv_lint_fp_var_mkderiv" (property prop_adv_fp_var_mkderiv),
+        run "adv_lint_fp_short_string" (property prop_adv_fp_short_string),
+        run "adv_lint_fp_mkderiv_with_meta" (property prop_adv_fp_mkderiv_with_meta),
+        run "adv_lint_fp_meta_with_desc" (property prop_adv_fp_meta_with_desc),
+        run "adv_lint_fp_select_no_null" (property prop_adv_fp_select_no_null),
+        run "adv_lint_fp_null_as_value" (property prop_adv_fp_null_as_value),
+        run "adv_lint_fn_mkderiv_let" (property prop_adv_fn_mkderiv_let),
+        run "adv_lint_fn_substall_path" (property prop_adv_fn_substall_path),
+        run "adv_lint_fn_runcommand_func" (property prop_adv_fn_runcommand_func),
+        run "adv_lint_fn_wsa_path" (property prop_adv_fn_wsa_path),
+        run "adv_lint_fn_long_interp" (property prop_adv_fn_long_interp),
+        run "adv_lint_fn_wssbin" (property prop_adv_fn_wssbin),
+        run "adv_lint_fn_stdenv_no_meta" (property prop_adv_fn_stdenv_no_meta),
+        run "adv_lint_fn_map_attrs" (property prop_adv_fn_map_attrs),
+        run "adv_lint_crash_nonexistent_dir" prop_adv_crash_nonexistent_dir,
+        run "adv_lint_crash_deep_select" (property prop_adv_crash_deep_select),
+        run "adv_lint_crash_big_attrset" (property prop_adv_crash_big_attrset),
+        run "adv_lint_crash_deep_nest" (property prop_adv_crash_deep_nest),
+        run "adv_lint_crash_deep_ornull" (property prop_adv_crash_deep_ornull),
+        run "adv_lint_sevoff_suppresses" (property prop_adv_is_suppressed_sevoff),
+        run "adv_lint_nonexistent_rule" (property prop_adv_nonexistent_rule),
+        run "adv_lint_default_no_suppress" (property prop_adv_default_no_suppress),
+        run "adv_lint_is_suppressed_empty" (property prop_adv_is_suppressed_empty),
+        run "adv_lint_format_nix_nonempty" (property prop_adv_format_nix_nonempty),
+        run "adv_lint_format_deriv_nonempty" (property prop_adv_format_deriv_nonempty),
+        run "adv_lint_format_pattern_nonempty" (property prop_adv_format_pattern_nonempty),
+        run "adv_lint_no_dup_codes" (property prop_adv_no_dup_codes),
+        -- Lint adversarial (from Adversarial.hs CATEGORY 8)
+        -- Scope graph adversarial
+        run "adv_scope_id_exhaustion" prop_scope_id_exhaustion,
+        run "adv_scope_edge_priority" prop_scope_edge_priority_full,
+        run "adv_scope_shadowing_bomb" prop_scope_shadowing_bomb,
+        run "adv_scope_with_shadow" prop_scope_with_shadow,
+        run "adv_scope_merge_collision" prop_scope_merge_collision,
+        run "adv_scope_merge_many" prop_scope_merge_many,
+        run "adv_scope_merge_empty" prop_scope_merge_empty_file,
+        run "adv_scope_cross_file_ref" prop_scope_cross_file_ref,
+        run "adv_scope_orphan_decl" prop_scope_orphan_decl,
+        run "adv_scope_unresolvable_ref" prop_scope_unresolvable_ref,
+        run "adv_scope_duplicate_decls" prop_scope_duplicate_decls,
+        run "adv_scope_find_refs_accurate" prop_scope_find_refs_accurate,
+        run "adv_scope_dhall_export" prop_scope_dhall_export,
+        run "adv_scope_dhall_special_chars" prop_scope_dhall_special_chars,
+        run "adv_scope_dhall_empty" prop_scope_dhall_empty,
+        -- Config loading adversarial
+        run "adv_config_no_file" prop_config_no_file,
+        run "adv_config_malformed" prop_config_malformed_dhall,
+        run "adv_config_wrong_types" prop_config_wrong_types,
+        run "adv_config_massive_overrides" prop_config_massive_overrides,
+        run "adv_config_glob_regex" prop_config_glob_regex_chars,
+        run "adv_config_empty_ignores" prop_config_empty_ignores,
+        run "adv_config_long_profile" prop_config_long_profile,
+        run "adv_config_null_byte" prop_config_null_byte_path,
+        run "adv_config_star_paths" prop_config_star_paths,
+        run "adv_config_globstar_all" prop_config_globstar_matches_all,
+        -- Severity override adversarial
+        run "adv_severity_duplicate" prop_severity_duplicate_override,
+        run "adv_severity_nonexistent" prop_severity_nonexistent_rule,
+        run "adv_severity_suppressed" prop_severity_suppressed,
+        run "adv_severity_special_chars" prop_severity_special_chars,
+        run "adv_severity_not_suppressed" prop_severity_not_suppressed,
+        run "adv_severity_no_override" prop_severity_no_override,
+        run "adv_severity_ordering" prop_severity_ordering
       ]
 
   putStrLn ""

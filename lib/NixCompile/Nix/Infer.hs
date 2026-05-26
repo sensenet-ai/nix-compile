@@ -11,6 +11,8 @@ module NixCompile.Nix.Infer
   ( -- * Inference
     inferExpr,
     inferFile,
+    runInfer,
+    unify,
 
     -- * Environment
     TypeEnv (..),
