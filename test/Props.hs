@@ -3118,6 +3118,118 @@ prop_severity_ordering =
   Cfg.SevError > Cfg.SevWarning && Cfg.SevWarning > Cfg.SevInfo && Cfg.SevInfo > Cfg.SevOff
 
 -- ============================================================================
+-- Properties: Rule ID consistency (Haskell ↔ Dhall config)
+-- ============================================================================
+
+-- | RULE-1: All Haskell rule IDs are unique across lint modules (excluding known H/D unions)
+prop_rule_ids_unique :: Bool
+prop_rule_ids_unique =
+  let bashIds =
+        [ Cfg.bashRuleId VEval,
+          Cfg.bashRuleId VBacktick,
+          Cfg.bashRuleId VHeredoc
+        ]
+      nixIds =
+        [ Cfg.nixRuleId VWith,
+          Cfg.nixRuleId VRec,
+          Cfg.nixRuleId VSubstituteAll,
+          Cfg.nixRuleId VRawMkDerivation,
+          Cfg.nixRuleId VRawRunCommand,
+          Cfg.nixRuleId VRawWriteShellApplication,
+          Cfg.nixRuleId VWriteShellScript,
+          Cfg.nixRuleId (VLongInlineString 200)
+        ]
+      derivIds =
+        [ Cfg.derivRuleId DerivLint.VMissingMeta,
+          Cfg.derivRuleId DerivLint.VMissingDescription
+        ]
+      packageIds =
+        [ Cfg.packageRuleId PackageLint.P001
+        ]
+      patternIds =
+        [ Cfg.patternRuleId PatternLint.VOrNullFallback,
+          Cfg.patternRuleId PatternLint.VAttrTranslation
+        ]
+      allIds = bashIds <> nixIds <> derivIds <> packageIds <> patternIds
+   in length allIds == length (nub allIds)
+
+-- | RULE-2: isSuppressed works for every Haskell rule ID
+prop_rule_suppress_all :: Bool
+prop_rule_suppress_all =
+  let buildOverrides ids = [RuleOverride i Cfg.SevOff Nothing | i <- ids]
+      mkCfg ids = defaultConfig {configOverrides = buildOverrides ids}
+      allIds =
+        [ Cfg.bashRuleId VHeredoc,
+          Cfg.bashRuleId VEval,
+          Cfg.bashRuleId VBacktick,
+          Cfg.nixRuleId VWith,
+          Cfg.nixRuleId VRec,
+          Cfg.nixRuleId VSubstituteAll,
+          Cfg.nixRuleId VRawMkDerivation,
+          Cfg.nixRuleId VRawRunCommand,
+          Cfg.nixRuleId VRawWriteShellApplication,
+          Cfg.nixRuleId VWriteShellScript,
+          Cfg.nixRuleId (VLongInlineString 200),
+          Cfg.derivRuleId DerivLint.VMissingMeta,
+          Cfg.derivRuleId DerivLint.VMissingDescription,
+          Cfg.packageRuleId PackageLint.P001,
+          Cfg.patternRuleId PatternLint.VOrNullFallback,
+          Cfg.patternRuleId PatternLint.VAttrTranslation
+        ]
+      cfg = mkCfg allIds
+   in all (isSuppressed cfg) allIds
+
+-- | RULE-3: Override SevError makes effectiveSeverity return Just SevError
+prop_rule_severity_error :: Bool
+prop_rule_severity_error =
+  let cfg =
+        defaultConfig
+          { configOverrides =
+              [ RuleOverride (Cfg.bashRuleId VEval) Cfg.SevError Nothing
+              ]
+          }
+   in effectiveSeverity cfg (Cfg.bashRuleId VEval) == Just Cfg.SevError
+
+-- | RULE-4: Override SevInfo makes effectiveSeverity return Just SevInfo
+prop_rule_severity_info :: Bool
+prop_rule_severity_info =
+  let cfg =
+        defaultConfig
+          { configOverrides =
+              [ RuleOverride (Cfg.nixRuleId VWith) Cfg.SevInfo Nothing
+              ]
+          }
+   in effectiveSeverity cfg (Cfg.nixRuleId VWith) == Just Cfg.SevInfo
+
+-- | RULE-5: isSuppressed False when override is SevError (not SevOff)
+prop_rule_not_suppressed_on_error :: Bool
+prop_rule_not_suppressed_on_error =
+  let cfg =
+        defaultConfig
+          { configOverrides =
+              [ RuleOverride (Cfg.nixRuleId VRec) Cfg.SevError Nothing
+              ]
+          }
+   in not (isSuppressed cfg (Cfg.nixRuleId VRec))
+
+-- | RULE-6: bashRuleId VHeredoc and VHereString map to same ID
+prop_rule_bash_heredoc_union :: Bool
+prop_rule_bash_heredoc_union =
+  Cfg.bashRuleId VHeredoc == Cfg.bashRuleId VHereString
+    && Cfg.bashRuleId VHeredoc == "no-heredoc-in-inline-bash"
+
+-- | RULE-7: Massive override list doesn't crash
+prop_rule_massive_overrides :: Bool
+prop_rule_massive_overrides =
+  let overrides =
+        [ RuleOverride (Cfg.bashRuleId VEval <> T.pack (show i)) Cfg.SevInfo Nothing
+        | i <- [1 .. 10000 :: Int]
+        ]
+      cfg = defaultConfig {configOverrides = overrides}
+   in not (isSuppressed cfg (Cfg.bashRuleId VEval))
+        && effectiveSeverity cfg (Cfg.bashRuleId VEval <> "1") == Just Cfg.SevInfo
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -3413,7 +3525,15 @@ main = do
         run "adv_severity_special_chars" prop_severity_special_chars,
         run "adv_severity_not_suppressed" prop_severity_not_suppressed,
         run "adv_severity_no_override" prop_severity_no_override,
-        run "adv_severity_ordering" prop_severity_ordering
+        run "adv_severity_ordering" prop_severity_ordering,
+        -- Rule ID consistency
+        run "rule_ids_unique" prop_rule_ids_unique,
+        run "rule_suppress_all" prop_rule_suppress_all,
+        run "rule_severity_error" prop_rule_severity_error,
+        run "rule_severity_info" prop_rule_severity_info,
+        run "rule_not_suppressed" prop_rule_not_suppressed_on_error,
+        run "rule_bash_heredoc_union" prop_rule_bash_heredoc_union,
+        run "rule_massive_overrides" prop_rule_massive_overrides
       ]
 
   putStrLn ""
