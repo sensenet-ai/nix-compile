@@ -47,7 +47,7 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
-import NixCompile.Lint.Forbidden (findViolations)
+import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Format (formatExpr)
 import NixCompile.Nix.Infer (Binding, inferExpr)
@@ -2626,6 +2626,37 @@ prop_bash_for_loop =
     isDefault (DefaultIs "Y" _ _) = True
     isDefault _ = False
 
+-- | SPECDEV-2: Bash violations carry real line numbers from ShellCheck positions
+prop_bash_span_line_numbers :: Bool
+prop_bash_span_line_numbers =
+  let src = "#!/bin/sh\neval echo hello\n"
+   in case parseBash src of
+        Left _ -> False
+        Right ast ->
+          let violations = findViolations ast
+           in not (null violations)
+                && all
+                  ( \v ->
+                      let line = locLine (spanStart (vSpan v))
+                       in line == 2
+                  )
+                  violations
+
+-- | SPECDEV-2: Multi-line script -- violation on correct line
+prop_bash_span_multi_line :: Bool
+prop_bash_span_multi_line =
+  let src = "#!/bin/sh\nx=1\ny=2\n`ls`\n"
+   in case parseBash src of
+        Left _ -> False
+        Right ast ->
+          let violations = findViolations ast
+           in any
+                ( \v ->
+                    vType v == VBacktick
+                      && locLine (spanStart (vSpan v)) == 4
+                )
+                violations
+
 -- ============================================================================
 -- Properties: Scope graph adversarial attacks
 -- ============================================================================
@@ -3135,6 +3166,8 @@ main = do
         run "bash_subshell" prop_bash_subshell,
         run "bash_pipe" prop_bash_pipe,
         run "bash_for_loop" prop_bash_for_loop,
+        run "bash_span_lines" prop_bash_span_line_numbers,
+        run "bash_span_multi" prop_bash_span_multi_line,
         -- Module kind detection
         run "module_kind_flake" prop_module_kind_flake,
         run "module_kind_nixos" prop_module_kind_nixos,
