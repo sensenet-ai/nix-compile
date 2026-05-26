@@ -178,34 +178,55 @@ tokenise = go
     go [] = []
     go ('*' : '*' : rest) = GlobStar : go rest
     go ('*' : rest) = Star : go rest
+    go ('/' : rest) = go rest
     go cs =
-      let (lit, rest) = break (`elem` ("*" :: String)) cs
-       in if null lit then go rest else Lit lit : go rest
+      let (lit, rest') = break (`elem` ("*/" :: String)) cs
+       in if null lit
+            then go rest'
+            else Lit lit : go rest'
 
 charMatch :: String -> String -> Bool
 charMatch [] [] = True
-charMatch ('*' : pat) [] = all (== '*') pat
-charMatch ('*' : pat) (_ : rest) = charMatch pat rest || charMatch ('*' : pat) rest
+charMatch ('*' : pat) [] = charMatch pat []
+charMatch ('*' : pat) str@(_ : rest) = charMatch pat str || charMatch ('*' : pat) rest
 charMatch (c : pat) (d : rest) = c == d && charMatch pat rest
 charMatch _ _ = False
 
-matchSegments :: [Token] -> [String] -> Bool
-matchSegments [] [] = True
-matchSegments [GlobStar] _ = True
-matchSegments (GlobStar : rest) segs =
-  any (matchSegments rest) (tails segs)
-matchSegments (Star : rest) (_ : segs) = matchSegments rest segs
-matchSegments (Lit l : rest) (s : segs) = charMatch l s && matchSegments rest segs
-matchSegments _ _ = False
+tokensToPattern :: [Token] -> String
+tokensToPattern [] = []
+tokensToPattern (GlobStar : rest) = '*' : '*' : tokensToPattern rest
+tokensToPattern (Star : rest) = '*' : tokensToPattern rest
+tokensToPattern (Lit l : rest) = l <> tokensToPattern rest
+
+splitComponents :: String -> [[Token]]
+splitComponents = map tokenise . splitOn '/'
+
+splitOn :: Char -> String -> [String]
+splitOn _ [] = [""]
+splitOn c s =
+  let (before, after) = break (== c) s
+   in before : case after of
+        "" -> []
+        _ : rest -> splitOn c rest
+
+matchComponents :: [[Token]] -> [String] -> Bool
+matchComponents [] [] = True
+matchComponents [] _ = False
+matchComponents (comp : crest) segs = case comp of
+  [] -> matchComponents crest segs
+  [GlobStar] -> matchGlobStar crest segs
+  pattern ->
+    case segs of
+      seg : srest -> charMatch (tokensToPattern pattern) seg && matchComponents crest srest
+      [] -> False
+  where
+    matchGlobStar restC [] = matchComponents restC []
+    matchGlobStar restC sgs@(_ : _) = matchComponents restC sgs || matchComponents (comp : restC) (drop 1 sgs)
 
 matchGlob :: Text -> FilePath -> Bool
-matchGlob pattern fp =
-  let pat = T.unpack pattern
-      segs = FP.splitDirectories fp
-   in if '/' `elem` pat
-        then matchSegments (tokenise pat) segs
-        else any (charMatch pat) segs
-
-tails :: [a] -> [[a]]
-tails [] = [[]]
-tails xs@(_ : xt) = xs : tails xt
+matchGlob pattern fp
+  | '/' `elem` pat = matchComponents (splitComponents pat) segs
+  | otherwise = any (charMatch pat) segs
+  where
+    pat = T.unpack pattern
+    segs = FP.splitDirectories fp

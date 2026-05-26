@@ -2924,6 +2924,147 @@ prop_config_globstar_matches_all =
    in isIgnored cfg "any/file/path.nix" && isIgnored cfg "" && isIgnored cfg "x"
 
 -- ============================================================================
+-- Properties: Glob matching (matchGlob via isIgnored)
+-- ============================================================================
+
+-- | GLOB-1: Exact filename match
+prop_glob_exact :: Bool
+prop_glob_exact =
+  let cfg = defaultConfig {configExtraIgnores = ["foo.nix"]}
+   in isIgnored cfg "foo.nix" && not (isIgnored cfg "bar.nix")
+
+-- | GLOB-2: *.ext matches any name with that extension
+prop_glob_star_ext :: Bool
+prop_glob_star_ext =
+  let cfg = defaultConfig {configExtraIgnores = ["*.nix"]}
+   in isIgnored cfg "foo.nix"
+        && isIgnored cfg ".nix"
+        && not (isIgnored cfg "foo.txt")
+
+-- | GLOB-3: prefix* matches any name starting with prefix
+prop_glob_prefix_star :: Bool
+prop_glob_prefix_star =
+  let cfg = defaultConfig {configExtraIgnores = ["test*"]}
+   in isIgnored cfg "test" && isIgnored cfg "test123" && not (isIgnored cfg "xtest")
+
+-- | GLOB-4: *suffix matches any name ending with suffix
+prop_glob_star_suffix :: Bool
+prop_glob_star_suffix =
+  let cfg = defaultConfig {configExtraIgnores = ["*_test.nix"]}
+   in isIgnored cfg "foo_test.nix" && not (isIgnored cfg "foo.nix")
+
+-- | GLOB-5: a*b matches a then anything then b
+prop_glob_middle_star :: Bool
+prop_glob_middle_star =
+  let cfg = defaultConfig {configExtraIgnores = ["a*b"]}
+   in isIgnored cfg "ab" && isIgnored cfg "axyb" && not (isIgnored cfg "axy")
+
+-- | GLOB-6: dir/*.nix matches any .nix file in dir (PATH WITH /)
+prop_glob_dir_star :: Bool
+prop_glob_dir_star =
+  let cfg = defaultConfig {configExtraIgnores = ["dir/*.nix"]}
+   in isIgnored cfg "dir/foo.nix"
+        && isIgnored cfg "dir/bar.nix"
+        && not (isIgnored cfg "other/foo.nix")
+        && not (isIgnored cfg "dir/foo.txt")
+
+-- | GLOB-7: dir/** matches everything under dir (PATH WITH /)
+prop_glob_dir_globstar :: Bool
+prop_glob_dir_globstar =
+  let cfg = defaultConfig {configExtraIgnores = ["src/**"]}
+   in isIgnored cfg "src/foo.nix"
+        && isIgnored cfg "src/deep/nested/file.hs"
+        && not (isIgnored cfg "other/file.nix")
+
+-- | GLOB-8: **/foo.nix matches foo.nix at any depth
+prop_glob_globstar_suffix :: Bool
+prop_glob_globstar_suffix =
+  let cfg = defaultConfig {configExtraIgnores = ["**/foo.nix"]}
+   in isIgnored cfg "foo.nix"
+        && isIgnored cfg "a/foo.nix"
+        && isIgnored cfg "a/b/c/foo.nix"
+        && not (isIgnored cfg "foo.txt")
+        && not (isIgnored cfg "dir/bar.nix")
+
+-- | GLOB-9: dir/**/*.hs matches .hs files at any depth under dir
+prop_glob_nested_globstar :: Bool
+prop_glob_nested_globstar =
+  let cfg = defaultConfig {configExtraIgnores = ["src/**/*.hs"]}
+   in isIgnored cfg "src/Foo.hs"
+        && isIgnored cfg "src/lib/Bar.hs"
+        && isIgnored cfg "src/lib/deep/Baz.hs"
+        && not (isIgnored cfg "src/Foo.txt")
+        && not (isIgnored cfg "lib/Foo.hs")
+
+-- | GLOB-10: Multiple stars in filename
+prop_glob_multi_star :: Bool
+prop_glob_multi_star =
+  let cfg = defaultConfig {configExtraIgnores = ["*-v*"]}
+   in isIgnored cfg "app-v1" && isIgnored cfg "app-v2.3" && not (isIgnored cfg "app")
+
+-- | GLOB-11: Case sensitivity (Unix convention)
+prop_glob_case_sensitive :: Bool
+prop_glob_case_sensitive =
+  let cfg = defaultConfig {configExtraIgnores = ["Foo.nix"]}
+   in isIgnored cfg "Foo.nix" && not (isIgnored cfg "foo.nix")
+
+-- | GLOB-12: Star matches within a single path component (but matches any component)
+prop_glob_star_no_slash :: Bool
+prop_glob_star_no_slash =
+  let cfg = defaultConfig {configExtraIgnores = ["*.nix"]}
+   in isIgnored cfg "dir/foo.nix" && isIgnored cfg "foo.nix" && not (isIgnored cfg "dir/foo.txt")
+
+-- | GLOB-13: Non-existent ignore pattern matches nothing
+prop_glob_no_match :: Bool
+prop_glob_no_match =
+  let cfg = defaultConfig {configExtraIgnores = ["*.md"]}
+   in not (isIgnored cfg "foo.nix") && not (isIgnored cfg "dir/file.nix")
+
+-- | GLOB-14: Literal dot not treated as regex
+prop_glob_dot_literal :: Bool
+prop_glob_dot_literal =
+  let cfg = defaultConfig {configExtraIgnores = [".env"]}
+   in isIgnored cfg ".env" && not (isIgnored cfg "xenv")
+
+-- | GLOB-15: Star at both ends
+prop_glob_star_both_ends :: Bool
+prop_glob_star_both_ends =
+  let cfg = defaultConfig {configExtraIgnores = ["*.log*"]}
+   in isIgnored cfg "foo.log" && isIgnored cfg "foo.log.gz" && not (isIgnored cfg "foo.txt")
+
+-- | GLOB-16: Single character (no wildcard) exact match at any depth
+prop_glob_single_no_wildcard :: Bool
+prop_glob_single_no_wildcard =
+  let cfg = defaultConfig {configExtraIgnores = ["result"]}
+   in isIgnored cfg "result" && not (isIgnored cfg "result-link")
+
+-- | GLOB-17: Pattern with leading slash
+prop_glob_leading_slash :: Bool
+prop_glob_leading_slash =
+  let cfg = defaultConfig {configExtraIgnores = ["/build/*"]}
+   in isIgnored cfg "build/output" && not (isIgnored cfg "src/build/output")
+
+-- | GLOB-18: Consecutive stars (***)
+prop_glob_triple_star :: Bool
+prop_glob_triple_star =
+  let cfg = defaultConfig {configExtraIgnores = ["***"]}
+   in isIgnored cfg "file.nix" && isIgnored cfg "deep/dir/file.nix"
+
+-- | GLOB-19: Complex pattern: *._test.nix
+prop_glob_complex :: Bool
+prop_glob_complex =
+  let cfg = defaultConfig {configExtraIgnores = ["*._test.nix"]}
+   in isIgnored cfg "module._test.nix"
+        && not (isIgnored cfg "module_test.nix")
+
+-- | GLOB-20: Pattern with leading star and path
+prop_glob_leading_star_path :: Bool
+prop_glob_leading_star_path =
+  let cfg = defaultConfig {configExtraIgnores = ["*/test/*"]}
+   in isIgnored cfg "pkg/test/foo.nix"
+        && not (isIgnored cfg "test/foo.nix")
+
+-- ============================================================================
 -- Properties: Severity override attacks
 -- ============================================================================
 
@@ -3244,6 +3385,27 @@ main = do
         run "adv_config_null_byte" prop_config_null_byte_path,
         run "adv_config_star_paths" prop_config_star_paths,
         run "adv_config_globstar_all" prop_config_globstar_matches_all,
+        -- Glob matching
+        run "glob_exact" prop_glob_exact,
+        run "glob_star_ext" prop_glob_star_ext,
+        run "glob_prefix_star" prop_glob_prefix_star,
+        run "glob_star_suffix" prop_glob_star_suffix,
+        run "glob_middle_star" prop_glob_middle_star,
+        run "glob_dir_star" prop_glob_dir_star,
+        run "glob_dir_globstar" prop_glob_dir_globstar,
+        run "glob_globstar_suffix" prop_glob_globstar_suffix,
+        run "glob_nested_globstar" prop_glob_nested_globstar,
+        run "glob_multi_star" prop_glob_multi_star,
+        run "glob_case_sensitive" prop_glob_case_sensitive,
+        run "glob_star_no_slash" prop_glob_star_no_slash,
+        run "glob_no_match" prop_glob_no_match,
+        run "glob_dot_literal" prop_glob_dot_literal,
+        run "glob_star_both_ends" prop_glob_star_both_ends,
+        run "glob_single_no_wildcard" prop_glob_single_no_wildcard,
+        run "glob_leading_slash" prop_glob_leading_slash,
+        run "glob_triple_star" prop_glob_triple_star,
+        run "glob_complex" prop_glob_complex,
+        run "glob_leading_star_path" prop_glob_leading_star_path,
         -- Severity override adversarial
         run "adv_severity_duplicate" prop_severity_duplicate_override,
         run "adv_severity_nonexistent" prop_severity_nonexistent_rule,
