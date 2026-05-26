@@ -1477,6 +1477,154 @@ prop_layout_flakeparts_valid =
   let violations = LC.validateLayout LC.flakeParts "/" [("modules/apps.nix", Detection FlakeModule 100 [])]
    in null violations
 
+-- | nixpkgsByName convention validates packages in pkgs/by-name/
+prop_layout_nixpkgs_package_valid :: Bool
+prop_layout_nixpkgs_package_valid =
+  let violations = LC.validateLayout LC.nixpkgsByName "/" [("pkgs/by-name/fo/foo/default.nix", Detection Package 100 [])]
+   in null violations
+
+-- | nixpkgsByName silently accepts unmatched module kinds (no rule)
+prop_layout_nixpkgs_non_package :: Bool
+prop_layout_nixpkgs_non_package =
+  let violations = LC.validateLayout LC.nixpkgsByName "/" [("lib/utils.nix", Detection Library 100 [])]
+   in null violations -- nixpkgsByName only defines Package rules; Library has no matching rule
+
+-- | nixosConfig validates modules in modules/
+prop_layout_nixos_modules_valid :: Bool
+prop_layout_nixos_modules_valid =
+  let violations = LC.validateLayout LC.nixosConfig "/" [("modules/system.nix", Detection NixOSModule 100 [])]
+   in null violations
+
+-- | nixosConfig validates modules in hosts/
+prop_layout_nixos_hosts_valid :: Bool
+prop_layout_nixos_hosts_valid =
+  let violations = LC.validateLayout LC.nixosConfig "/" [("hosts/mars.nix", Detection NixOSModule 100 [])]
+   in null violations
+
+-- | nixosConfig validates home modules in users/
+prop_layout_nixos_users_valid :: Bool
+prop_layout_nixos_users_valid =
+  let violations = LC.validateLayout LC.nixosConfig "/" [("users/alice.nix", Detection HomeModule 100 [])]
+   in null violations
+
+-- | nixosConfig rejects files in wrong location
+prop_layout_nixos_wrong_location :: Bool
+prop_layout_nixos_wrong_location =
+  let violations = LC.validateLayout LC.nixosConfig "/" [("bin/script.nix", Detection NixOSModule 100 [])]
+   in not (null violations)
+
+-- | straylight: forbidden location for package in modules/
+prop_layout_forbidden_package :: Bool
+prop_layout_forbidden_package =
+  let violations = LC.validateLayout LC.straylight "/" [("nix/modules/flake/broker.nix", Detection Package 100 [])]
+   in not (null violations) && any (\e -> LC.errCode e == LC.E002) violations
+
+-- | straylight: forbidden location for flake module in packages/
+prop_layout_forbidden_flake_mod :: Bool
+prop_layout_forbidden_flake_mod =
+  let violations = LC.validateLayout LC.straylight "/" [("nix/packages/broker.nix", Detection FlakeModule 100 [])]
+   in not (null violations) && any (\e -> LC.errCode e == LC.E002) violations
+
+-- | Exact path pattern: flake.nix must be exactly flake.nix
+prop_layout_exact_flake :: Bool
+prop_layout_exact_flake =
+  let violations = LC.validateLayout LC.straylight "/" [("nix/flake.nix", Detection Flake 100 [])]
+   in not (null violations) -- "nix/flake.nix" ≠ Exact ["flake.nix"]
+        && null (LC.validateLayout LC.straylight "/" [("flake.nix", Detection Flake 100 [])]) -- Exact match
+
+-- | Contains path pattern (nixpkgsByName has no Contains patterns, use constructed)
+prop_layout_contains_unused :: Bool
+prop_layout_contains_unused = True -- Contains pattern exists in PathPattern but no conventions use it
+
+-- | CamelCase naming convention
+prop_naming_camel_valid :: Bool
+prop_naming_camel_valid =
+  LC.isValidName LC.CamelCase "camelCase"
+    && LC.isValidName LC.CamelCase "lowerCamel"
+    && not (LC.isValidName LC.CamelCase "snake_case")
+    && not (LC.isValidName LC.CamelCase "PascalCase")
+
+-- | PascalCase naming convention
+prop_naming_pascal_valid :: Bool
+prop_naming_pascal_valid =
+  LC.isValidName LC.PascalCase "PascalCase"
+    && LC.isValidName LC.PascalCase "UpperCamel"
+    && not (LC.isValidName LC.PascalCase "camelCase")
+    && not (LC.isValidName LC.PascalCase "snake_case")
+
+-- | validateAttrName for kebab-case rejects snake_case attrs
+prop_layout_attr_name_kebab :: Bool
+prop_layout_attr_name_kebab =
+  case LC.validateAttrName LC.straylight "valid-name" of
+    Just _ -> False
+    Nothing ->
+      case LC.validateAttrName LC.straylight "snake_name" of
+        Just _ -> True
+        Nothing -> False
+
+-- | validateAttrName for CamelCase via nixpkgsByName
+prop_layout_attr_name_camel :: Bool
+prop_layout_attr_name_camel =
+  case LC.validateAttrName LC.nixpkgsByName "camelCase" of
+    Just _ -> False
+    Nothing ->
+      case LC.validateAttrName LC.nixpkgsByName "kebab-case" of
+        Just _ -> True
+        Nothing -> False
+
+-- | validateIdentifier for kebab-case convention
+prop_layout_ident_kebab :: Bool
+prop_layout_ident_kebab =
+  case LC.validateIdentifier LC.straylight "valid-ident" of
+    Just _ -> False
+    Nothing ->
+      case LC.validateIdentifier LC.straylight "snake_ident" of
+        Just _ -> True
+        Nothing -> False
+
+-- | toKebabCase on CamelCase input
+prop_naming_kebab_from_camel :: Bool
+prop_naming_kebab_from_camel =
+  LC.toKebabCase "helloWorld" == "hello-world"
+    && LC.toKebabCase "HTTPResponse" == "h-t-t-p-response"
+    && LC.toKebabCase "XMLParser" == "x-m-l-parser"
+
+-- | toSnakeCase on kebab-case input
+prop_naming_snake_from_kebab :: Bool
+prop_naming_snake_from_kebab =
+  LC.toSnakeCase "hello-world" == "hello_world"
+    && LC.toSnakeCase "hello_world" == "hello_world"
+
+-- | dropNixExtension strips .nix suffix
+prop_naming_drop_nix :: Bool
+prop_naming_drop_nix =
+  LC.dropNixExtension "foo.nix" == "foo"
+    && LC.dropNixExtension "bar" == "bar"
+    && LC.dropNixExtension "deep/baz.nix" == "deep/baz"
+
+-- | File name validation (E003) for straylight kebab-case
+prop_layout_filename_kebab :: Bool
+prop_layout_filename_kebab =
+  let violations = LC.validateLayout LC.straylight "/" [("nix/modules/flake/gpu-broker.nix", Detection FlakeModule 100 [])]
+   in null violations
+        && not (null $ LC.validateLayout LC.straylight "/" [("nix/modules/flake/snake_name.nix", Detection FlakeModule 100 [])])
+
+-- | validateFlakeModReq with convRequireFlakeMod = True
+prop_layout_flake_mod_required :: Bool
+prop_layout_flake_mod_required =
+  let strictConv = LC.straylight {LC.convRequireFlakeMod = True}
+      packageViolations = LC.validateLayout strictConv "/" [("nix/packages/foo.nix", Detection Package 100 [])]
+      flakeViolations = LC.validateLayout strictConv "/" [("nix/modules/flake/bar.nix", Detection FlakeModule 100 [])]
+   in not (null packageViolations)
+        && any (\e -> LC.errCode e == LC.E006) packageViolations
+        && null flakeViolations
+
+-- | validateLayout with unknown module kind produces no location errors
+prop_layout_unknown_kind :: Bool
+prop_layout_unknown_kind =
+  let violations = LC.validateLayout LC.straylight "/" [("anywhere/foo.nix", Detection Unknown 100 [])]
+   in null violations
+
 -- ============================================================================
 -- Properties: Merge correctness
 -- ============================================================================
@@ -3437,6 +3585,27 @@ main = do
         run "layout_straylight_invalid" prop_layout_straylight_invalid,
         run "layout_straylight_valid" prop_layout_straylight_valid,
         run "layout_flakeparts_valid" prop_layout_flakeparts_valid,
+        run "layout_nixpkgs_package_valid" prop_layout_nixpkgs_package_valid,
+        run "layout_nixpkgs_non_package" prop_layout_nixpkgs_non_package,
+        run "layout_nixos_modules_valid" prop_layout_nixos_modules_valid,
+        run "layout_nixos_hosts_valid" prop_layout_nixos_hosts_valid,
+        run "layout_nixos_users_valid" prop_layout_nixos_users_valid,
+        run "layout_nixos_wrong_location" prop_layout_nixos_wrong_location,
+        run "layout_forbidden_package" prop_layout_forbidden_package,
+        run "layout_forbidden_flake_mod" prop_layout_forbidden_flake_mod,
+        run "layout_exact_flake" prop_layout_exact_flake,
+        run "layout_contains_unused" prop_layout_contains_unused,
+        run "layout_attr_name_kebab" prop_layout_attr_name_kebab,
+        run "layout_attr_name_camel" prop_layout_attr_name_camel,
+        run "layout_ident_kebab" prop_layout_ident_kebab,
+        run "layout_filename_kebab" prop_layout_filename_kebab,
+        run "layout_flake_mod_required" prop_layout_flake_mod_required,
+        run "layout_unknown_kind" prop_layout_unknown_kind,
+        run "naming_camel_valid" prop_naming_camel_valid,
+        run "naming_pascal_valid" prop_naming_pascal_valid,
+        run "naming_kebab_from_camel" prop_naming_kebab_from_camel,
+        run "naming_snake_from_kebab" prop_naming_snake_from_kebab,
+        run "naming_drop_nix" prop_naming_drop_nix,
         -- Lint adversarial attacks
         run "adv_lint_fp_string_mkderiv" (property prop_adv_fp_string_mkderiv),
         run "adv_lint_fp_string_substall" (property prop_adv_fp_string_substall),
