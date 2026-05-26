@@ -224,11 +224,8 @@ Errors MUST include:
 - Human-readable message
 - Source location
   - Nix diagnostics: file, line, column (from hnix spans)
-  - Bash diagnostics: file + ShellCheck AST token id (current implementation)
-- Suggested fix (where applicable)
-
-> Note: bash line/column mapping is a known TODO. Until we plumb ShellCheck's
-> position data through the pipeline, we report the token id instead.
+  - Bash diagnostics: file, line, column (from ShellCheck `prTokenPositions` via `Position { posLine, posColumn, posFile }`). Falls back to line 0 col 0 when position data is unavailable.
+  - Suggested fix (where applicable)
 
 ---
 
