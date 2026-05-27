@@ -37,6 +37,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import Language.LSP.Protocol.Types (Diagnostic (..), DiagnosticSeverity (..), Position (..), Range (..))
 import Nix.Parser (parseNixTextLoc)
 import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
@@ -47,6 +48,7 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.LSP.Handlers (lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Format (formatExpr)
@@ -3339,6 +3341,73 @@ prop_severity_ordering =
   Cfg.SevError > Cfg.SevWarning && Cfg.SevWarning > Cfg.SevInfo && Cfg.SevInfo > Cfg.SevOff
 
 -- ============================================================================
+-- Properties: LSP adversarial
+-- ============================================================================
+
+-- | LSP-1: lintFile never crashes on arbitrary Nix text
+prop_lsp_lint_no_crash :: Text -> Bool
+prop_lsp_lint_no_crash txt = lintFile txt `seq` True
+
+-- | LSP-2: lintFile is deterministic
+prop_lsp_lint_deterministic :: Text -> Bool
+prop_lsp_lint_deterministic txt = lintFile txt == lintFile txt
+
+-- | LSP-3: lintFile on empty input returns no diagnostics
+prop_lsp_lint_empty :: Bool
+prop_lsp_lint_empty = null (lintFile "")
+
+-- | LSP-4: lintFile detects `with` as ALEPH-N001
+prop_lsp_lint_with :: Bool
+prop_lsp_lint_with =
+  let diags = lintFile "with lib; {}"
+   in any (\d -> "ALEPH-N001" `T.isInfixOf` _message d) diags
+
+-- | LSP-5: lintFile detects `rec` as ALEPH-N002
+prop_lsp_lint_rec :: Bool
+prop_lsp_lint_rec =
+  let diags = lintFile "rec { x = 1; }"
+   in any (\d -> "ALEPH-N002" `T.isInfixOf` _message d) diags
+
+-- | LSP-6: lintFile produces no diagnostics for clean Nix
+prop_lsp_lint_clean :: Bool
+prop_lsp_lint_clean =
+  null (lintFile "{ x = 1; y = 2; }")
+
+-- | LSP-7: Diagnostics have valid source positions when span data exists
+prop_lsp_diag_positions :: Bool
+prop_lsp_diag_positions =
+  let diags = lintFile "with lib; stdenv.mkDerivation { name = \"foo\"; }"
+   in not (null diags)
+        && all
+          ( \d ->
+              let range = _range d
+                  Range (Position startL startC) (Position endL endC) = range
+               in startL >= 0 && startC >= 0 && endL >= 0 && endC >= 0
+          )
+          diags
+
+-- | LSP-8: All diagnostics are Error severity
+prop_lsp_diag_severity :: Text -> Bool
+prop_lsp_diag_severity txt =
+  all (\d -> _severity d == Just DiagnosticSeverity_Error) (lintFile txt)
+
+-- | LSP-9: spToDiagnostic handles zero/negative positions gracefully
+prop_lsp_spandiag_edge :: Bool
+prop_lsp_spandiag_edge =
+  let zeroDiag = spToDiagnostic "test" (Span (Loc 0 0) (Loc 0 0) Nothing)
+      negDiag = spToDiagnostic "test" (Span (Loc (-1) 0) (Loc 0 0) Nothing)
+      normalDiag = spToDiagnostic "test" (Span (Loc 3 5) (Loc 3 12) Nothing)
+      Range (Position zsl zsc) (Position _ _) = _range zeroDiag
+      Range (Position nsl nsc) (Position _ _) = _range negDiag
+      Range (Position psl psc) (Position _ _) = _range normalDiag
+   in zsl == 0
+        && zsc == 0 -- zero position clamped to (0,0)
+        && nsl == 0
+        && nsc == 0 -- negative position clamped to (0,0)
+        && psl == 2
+        && psc == 4 -- 1-based to 0-based: line 3-1=2, col 5-1=4
+
+-- ============================================================================
 -- Properties: Rule ID consistency (Haskell ↔ Dhall config)
 -- ============================================================================
 
@@ -3782,7 +3851,17 @@ main = do
         run "rule_severity_info" prop_rule_severity_info,
         run "rule_not_suppressed" prop_rule_not_suppressed_on_error,
         run "rule_bash_heredoc_union" prop_rule_bash_heredoc_union,
-        run "rule_massive_overrides" prop_rule_massive_overrides
+        run "rule_massive_overrides" prop_rule_massive_overrides,
+        -- LSP adversarial
+        run "lsp_lint_crash" prop_lsp_lint_no_crash,
+        run "lsp_lint_deterministic" prop_lsp_lint_deterministic,
+        run "lsp_lint_empty" prop_lsp_lint_empty,
+        run "lsp_lint_with" prop_lsp_lint_with,
+        run "lsp_lint_rec" prop_lsp_lint_rec,
+        run "lsp_lint_clean" prop_lsp_lint_clean,
+        run "lsp_diag_positions" prop_lsp_diag_positions,
+        run "lsp_diag_severity" prop_lsp_diag_severity,
+        run "lsp_spandiag_edge" prop_lsp_spandiag_edge
       ]
 
   putStrLn ""
