@@ -107,7 +107,8 @@ handlers =
                         Left _ -> responder $ Right $ InR $ InR Null
                         Right decl ->
                           let loc = toLspLocation uri (Scope.declSpan decl)
-                           in responder $ Right $ InL (Definition (InL loc))
+                           in responder $ Right $ InL (Definition (InL loc)),
+      requestHandler SMethod_TextDocumentRename renameHandler
     ]
 
 findRef :: (Int, Int) -> Scope.ScopeGraph -> Maybe Scope.Reference
@@ -146,6 +147,50 @@ toLspPos sp =
   Position
     (fromIntegral (Scope.posLine sp - 1))
     (fromIntegral (Scope.posCol sp - 1))
+
+renameHandler ::
+  TRequestMessage 'Method_TextDocumentRename ->
+  (Either (TResponseError 'Method_TextDocumentRename) (WorkspaceEdit |? Null) -> LspT () IO ()) ->
+  LspM () ()
+renameHandler req responder = do
+  let TRequestMessage _ _ _ params = req
+  let RenameParams _workDone textDoc pos newName = params
+  let TextDocumentIdentifier uri = textDoc
+  let Position l c = pos
+  mvf <- getVirtualFile (toNormalizedUri uri)
+  case mvf of
+    Nothing -> responder $ Right $ InR Null
+    Just vf -> do
+      let txt = virtualFileText vf
+      case parseNixTextLoc txt of
+        Left _ -> responder $ Right $ InR Null
+        Right expr ->
+          let sg = Scope.fromNixExpr Nothing expr
+              cursorLine = fromIntegral l + 1
+              cursorCol = fromIntegral c + 1
+           in case findRef (cursorLine, cursorCol) sg of
+                Nothing -> responder $ Right $ InR Null
+                Just ref -> case Scope.resolve sg ref of
+                  Left _ -> responder $ Right $ InR Null
+                  Right decl ->
+                    let allRefs = Scope.findReferences sg decl
+                        declEdit =
+                          TextEdit
+                            (Range (toLspPos (Scope.spanStart (Scope.declSpan decl))) (toLspPos (Scope.spanEnd (Scope.declSpan decl))))
+                            newName
+                        refEdits =
+                          [ TextEdit
+                              (Range (toLspPos (Scope.spanStart (Scope.refSpan r))) (toLspPos (Scope.spanEnd (Scope.refSpan r))))
+                              newName
+                          | r <- allRefs
+                          ]
+                        wsEdit =
+                          WorkspaceEdit
+                            { _changes = Just (Map.singleton uri (declEdit : refEdits)),
+                              _documentChanges = Nothing,
+                              _changeAnnotations = Nothing
+                            }
+                     in responder $ Right $ InL wsEdit
 
 noFile :: MarkupContent
 noFile = MarkupContent MarkupKind_Markdown "`no file`"

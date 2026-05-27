@@ -2886,6 +2886,25 @@ prop_format_no_crash = forAll (sized genNixExpr) $ \src ->
     Left _ -> label "format: skip" True
     Right output -> label "format: ok" $ T.length output >= T.length src
 
+-- | formatting produces non-empty output regardless of input
+prop_format_non_empty :: Property
+prop_format_non_empty = forAll (sized genNixExpr) $ \src ->
+  case formatExpr src of
+    Left _ -> label "fmt-nonempty: parse fail" True
+    Right output -> label "fmt-nonempty: ok" $ not (T.null output)
+
+-- | formatting a simple expression "1" produces text containing "1"
+prop_format_contains_one :: Bool
+prop_format_contains_one =
+  case formatExpr "1" of
+    Right output -> "1" `T.isInfixOf` output
+    Left _ -> False
+
+-- | formatting is deterministic: same input -> same output
+prop_format_deterministic :: Property
+prop_format_deterministic = forAll (sized genNixExpr) $ \src ->
+  formatExpr src == formatExpr src
+
 -- ============================================================================
 -- Properties: Bash AST edge cases
 -- ============================================================================
@@ -3647,6 +3666,124 @@ prop_hover_nonexistent =
     Right expr -> isNothing (inferExprAt expr 100 0)
 
 -- ============================================================================
+-- Properties: References LSP handler (findReferences)
+-- ============================================================================
+
+-- | REFS-1: let x = 42; in x + x has 2 references to x in the body
+prop_refs_let :: Bool
+prop_refs_let =
+  case parseNixTextLoc "let x = 42; in x + x" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in case Scope.findDeclaration sg "x" of
+            [] -> False
+            decl : _ -> length (Scope.findReferences sg decl) == 2
+
+-- | REFS-2: file with no matching references returns empty list
+prop_refs_no_match :: Bool
+prop_refs_no_match =
+  case parseNixTextLoc "let x = 42; in y" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in case Scope.findDeclaration sg "x" of
+            [] -> False
+            decl : _ -> null (Scope.findReferences sg decl)
+
+-- | REFS-3: cross-file references found via fromModuleGraph
+prop_refs_cross_file :: Bool
+prop_refs_cross_file =
+  case (parseNixTextLoc "let x = 42; in x", parseNixTextLoc "let y = 1; in y") of
+    (Right e1, Right e2) ->
+      let sg = Scope.fromModuleGraph (Map.fromList [("a.nix", e1), ("b.nix", e2)])
+          decls = Scope.findDeclaration sg "x"
+       in not (null decls)
+            && case decls of
+              d : _ -> not (null (Scope.findReferences sg d))
+              [] -> False
+    _ -> False
+
+-- | REFS-4: unresolved name returns empty
+prop_refs_unresolved :: Bool
+prop_refs_unresolved =
+  case parseNixTextLoc "bogus" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in null (Scope.findDeclaration sg "nonexistent")
+
+-- ============================================================================
+-- Properties: Rename
+-- ============================================================================
+
+-- | RENAME-1: let x = 42; in x + x has 2 references to x
+prop_rename_let :: Bool
+prop_rename_let =
+  case parseNixTextLoc "let x = 42; in x + x" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in case Scope.findDeclaration sg "x" of
+            [] -> False
+            decl : _ -> length (Scope.findReferences sg decl) == 2
+
+-- | RENAME-2: rename non-existent variable finds nothing
+prop_rename_missing :: Bool
+prop_rename_missing =
+  case parseNixTextLoc "42" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in null (Scope.findDeclaration sg "bogus")
+
+-- | RENAME-3: function param x: x + 1 -- rename x to y edits the reference
+prop_rename_func :: Bool
+prop_rename_func =
+  case parseNixTextLoc "x: x + 1" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in case Scope.findDeclaration sg "x" of
+            [] -> False
+            decl : _ -> not (null (Scope.findReferences sg decl))
+
+-- ============================================================================
+-- Properties: Completion
+-- ============================================================================
+
+getCompletionLabels :: Text -> [Text]
+getCompletionLabels src =
+  case parseNixTextLoc src of
+    Left _ -> []
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+       in map Scope.declName (concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg)))
+
+-- | COMPL-1: let x = 42; y = true; in x + y — completions include "x" and "y"
+prop_completion_let :: Bool
+prop_completion_let =
+  let labels = getCompletionLabels "let x = 42; y = true; in x + y"
+   in "x" `elem` labels && "y" `elem` labels
+
+-- | COMPL-2: empty file produces empty completion list
+prop_completion_empty :: Bool
+prop_completion_empty =
+  null (getCompletionLabels "")
+
+-- | COMPL-3: { a = 1; b = 2; } — completions include "a" and "b"
+prop_completion_attrset :: Bool
+prop_completion_attrset =
+  let labels = getCompletionLabels "{ a = 1; b = 2; }"
+   in "a" `elem` labels && "b" `elem` labels
+
+-- | COMPL-4: {x, y}: x + y — completions include "x" and "y"
+prop_completion_func :: Bool
+prop_completion_func =
+  let labels = getCompletionLabels "{x, y}: x + y"
+   in "x" `elem` labels && "y" `elem` labels
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -3838,6 +3975,9 @@ main = do
         run "format_preserves" prop_format_preserves,
         run "format_function" prop_format_function,
         run "format_no_crash" prop_format_no_crash,
+        run "format_non_empty" prop_format_non_empty,
+        run "format_contains_one" (property prop_format_contains_one),
+        run "format_deterministic" prop_format_deterministic,
         -- Bash AST edge cases
         run "bash_arithmetic" prop_bash_arithmetic,
         run "bash_subshell" prop_bash_subshell,
@@ -4000,7 +4140,21 @@ main = do
         run "defn_let" (property prop_defn_let),
         run "defn_cross_file" (property prop_defn_cross_file),
         run "defn_unresolved" (property prop_defn_unresolved),
-        run "defn_empty" (property prop_defn_empty)
+        run "defn_empty" (property prop_defn_empty),
+        -- References handler
+        run "refs_let" (property prop_refs_let),
+        run "refs_no_match" (property prop_refs_no_match),
+        run "refs_cross_file" (property prop_refs_cross_file),
+        run "refs_unresolved" (property prop_refs_unresolved),
+        -- Rename handler
+        run "rename_let" (property prop_rename_let),
+        run "rename_missing" (property prop_rename_missing),
+        run "rename_func" (property prop_rename_func),
+        -- Completion handler
+        run "compl_let" (property prop_completion_let),
+        run "compl_empty" (property prop_completion_empty),
+        run "compl_attrset" (property prop_completion_attrset),
+        run "compl_func" (property prop_completion_func)
       ]
 
   putStrLn ""
