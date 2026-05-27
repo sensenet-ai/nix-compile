@@ -5,6 +5,12 @@
 
 module NixCompile.LSP.Handlers
   ( handlers,
+    lintFile,
+    toNixDiag,
+    nixCode,
+    spToDiagnostic,
+    NixViolation (..),
+    ViolationType (..),
   )
 where
 
