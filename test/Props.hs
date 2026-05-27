@@ -31,7 +31,7 @@ import Data.Either (isLeft, isRight)
 import Data.List (nub)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -48,7 +48,7 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
-import NixCompile.LSP.Handlers (lintFile, spToDiagnostic)
+import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Format (formatExpr)
@@ -1980,6 +1980,80 @@ prop_scope_merge_files =
     _ -> False
 
 -- ============================================================================
+-- Properties: Go-to-definition via scope graph resolution
+-- ============================================================================
+
+-- | Definition: let x = 42; in x resolves reference to declaration
+prop_defn_let :: Bool
+prop_defn_let =
+  case parseNixTextLoc "let x = 42; in x" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          refs =
+            [ r
+            | s <- Map.elems (Scope.sgScopes sg),
+              r <- Scope.scopeReferences s,
+              Scope.refKind r == Scope.VarRef,
+              Scope.refName r == "x"
+            ]
+       in case refs of
+            [] -> False
+            ref : _ -> case Scope.resolve sg ref of
+              Right decl -> Scope.declName decl == "x"
+              Left _ -> False
+
+-- | Definition: cross-file resolution via fromModuleGraph
+prop_defn_cross_file :: Bool
+prop_defn_cross_file =
+  case (parseNixTextLoc "let imported = 1; in imported", parseNixTextLoc "imported") of
+    (Right e1, Right e2) ->
+      let sg = Scope.fromModuleGraph (Map.fromList [("lib.nix", e1), ("main.nix", e2)])
+          decls = Scope.findDeclaration sg "imported"
+          refs =
+            [ r
+            | s <- Map.elems (Scope.sgScopes sg),
+              r <- Scope.scopeReferences s,
+              Scope.refName r == "imported"
+            ]
+       in not (null decls)
+            && not (null refs)
+            && any
+              ( \r -> case Scope.resolve sg r of
+                  Right d -> Scope.declName d == "imported"
+                  Left _ -> False
+              )
+              refs
+    _ -> False
+
+-- | Definition: unresolvable reference produces Left
+prop_defn_unresolved :: Bool
+prop_defn_unresolved =
+  case parseNixTextLoc "bogus" of
+    Left _ -> False
+    Right expr ->
+      let sg = Scope.fromNixExpr Nothing expr
+          refs =
+            [ r
+            | s <- Map.elems (Scope.sgScopes sg),
+              r <- Scope.scopeReferences s
+            ]
+       in case refs of
+            [] -> True
+            ref : _ -> case Scope.resolve sg ref of
+              Left (Scope.Unresolved _) -> True
+              _ -> False
+
+-- | Definition: empty scope graph has no references
+prop_defn_empty :: Bool
+prop_defn_empty =
+  null
+    [ r
+    | s <- Map.elems (Scope.sgScopes Scope.empty),
+      r <- Scope.scopeReferences s
+    ]
+
+-- ============================================================================
 -- Properties: Nix lint
 -- ============================================================================
 
@@ -3520,6 +3594,59 @@ prop_rule_massive_overrides =
         && effectiveSeverity cfg (Cfg.bashRuleId VEval <> "1") == Just Cfg.SevInfo
 
 -- ============================================================================
+-- Properties: Hover type inference
+-- ============================================================================
+
+-- | HOVER-1: Integer literal at cursor -> TInt
+prop_hover_int :: Bool
+prop_hover_int =
+  case parseNixTextLoc "42" of
+    Left _ -> False
+    Right expr -> inferExprAt expr 0 0 == Just "Int"
+
+-- | HOVER-2: String literal -> TString or TStrLit
+prop_hover_string :: Bool
+prop_hover_string =
+  case parseNixTextLoc "\"hello\"" of
+    Left _ -> False
+    Right expr -> case inferExprAt expr 0 0 of
+      Just "String" -> True
+      Just x | "\"" `T.isPrefixOf` x -> True
+      _ -> False
+
+-- | HOVER-3: Function x: x -> TFun
+prop_hover_func :: Bool
+prop_hover_func =
+  case parseNixTextLoc "x: x" of
+    Left _ -> False
+    Right expr -> case inferExprAt expr 0 0 of
+      Just t -> "->" `T.isInfixOf` t
+      _ -> False
+
+-- | HOVER-4: Attrset { x = 1; } -> TAttrs
+prop_hover_attrset :: Bool
+prop_hover_attrset =
+  case parseNixTextLoc "{ x = 1; }" of
+    Left _ -> False
+    Right expr -> case inferExprAt expr 0 0 of
+      Just t -> "{ " `T.isPrefixOf` t || "{" `T.isPrefixOf` t
+      _ -> False
+
+-- | HOVER-5: let x = 42; in x -> TInt
+prop_hover_let :: Bool
+prop_hover_let =
+  case parseNixTextLoc "let x = 42; in x" of
+    Left _ -> False
+    Right expr -> inferExprAt expr 0 0 == Just "Int"
+
+-- | HOVER-6: Position that doesn't exist -> Nothing
+prop_hover_nonexistent :: Bool
+prop_hover_nonexistent =
+  case parseNixTextLoc "42" of
+    Left _ -> False
+    Right expr -> isNothing (inferExprAt expr 100 0)
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -3861,7 +3988,19 @@ main = do
         run "lsp_lint_clean" prop_lsp_lint_clean,
         run "lsp_diag_positions" prop_lsp_diag_positions,
         run "lsp_diag_severity" prop_lsp_diag_severity,
-        run "lsp_spandiag_edge" prop_lsp_spandiag_edge
+        run "lsp_spandiag_edge" prop_lsp_spandiag_edge,
+        -- Hover type inference
+        run "hover_int" prop_hover_int,
+        run "hover_string" prop_hover_string,
+        run "hover_func" prop_hover_func,
+        run "hover_attrset" prop_hover_attrset,
+        run "hover_let" prop_hover_let,
+        run "hover_nonexistent" prop_hover_nonexistent,
+        -- Definition handler
+        run "defn_let" (property prop_defn_let),
+        run "defn_cross_file" (property prop_defn_cross_file),
+        run "defn_unresolved" (property prop_defn_unresolved),
+        run "defn_empty" (property prop_defn_empty)
       ]
 
   putStrLn ""
