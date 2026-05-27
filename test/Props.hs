@@ -1734,6 +1734,79 @@ prop_fact_config_lit =
     isConfigLit (ConfigLit ["debug"] (LitBool False) _) = True
     isConfigLit _ = False
 
+-- | BUG-3: Double-quoted config value preserves Quoted
+prop_fact_config_quoted :: Bool
+prop_fact_config_quoted =
+  case parseBash "config.server.host=\"localhost\"" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isQuotedConfigLit facts
+    Left _ -> False
+  where
+    isQuotedConfigLit (ConfigLit ["server", "host"] (LitString "localhost") _) = True
+    isQuotedConfigLit _ = False
+
+-- | BUG-3: Unquoted string config value produces Unquoted
+prop_fact_config_unquoted :: Bool
+prop_fact_config_unquoted =
+  case parseBash "config.server.host=localhost" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isUnquotedConfigLit facts
+    Left _ -> False
+  where
+    isUnquotedConfigLit (ConfigLit ["server", "host"] (LitString "localhost") _) = True
+    isUnquotedConfigLit _ = False
+
+-- | BUG-3: Double-quoted variable config value preserves Quoted
+prop_fact_config_var_quoting_ast :: Bool
+prop_fact_config_var_quoting_ast =
+  case parseBash "config.host=\"$HOST\"" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any (\case ConfigAssign _ _ Quoted _ -> True; _ -> False) facts
+    Left _ -> False
+
+-- | BUG-3: Config value $VAR without quotes produces Unquoted
+prop_fact_config_var_unquoted :: Bool
+prop_fact_config_var_unquoted =
+  case parseBash "config.host=$HOST" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any (\case ConfigAssign _ _ Unquoted _ -> True; _ -> False) facts
+    Left _ -> False
+
+-- | BUG-3: Config value with space-delimited = tokenization
+prop_fact_config_spaced_eq :: Bool
+prop_fact_config_spaced_eq =
+  case parseBash "config.a.b=\"value\"" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isConfigLit facts
+    Left _ -> False
+  where
+    isConfigLit (ConfigLit ["a", "b"] (LitString "value") _) = True
+    isConfigLit _ = False
+
+-- | BUG-3: Single-quoted config value split across = tokenization
+prop_fact_config_split_eq_quoted :: Bool
+prop_fact_config_split_eq_quoted =
+  case parseBash "config.flag='enabled'" of
+    Right ast ->
+      let facts = extractFacts ast
+       in any isConfigLitWithType facts
+    Left _ -> False
+  where
+    isConfigLitWithType (ConfigLit ["flag"] (LitString "enabled") _) = True
+    isConfigLitWithType _ = False
+
+-- | BUG-3: Empty config value produces no facts (no crash)
+prop_fact_config_empty_value :: Bool
+prop_fact_config_empty_value =
+  case parseBash "config.test=" of
+    Right ast -> null (extractFacts ast)
+    Left _ -> True
+
 -- ============================================================================
 -- Properties: Emit-config output
 -- ============================================================================
@@ -3487,6 +3560,13 @@ main = do
         run "fact_assign_from" prop_fact_assign_from,
         run "fact_config_assign" prop_fact_config_assign,
         run "fact_config_lit" prop_fact_config_lit,
+        run "fact_config_quoted" prop_fact_config_quoted,
+        run "fact_config_unquoted" prop_fact_config_unquoted,
+        run "fact_config_var_quoted" prop_fact_config_var_quoting_ast,
+        run "fact_config_var_unquoted" prop_fact_config_var_unquoted,
+        run "fact_config_split_eq_quoted" prop_fact_config_split_eq_quoted,
+        run "fact_config_empty_value" prop_fact_config_empty_value,
+        run "fact_config_spaced_eq" prop_fact_config_spaced_eq,
         -- Emit-config output
         run "emit_json_guarded" prop_emit_json_guarded,
         run "emit_json_runtime_args" prop_emit_json_runtime_args,
