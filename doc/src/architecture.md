@@ -1,6 +1,6 @@
 # Architecture
 
-nix-compile has two independent analysis pipelines that share infrastructure but operate on different languages with different type systems.
+nix-compile has two analysis pipelines that operate on different languages with different type systems, unified at the point of use.
 
 ## Pipeline A: Bash Analysis
 
@@ -69,7 +69,7 @@ inferExpr                       -- lib/NixCompile/Nix/Infer.hs
 
 - **`Nix.Module.buildModuleGraph`** -- follows `import` statements from a flake root, builds a dependency graph with topological ordering, runs type inference and lint on each file.
 
-- **`Nix.Scope`** -- builds Visser-style scope graphs from Nix ASTs for IDE tooling. Single-file analysis is functional; cross-file is in progress.
+- **`Nix.Scope`** -- builds Visser-style scope graphs from Nix ASTs for IDE tooling. Single-file and cross-file analysis both functional; `fromModuleGraph` merges graphs with ID remapping for multi-file projects.
 
 - **`Nix.Effect`** -- models Nix overlays as a Coeffect calculus (requirements vs productions). The algebra is complete and tested; integration with actual overlay analysis is in progress.
 
