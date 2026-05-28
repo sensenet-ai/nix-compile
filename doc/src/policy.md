@@ -88,9 +88,9 @@ Forbidden: rec { }
 
 These apply to projects using the flake-parts module convention.
 
-| Code | Condition | Message |
-|------|-----------|---------|
-| ALEPH-L001 | `_index.nix` file found | Module graph is derived from directory structure |
-| ALEPH-L002 | `_main.nix` file found | Use explicit imports in flake.nix |
-| ALEPH-L003 | Module missing `_class` attribute | Expected `_class = "<kind>"` |
-| ALEPH-L004 | Wrong `_class` for directory | Got `"<actual>"`, expected `"<expected>"` |
+| Code       | Condition                         | Message                                          |
+| ---------- | --------------------------------- | ------------------------------------------------ |
+| ALEPH-L001 | `_index.nix` file found           | Module graph is derived from directory structure |
+| ALEPH-L002 | `_main.nix` file found            | Use explicit imports in flake.nix                |
+| ALEPH-L003 | Module missing `_class` attribute | Expected `_class = "<kind>"`                     |
+| ALEPH-L004 | Wrong `_class` for directory      | Got `"<actual>"`, expected `"<expected>"`        |

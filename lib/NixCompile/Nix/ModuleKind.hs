@@ -3,7 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                              // module kind
+--                                                               // module kind
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "He'd found her, one rainy night, in an arcade."
@@ -98,7 +98,7 @@ data Detection = Detection
     deriving (Eq, Show)
 
 -- ══════════════════════════════════════════════════════════════════════════════
---                                                                 // detection
+--                                                                   // detection
 -- ══════════════════════════════════════════════════════════════════════════════
 
 -- | Detect module kind from file path and content.
@@ -188,7 +188,7 @@ detectFromFileName name = case name of
         | otherwise -> []
 
 -- ══════════════════════════════════════════════════════════════════════════════
---                                                      // structure detection
+--                                                         // structure detection
 -- ══════════════════════════════════════════════════════════════════════════════
 
 detectFromStructure :: NExprLoc -> [(ModuleKind, Int, Text)]
@@ -292,7 +292,7 @@ detectFromAttrNames names
     hasLibExports = any (`elem` names) ["mkOption", "mkIf", "mapAttrs", "filterAttrs"]
 
 -- ══════════════════════════════════════════════════════════════════════════════
---                                                                   // helpers
+--                                                                     // helpers
 -- ══════════════════════════════════════════════════════════════════════════════
 
 unwrap :: NExprLoc -> NExprF NExprLoc
@@ -318,7 +318,7 @@ maximumBy' f (x : xs) = go x (f x) xs
 maximumBy' _ [] = error "maximumBy': empty list"
 
 -- ══════════════════════════════════════════════════════════════════════════════
---                                                                   // queries
+--                                                                     // queries
 -- ══════════════════════════════════════════════════════════════════════════════
 
 isNixOSModule :: Detection -> Bool
