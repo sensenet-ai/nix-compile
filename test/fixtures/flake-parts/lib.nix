@@ -1,7 +1,8 @@
-{ lib
+{
+  lib,
   # Optionally a string with extra version info to be included in the error message
   # in case is lib is out of date. Empty or starts with space.
-, revInfo ? ""
+  revInfo ? "",
 }:
 let
   inherit (lib)
@@ -20,17 +21,20 @@ let
     optionalAttrs
     ;
   inherit (lib.modules)
-    mkAliasAndWrapDefsWithPriority;
+    mkAliasAndWrapDefsWithPriority
+    ;
   inherit (lib.types)
     path
     submoduleWith
     ;
 
   # Polyfill isFlake until Nix with https://github.com/NixOS/nix/pull/7207 is common
-  isFlake = maybeFlake:
-    if maybeFlake ? _type
-    then maybeFlake._type == "flake"
-    else maybeFlake ? inputs && maybeFlake ? outputs && maybeFlake ? sourceInfo;
+  isFlake =
+    maybeFlake:
+    if maybeFlake ? _type then
+      maybeFlake._type == "flake"
+    else
+      maybeFlake ? inputs && maybeFlake ? outputs && maybeFlake ? sourceInfo;
 
   /**
     Deprecated for any use except type-merging into `perSystem`.
@@ -48,17 +52,31 @@ let
     Documented as deprecated in flake-parts in January 2026.
   */
   deferredModuleWith =
-    attrs@{ staticModules ? [ ] }: mkOptionType {
+    attrs@{
+      staticModules ? [ ],
+    }:
+    mkOptionType {
       name = "deferredModule";
       description = "module";
       check = x: isAttrs x || isFunction x || path.check x;
-      merge = loc: defs: staticModules ++ map (def: lib.setDefaultModuleLocation "${def.file}, via option ${showOption loc}" def.value) defs;
+      merge =
+        loc: defs:
+        staticModules
+        ++ map (
+          def: lib.setDefaultModuleLocation "${def.file}, via option ${showOption loc}" def.value
+        ) defs;
       inherit (submoduleWith { modules = staticModules; })
         getSubOptions
-        getSubModules;
-      substSubModules = m: deferredModuleWith (attrs // {
-        staticModules = m;
-      });
+        getSubModules
+        ;
+      substSubModules =
+        m:
+        deferredModuleWith (
+          attrs
+          // {
+            staticModules = m;
+          }
+        );
       functor = defaultFunctor "deferredModuleWith" // {
         type = deferredModuleWith;
         payload = {
@@ -90,18 +108,19 @@ let
 
   flake-parts-lib = rec {
     evalFlakeModule =
-      args@
-      { inputs ? self.inputs
-      , specialArgs ? { }
+      args@{
+        inputs ? self.inputs,
+        specialArgs ? { },
 
         # legacy
-      , self ? inputs.self or (throw ''
-          When invoking flake-parts, you must pass all the flake output arguments,
-          and not just `self.inputs`.
+        self ?
+          inputs.self or (throw ''
+            When invoking flake-parts, you must pass all the flake output arguments,
+            and not just `self.inputs`.
 
-          ${errorExample}
-        '')
-      , moduleLocation ? "${self.outPath}/flake.nix"
+            ${errorExample}
+          ''),
+        moduleLocation ? "${self.outPath}/flake.nix",
       }:
       let
         inputsPos = builtins.unsafeGetAttrPos "inputs" args;
@@ -109,39 +128,48 @@ let
           # Best case: user makes it explicit
           args.moduleLocation or (
             # Slightly worse: Nix does not technically commit to unsafeGetAttrPos semantics
-            if inputsPos != null
-            then inputsPos.file
+            if inputsPos != null then
+              inputsPos.file
             # Slightly worse: self may not be valid when an error occurs
-            else if args?inputs.self.outPath
-            then args.inputs.self.outPath + "/flake.nix"
+            else if args ? inputs.self.outPath then
+              args.inputs.self.outPath + "/flake.nix"
             # Fallback
-            else "<mkFlake argument>"
+            else
+              "<mkFlake argument>"
           );
       in
-      throwIf
-        (!args?self && !args?inputs) ''
-        When invoking flake-parts, you must pass in the flake output arguments.
+      throwIf (!args ? self && !args ? inputs)
+        ''
+          When invoking flake-parts, you must pass in the flake output arguments.
 
-        ${errorExample}
-      ''
+          ${errorExample}
+        ''
         warnIf
-        (!args?inputs) ''
-        When invoking flake-parts, it is recommended to pass all the flake output
-        arguments in the `inputs` parameter. If you only pass `self`, it's not
-        possible to use the `inputs` module argument in the module `imports`.
+        (!args ? inputs)
+        ''
+          When invoking flake-parts, it is recommended to pass all the flake output
+          arguments in the `inputs` parameter. If you only pass `self`, it's not
+          possible to use the `inputs` module argument in the module `imports`.
 
-        Please pass the output function arguments. ${errorExample}
-      ''
+          Please pass the output function arguments. ${errorExample}
+        ''
 
-        (module:
-        lib.evalModules {
-          specialArgs = {
-            inherit self flake-parts-lib moduleLocation;
-            inputs = args.inputs or /* legacy, warned above */ self.inputs;
-          } // specialArgs;
-          modules = [ ./all-modules.nix (lib.setDefaultModuleLocation errorLocation module) ];
-          class = "flake";
-        }
+        (
+          module:
+          lib.evalModules {
+            specialArgs = {
+              inherit self flake-parts-lib moduleLocation;
+              inputs =
+                args.inputs or # legacy, warned above
+                self.inputs;
+            }
+            // specialArgs;
+            modules = [
+              ./all-modules.nix
+              (lib.setDefaultModuleLocation errorLocation module)
+            ];
+            class = "flake";
+          }
         );
 
     # Function to extract the default flakeModule from
@@ -150,12 +178,12 @@ let
     #
     # Useful to map over an 'imports' list to make it less
     # verbose in the common case.
-    defaultModule = maybeFlake:
-      if isFlake maybeFlake
-      then maybeFlake.flakeModules.default or maybeFlake
-      else maybeFlake;
+    defaultModule =
+      maybeFlake:
+      if isFlake maybeFlake then maybeFlake.flakeModules.default or maybeFlake else maybeFlake;
 
-    mkFlake = args: module:
+    mkFlake =
+      args: module:
       let
         eval = flake-parts-lib.evalFlakeModule args module;
       in
@@ -185,7 +213,7 @@ let
       options:
       mkOption {
         type = types.submoduleWith {
-          modules = [{ inherit options; }];
+          modules = [ { inherit options; } ];
         };
       };
 
@@ -219,57 +247,77 @@ let
 
     # Polyfill https://github.com/NixOS/nixpkgs/pull/344216
     # Nixpkgs master 2024-12-09, Nixpkgs 25.05
-    attrsWith = types.attrsWith or ({ elemType, lazy ? false, placeholder ? "name" }:
-      if lazy then types.attrsOf elemType else types.lazyAttrsOf elemType);
+    attrsWith =
+      types.attrsWith or (
+        {
+          elemType,
+          lazy ? false,
+          placeholder ? "name",
+        }:
+        if lazy then types.attrsOf elemType else types.lazyAttrsOf elemType
+      );
 
     # Helper function for defining a per-system option that
     # gets transposed by the usual flake system logic to a
     # top-level flake attribute.
-    mkTransposedPerSystemModule = { name, option, file }: {
-      _file = file;
+    mkTransposedPerSystemModule =
+      {
+        name,
+        option,
+        file,
+      }:
+      {
+        _file = file;
 
-      options = {
-        flake.${name} = mkOption {
-          type = attrsWith {
-            elemType = option.type;
-            lazy = true;
-            placeholder = "system";
+        options = {
+          flake.${name} = mkOption {
+            type = attrsWith {
+              elemType = option.type;
+              lazy = true;
+              placeholder = "system";
+            };
+            default = { };
+            description = ''
+              See {option}`perSystem.${name}` for description and examples.
+            '';
           };
-          default = { };
-          description = ''
-            See {option}`perSystem.${name}` for description and examples.
-          '';
+
+          perSystem = flake-parts-lib.mkPerSystemOption {
+            _file = file;
+
+            options.${name} = option;
+          };
         };
 
-        perSystem = flake-parts-lib.mkPerSystemOption {
-          _file = file;
-
-          options.${name} = option;
+        config = {
+          transposition.${name} = { };
         };
       };
-
-      config = {
-        transposition.${name} = { };
-      };
-    };
 
     # Needed pending https://github.com/NixOS/nixpkgs/pull/198450
-    mkAliasOptionModule = from: to: { config, options, ... }:
+    mkAliasOptionModule =
+      from: to:
+      { config, options, ... }:
       let
         fromOpt = getAttrFromPath from options;
-        toOf = attrByPath to
-          (abort "Renaming error: option `${showOption to}' does not exist.");
-        toType = let opt = attrByPath to { } options; in opt.type or (types.submodule { });
+        toOf = attrByPath to (abort "Renaming error: option `${showOption to}' does not exist.");
+        toType =
+          let
+            opt = attrByPath to { } options;
+          in
+          opt.type or (types.submodule { });
       in
       {
-        options = setAttrByPath from (mkOption
-          {
+        options = setAttrByPath from (
+          mkOption {
             visible = true;
             description = "Alias of {option}`${showOption to}`.";
             apply = x: (toOf config);
-          } // optionalAttrs (toType != null) {
-          type = toType;
-        });
+          }
+          // optionalAttrs (toType != null) {
+            type = toType;
+          }
+        );
         config = mkAliasAndWrapDefsWithPriority (setAttrByPath to) fromOpt;
       };
 
@@ -278,26 +326,31 @@ let
     # I expect these functions to remain identical. This one will stick around
     # for a while to support older nixpkgs-lib.
     importApply =
-      modulePath: staticArgs:
-      lib.setDefaultModuleLocation modulePath (import modulePath staticArgs);
+      modulePath: staticArgs: lib.setDefaultModuleLocation modulePath (import modulePath staticArgs);
 
-    inherit (import ./lib/memoize/memoize.nix {
-      inherit lib;
-    }) memoizeStr;
+    inherit
+      (import ./lib/memoize/memoize.nix {
+        inherit lib;
+      })
+      memoizeStr
+      ;
 
     /**
       `importAndPublish name module` returns a module that both imports the `module`, and exposes it as flake attribute `modules.flake.${name}`.
 
       This also imports the optional [`modules`](https://flake.parts/options/flake-parts-modules.html) module to support that.
     */
-    importAndPublish = name: module: { lib, ... }: {
-      _class = "flake";
-      imports = [
-        module
-        ./extras/modules.nix
-      ];
-      flake.modules.flake.${name} = module;
-    };
+    importAndPublish =
+      name: module:
+      { lib, ... }:
+      {
+        _class = "flake";
+        imports = [
+          module
+          ./extras/modules.nix
+        ];
+        flake.modules.flake.${name} = module;
+      };
   };
 
   # A best effort, lenient estimate. Please use a recent nixpkgs lib if you
@@ -306,8 +359,7 @@ let
 
 in
 
-if builtins.compareVersions lib.version minVersion < 0
-then
+if builtins.compareVersions lib.version minVersion < 0 then
   abort ''
     The nixpkgs-lib dependency of flake-parts was overridden but is too old.
     The minimum supported version of nixpkgs-lib is ${minVersion},

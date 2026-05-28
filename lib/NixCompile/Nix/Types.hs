@@ -4,30 +4,31 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- |
--- Module      : NixCompile.Nix.Types
--- Description : Type system for Nix expressions
---
--- A Hindley-Milner style type system for a subset of Nix.
--- We infer types from:
---   - Default values in function parameters
---   - Builtin function signatures
---   - Operators
---   - Literal values
---
--- The goal is to make Nix feel like a typed language, with
--- type signatures generated as comments.
-module NixCompile.Nix.Types
-  ( -- * Types
+{- |
+Module      : NixCompile.Nix.Types
+Description : Type system for Nix expressions
+
+A Hindley-Milner style type system for a subset of Nix.
+We infer types from:
+  - Default values in function parameters
+  - Builtin function signatures
+  - Operators
+  - Literal values
+
+The goal is to make Nix feel like a typed language, with
+type signatures generated as comments.
+-}
+module NixCompile.Nix.Types (
+    -- * Types
     NixType (..),
     TypeVar (..),
-    
+
     -- * Type schemes (polymorphic types)
     Scheme (..),
-    
+
     -- * Constraints
     Constraint (..),
-    
+
     -- * Substitution
     Subst,
     emptySubst,
@@ -35,7 +36,7 @@ module NixCompile.Nix.Types
     composeSubst,
     applySubst,
     applySubstScheme,
-    
+
     -- * Free variables
     freeTypeVars,
     freeTypeVarsScheme,
@@ -43,16 +44,16 @@ module NixCompile.Nix.Types
     -- * Pretty printing
     prettyType,
     prettyScheme,
-  )
+)
 where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import GHC.Generics (Generic)
 
 -- ============================================================================
@@ -60,38 +61,41 @@ import GHC.Generics (Generic)
 -- ============================================================================
 
 -- | Type variables for unification
-newtype TypeVar = TypeVar { unTypeVar :: Int }
-  deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (FromJSON, ToJSON)
+newtype TypeVar = TypeVar {unTypeVar :: Int}
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving newtype (FromJSON, ToJSON)
 
 -- | Nix types
 data NixType
-  = TVar !TypeVar              -- Type variable (for inference)
-  | TInt                       -- Integers
-  | TFloat                     -- Floats  
-  | TBool                      -- Booleans
-  | TString                    -- Strings
-  | TStrLit !Text              -- String literal (singleton type)
-  | TPath                      -- Paths (including store paths)
-  | TNull                      -- null
-  | TList !NixType             -- Lists (homogeneous)
-  | TAttrs !(Map Text (NixType, Bool)) -- Attribute sets (type, isOptional)
-  | TAttrsOpen !(Map Text (NixType, Bool)) -- Open attrset
-  | TFun !NixType !NixType     -- Functions
-  | TDerivation                -- Derivations (special)
-  | TUnion ![NixType]          -- Union types (for builtins that accept multiple)
-  | TAny                       -- Top type (unknown, accepts anything)
-  deriving stock (Eq, Ord, Show, Generic)
+    = TVar !TypeVar -- Type variable (for inference)
+    | TInt -- Integers
+    | TFloat -- Floats
+    | TBool -- Booleans
+    | TString -- Strings
+    | TStrLit !Text -- String literal (singleton type)
+    | TPath -- Paths (including store paths)
+    | TNull -- null
+    | TList !NixType -- Lists (homogeneous)
+    | TAttrs !(Map Text (NixType, Bool)) -- Attribute sets (type, isOptional)
+    | TAttrsOpen !(Map Text (NixType, Bool)) -- Open attrset
+    | TFun !NixType !NixType -- Functions
+    | TDerivation -- Derivations (special)
+    | TUnion ![NixType] -- Union types (for builtins that accept multiple)
+    | TAny -- Top type (unknown, accepts anything)
+    deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON NixType
+
 instance ToJSON NixType
 
--- | Type scheme (polymorphic type with quantified variables)
--- e.g., forall a. a -> a
+{- | Type scheme (polymorphic type with quantified variables)
+e.g., forall a. a -> a
+-}
 data Scheme = Forall ![TypeVar] !NixType
-  deriving stock (Eq, Show, Generic)
+    deriving stock (Eq, Show, Generic)
 
 instance FromJSON Scheme
+
 instance ToJSON Scheme
 
 -- ============================================================================
@@ -100,8 +104,8 @@ instance ToJSON Scheme
 
 -- | Type constraint
 data Constraint
-  = NixType :~: NixType  -- Equality constraint
-  deriving stock (Eq, Show, Generic)
+    = NixType :~: NixType -- Equality constraint
+    deriving stock (Eq, Show, Generic)
 
 infix 4 :~:
 
@@ -127,18 +131,18 @@ applySubst :: Subst -> NixType -> NixType
 applySubst s = go
   where
     go = \case
-      TVar v -> Map.findWithDefault (TVar v) v s
-      TList t -> TList (go t)
-      TAttrs m -> TAttrs (Map.map (\(t, o) -> (go t, o)) m)
-      TAttrsOpen m -> TAttrsOpen (Map.map (\(t, o) -> (go t, o)) m)
-      TFun a b -> TFun (go a) (go b)
-      TUnion ts -> TUnion (map go ts)
-      t -> t
+        TVar v -> Map.findWithDefault (TVar v) v s
+        TList t -> TList (go t)
+        TAttrs m -> TAttrs (Map.map (\(t, o) -> (go t, o)) m)
+        TAttrsOpen m -> TAttrsOpen (Map.map (\(t, o) -> (go t, o)) m)
+        TFun a b -> TFun (go a) (go b)
+        TUnion ts -> TUnion (map go ts)
+        t -> t
 
 -- | Apply substitution to a scheme
 applySubstScheme :: Subst -> Scheme -> Scheme
-applySubstScheme s (Forall vars t) = 
-  Forall vars (applySubst (foldr Map.delete s vars) t)
+applySubstScheme s (Forall vars t) =
+    Forall vars (applySubst (foldr Map.delete s vars) t)
 
 -- ============================================================================
 -- Free type variables
@@ -147,18 +151,18 @@ applySubstScheme s (Forall vars t) =
 -- | Get free type variables in a type
 freeTypeVars :: NixType -> Set TypeVar
 freeTypeVars = \case
-  TVar v -> Set.singleton v
-  TList t -> freeTypeVars t
-  TAttrs m -> Set.unions (map (freeTypeVars . fst) (Map.elems m))
-  TAttrsOpen m -> Set.unions (map (freeTypeVars . fst) (Map.elems m))
-  TFun a b -> freeTypeVars a `Set.union` freeTypeVars b
-  TUnion ts -> Set.unions (map freeTypeVars ts)
-  _ -> Set.empty
+    TVar v -> Set.singleton v
+    TList t -> freeTypeVars t
+    TAttrs m -> Set.unions (map (freeTypeVars . fst) (Map.elems m))
+    TAttrsOpen m -> Set.unions (map (freeTypeVars . fst) (Map.elems m))
+    TFun a b -> freeTypeVars a `Set.union` freeTypeVars b
+    TUnion ts -> Set.unions (map freeTypeVars ts)
+    _ -> Set.empty
 
 -- | Get free type variables in a scheme
 freeTypeVarsScheme :: Scheme -> Set TypeVar
-freeTypeVarsScheme (Forall vars t) = 
-  freeTypeVars t `Set.difference` Set.fromList vars
+freeTypeVarsScheme (Forall vars t) =
+    freeTypeVars t `Set.difference` Set.fromList vars
 
 -- ============================================================================
 -- Pretty Printing
@@ -169,50 +173,50 @@ prettyType :: NixType -> Text
 prettyType t = prettyTypeWith mapping t
   where
     vars = Set.toAscList (freeTypeVars t)
-    names = map T.singleton ['a'..'z'] ++ [ "t" <> T.pack (show i) | i <- [1..] :: [Int] ]
+    names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
     mapping = Map.fromList $ zip vars names
 
 -- | Pretty print a type scheme
 prettyScheme :: Scheme -> Text
 prettyScheme (Forall [] t) = prettyType t
 prettyScheme (Forall vars t) =
-  let
-    -- Combine bound variables and free variables (if any)
-    free = Set.toAscList (freeTypeVars t `Set.difference` Set.fromList vars)
-    allVars = vars ++ free
-    names = map T.singleton ['a'..'z'] ++ [ "t" <> T.pack (show i) | i <- [1..] :: [Int] ]
-    mapping = Map.fromList $ zip allVars names
+    let
+        -- Combine bound variables and free variables (if any)
+        free = Set.toAscList (freeTypeVars t `Set.difference` Set.fromList vars)
+        allVars = vars ++ free
+        names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
+        mapping = Map.fromList $ zip allVars names
 
-    prettyVar v = Map.findWithDefault "?" v mapping
-  in
-    "forall " <> T.intercalate " " (map prettyVar vars) <> ". " <> prettyTypeWith mapping t
+        prettyVar v = Map.findWithDefault "?" v mapping
+     in
+        "forall " <> T.intercalate " " (map prettyVar vars) <> ". " <> prettyTypeWith mapping t
 
 -- | Internal helper: pretty print with variable mapping
 prettyTypeWith :: Map TypeVar Text -> NixType -> Text
 prettyTypeWith mapping = go
   where
     go = \case
-      TVar v -> Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
-      TInt -> "Int"
-      TFloat -> "Float"
-      TBool -> "Bool"
-      TString -> "String"
-      TStrLit s -> "\"" <> s <> "\""
-      TPath -> "Path"
-      TNull -> "Null"
-      TList t -> "[" <> go t <> "]"
-      TAttrs m -> prettyAttrs m
-      TAttrsOpen m -> prettyAttrs m <> " | ..."
-      TFun a b -> prettyArg a <> " -> " <> go b
-      TDerivation -> "Derivation"
-      TUnion ts -> T.intercalate " | " (map go ts)
-      TAny -> "Any"
+        TVar v -> Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
+        TInt -> "Int"
+        TFloat -> "Float"
+        TBool -> "Bool"
+        TString -> "String"
+        TStrLit s -> "\"" <> s <> "\""
+        TPath -> "Path"
+        TNull -> "Null"
+        TList t -> "[" <> go t <> "]"
+        TAttrs m -> prettyAttrs m
+        TAttrsOpen m -> prettyAttrs m <> " | ..."
+        TFun a b -> prettyArg a <> " -> " <> go b
+        TDerivation -> "Derivation"
+        TUnion ts -> T.intercalate " | " (map go ts)
+        TAny -> "Any"
 
     prettyArg t@(TFun _ _) = "(" <> go t <> ")"
     prettyArg t = go t
 
-    prettyAttrs m 
-      | Map.null m = "{}"
-      | otherwise = "{ " <> T.intercalate ", " (map prettyField (Map.toList m)) <> " }"
-    
+    prettyAttrs m
+        | Map.null m = "{}"
+        | otherwise = "{ " <> T.intercalate ", " (map prettyField (Map.toList m)) <> " }"
+
     prettyField (k, (v, opt)) = k <> (if opt then "?" else "") <> " : " <> go v

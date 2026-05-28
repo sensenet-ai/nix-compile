@@ -1,11 +1,21 @@
-{ config, lib, inputs, self, withSystem, ... }:
+{
+  config,
+  lib,
+  inputs,
+  self,
+  withSystem,
+  ...
+}:
 
 {
   imports = [
     inputs.pre-commit-hooks-nix.flakeModule
     inputs.hercules-ci-effects.flakeModule # herculesCI attr
   ];
-  systems = [ "x86_64-linux" "aarch64-darwin" ];
+  systems = [
+    "x86_64-linux"
+    "aarch64-darwin"
+  ];
 
   hercules-ci.flake-update = {
     enable = true;
@@ -17,38 +27,45 @@
     };
   };
 
-  perSystem = { config, pkgs, ... }: {
+  perSystem =
+    { config, pkgs, ... }:
+    {
 
-    devShells.default = pkgs.mkShell {
-      nativeBuildInputs = [
-        pkgs.nixpkgs-fmt
-        pkgs.hci
-      ];
-      shellHook = ''
-        ${config.pre-commit.shellHook}
-      '';
-    };
-
-    pre-commit = {
-      inherit pkgs; # should make this default to the one it can get via follows
-      settings = {
-        hooks.nixpkgs-fmt.enable = true;
+      devShells.default = pkgs.mkShell {
+        nativeBuildInputs = [
+          pkgs.nixpkgs-fmt
+          pkgs.hci
+        ];
+        shellHook = ''
+          ${config.pre-commit.shellHook}
+        '';
       };
+
+      pre-commit = {
+        inherit pkgs; # should make this default to the one it can get via follows
+        settings = {
+          hooks.nixpkgs-fmt.enable = true;
+        };
+      };
+
+      checks.eval-tests =
+        let
+          tests = import ./tests/eval-tests.nix { flake-parts = self; };
+        in
+        tests.runTests pkgs.emptyFile // { internals = tests; };
+
     };
-
-    checks.eval-tests =
-      let tests = import ./tests/eval-tests.nix { flake-parts = self; };
-      in tests.runTests pkgs.emptyFile // { internals = tests; };
-
-  };
   flake = {
     # for repl exploration / debug
     config.config = config;
     options.mySystem = lib.mkOption { default = config.allSystems.${builtins.currentSystem}; };
-    config.effects = withSystem "x86_64-linux" ({ pkgs, hci-effects, ... }: {
-      tests = {
-        template = pkgs.callPackage ./tests/template.nix { inherit hci-effects; };
-      };
-    });
+    config.effects = withSystem "x86_64-linux" (
+      { pkgs, hci-effects, ... }:
+      {
+        tests = {
+          template = pkgs.callPackage ./tests/template.nix { inherit hci-effects; };
+        };
+      }
+    );
   };
 }

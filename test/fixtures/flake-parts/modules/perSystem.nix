@@ -1,4 +1,10 @@
-{ config, lib, flake-parts-lib, self, ... }:
+{
+  config,
+  lib,
+  flake-parts-lib,
+  self,
+  ...
+}:
 let
   inherit (lib)
     genAttrs
@@ -20,7 +26,8 @@ let
   # top.config harder to discover, stretching the learning curve rather
   # than flattening it.
 
-  throwAliasError' = param:
+  throwAliasError' =
+    param:
     throw ''
       `${param}` (without `'`) is not a `perSystem` module argument, but a
       module argument of the top level config.
@@ -40,7 +47,8 @@ let
         }
     '';
 
-  throwAliasError = param:
+  throwAliasError =
+    param:
     throw ''
       `${param}` is not a `perSystem` module argument, but a module argument of
       the top level config.
@@ -64,7 +72,7 @@ let
     doesn't extend to arbitrary `system`s.
     For that, we use the slightly less efficient, but perfectly acceptable
     `memoizeStr` function.
-   */
+  */
   otherMemoizedSystems = flake-parts-lib.memoizeStr config.perSystem;
 
 in
@@ -100,37 +108,43 @@ in
 
         Modules defined here have access to the suboptions and [some convenient module arguments](../module-arguments.html).
       '';
-      type = mkPerSystemType ({ config, system, ... }: {
-        _file = ./perSystem.nix;
-        config = {
-          _module.args.inputs' =
-            mapAttrs
-              (inputName: input:
-                builtins.addErrorContext "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}" (
-                  if input._type or null == "flake"
-                  then rootConfig.perInput system input
+      type = mkPerSystemType (
+        { config, system, ... }:
+        {
+          _file = ./perSystem.nix;
+          config = {
+            _module.args.inputs' = mapAttrs (
+              inputName: input:
+              builtins.addErrorContext
+                "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
+                (
+                  if input._type or null == "flake" then
+                    rootConfig.perInput system input
                   else
                     throw "Trying to retrieve system-dependent attributes for input ${escapeNixIdentifier inputName}, but this input is not a flake. Perhaps flake = false was added to the input declarations by mistake, or you meant to use a different input, or you meant to use plain old inputs, not inputs'."
                 )
-              )
-              self.inputs;
-          _module.args.self' =
-            builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (
+            ) self.inputs;
+            _module.args.self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (
               rootConfig.perInput system self
             );
 
-          # Custom error messages
-          _module.args.self = throwAliasError' "self";
-          _module.args.inputs = throwAliasError' "inputs";
-          _module.args.getSystem = throwAliasError "getSystem";
-          _module.args.withSystem = throwAliasError "withSystem";
-          _module.args.moduleWithSystem = throwAliasError "moduleWithSystem";
-        };
-      });
-      apply = modules: system:
+            # Custom error messages
+            _module.args.self = throwAliasError' "self";
+            _module.args.inputs = throwAliasError' "inputs";
+            _module.args.getSystem = throwAliasError "getSystem";
+            _module.args.withSystem = throwAliasError "withSystem";
+            _module.args.moduleWithSystem = throwAliasError "moduleWithSystem";
+          };
+        }
+      );
+      apply =
+        modules: system:
         (lib.evalModules {
           inherit modules;
-          prefix = [ "perSystem" system ];
+          prefix = [
+            "perSystem"
+            system
+          ];
           specialArgs = {
             inherit system;
           };
@@ -153,7 +167,8 @@ in
     # performance cost has already been incurred, such as in `flakeModules.easyOverlay`,
     # where we run in the context of an overlay, and the performance cost of the
     # extra `pkgs` makes the cost of running `perSystem` probably negligible.
-    _module.args.getSystemIgnoreWarning = system: config.allSystems.${system} or (config.perSystem system);
+    _module.args.getSystemIgnoreWarning =
+      system: config.allSystems.${system} or (config.perSystem system);
   };
 
 }

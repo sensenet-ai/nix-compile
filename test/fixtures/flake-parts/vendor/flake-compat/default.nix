@@ -5,9 +5,9 @@
 # containing 'defaultNix' (to be used in 'default.nix'), 'shellNix'
 # (to be used in 'shell.nix').
 
-{ src
-, system ? builtins.currentSystem or "unknown-system"
-,
+{
+  src,
+  system ? builtins.currentSystem or "unknown-system",
 }:
 
 let
@@ -95,7 +95,7 @@ let
           shortRev = builtins.substring 0 7 info.rev;
         }
       else
-      # FIXME: add Mercurial, tarball inputs.
+        # FIXME: add Mercurial, tarball inputs.
         throw "flake input has unsupported input type '${info.type}'"
     );
 
@@ -104,15 +104,13 @@ let
     let
       flake = import (flakeSrc + "/flake.nix");
 
-      inputs = mapAttrs
-        (
-          n: v:
-            if v.flake or true then
-              callFlake4 (fetchTree (v.locked // v.info)) v.inputs
-            else
-              fetchTree (v.locked // v.info)
-        )
-        locks;
+      inputs = mapAttrs (
+        n: v:
+        if v.flake or true then
+          callFlake4 (fetchTree (v.locked // v.info)) v.inputs
+        else
+          fetchTree (v.locked // v.info)
+      ) locks;
 
       outputs = flakeSrc // (flake.outputs (inputs // { self = outputs; }));
     in
@@ -154,7 +152,7 @@ let
                   # `builtins.storePath` is not available in pure-eval mode.
                   && builtins ? currentSystem
                 then
-                # If it's already a store path, don't copy it again.
+                  # If it's already a store path, don't copy it again.
                   builtins.storePath src
                 else
                   "${src}"
@@ -199,87 +197,85 @@ let
     in
     "${toString y'}${pad (toString m)}${pad (toString d)}${pad (toString hours)}${pad (toString minutes)}${pad (toString seconds)}";
 
-  allNodes = mapAttrs
-    (
-      key: node:
-        let
-          isRelative = node.locked.type or null == "path" && builtins.substring 0 1 node.locked.path != "/";
+  allNodes = mapAttrs (
+    key: node:
+    let
+      isRelative = node.locked.type or null == "path" && builtins.substring 0 1 node.locked.path != "/";
 
-          parentNode = allNodes.${getInputByPath lockFile.root node.parent};
+      parentNode = allNodes.${getInputByPath lockFile.root node.parent};
 
-          sourceInfo =
-            if key == lockFile.root then
-              rootSrc
-            else if isRelative then
-              parentNode.sourceInfo
-            else
-              fetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
+      sourceInfo =
+        if key == lockFile.root then
+          rootSrc
+        else if isRelative then
+          parentNode.sourceInfo
+        else
+          fetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
 
-          subdir = if key == lockFile.root then "" else node.locked.dir or "";
+      subdir = if key == lockFile.root then "" else node.locked.dir or "";
 
-          outPath =
-            if isRelative then
-              parentNode.outPath + (if node.locked.path == "" then "" else "/" + node.locked.path)
-            else
-              sourceInfo.outPath + (if subdir == "" then "" else "/" + subdir);
+      outPath =
+        if isRelative then
+          parentNode.outPath + (if node.locked.path == "" then "" else "/" + node.locked.path)
+        else
+          sourceInfo.outPath + (if subdir == "" then "" else "/" + subdir);
 
-          flake = import (outPath + "/flake.nix");
+      flake = import (outPath + "/flake.nix");
 
-          inputs = mapAttrs (inputName: inputSpec: allNodes.${resolveInput inputSpec}.result) (
-            node.inputs or { }
-          );
+      inputs = mapAttrs (inputName: inputSpec: allNodes.${resolveInput inputSpec}.result) (
+        node.inputs or { }
+      );
 
-          # Resolve a input spec into a node name. An input spec is
-          # either a node name, or a 'follows' path from the root
-          # node.
-          resolveInput =
-            inputSpec: if builtins.isList inputSpec then getInputByPath lockFile.root inputSpec else inputSpec;
+      # Resolve a input spec into a node name. An input spec is
+      # either a node name, or a 'follows' path from the root
+      # node.
+      resolveInput =
+        inputSpec: if builtins.isList inputSpec then getInputByPath lockFile.root inputSpec else inputSpec;
 
-          # Follow an input path (e.g. ["dwarffs" "nixpkgs"]) from the
-          # root node, returning the final node.
-          getInputByPath =
-            nodeName: path:
-            if path == [ ] then
-              nodeName
-            else
-              getInputByPath
-                # Since this could be a 'follows' input, call resolveInput.
-                (resolveInput lockFile.nodes.${nodeName}.inputs.${builtins.head path})
-                (builtins.tail path);
+      # Follow an input path (e.g. ["dwarffs" "nixpkgs"]) from the
+      # root node, returning the final node.
+      getInputByPath =
+        nodeName: path:
+        if path == [ ] then
+          nodeName
+        else
+          getInputByPath
+            # Since this could be a 'follows' input, call resolveInput.
+            (resolveInput lockFile.nodes.${nodeName}.inputs.${builtins.head path})
+            (builtins.tail path);
 
-          outputs = flake.outputs (inputs // { self = result; });
+      outputs = flake.outputs (inputs // { self = result; });
 
-          result =
-            outputs
-            # We add the sourceInfo attribute for its metadata, as they are
-            # relevant metadata for the flake. However, the outPath of the
-            # sourceInfo does not necessarily match the outPath of the flake,
-            # as the flake may be in a subdirectory of a source.
-            # This is shadowed in the next //
-            // sourceInfo
-            // {
-              # This shadows the sourceInfo.outPath
-              inherit outPath;
+      result =
+        outputs
+        # We add the sourceInfo attribute for its metadata, as they are
+        # relevant metadata for the flake. However, the outPath of the
+        # sourceInfo does not necessarily match the outPath of the flake,
+        # as the flake may be in a subdirectory of a source.
+        # This is shadowed in the next //
+        // sourceInfo
+        // {
+          # This shadows the sourceInfo.outPath
+          inherit outPath;
 
-              inherit inputs;
-              inherit outputs;
-              inherit sourceInfo;
-              _type = "flake";
-            };
+          inherit inputs;
+          inherit outputs;
+          inherit sourceInfo;
+          _type = "flake";
+        };
 
-        in
-        {
-          result =
-            if node.flake or true then
-              assert builtins.isFunction flake.outputs;
-              result
-            else
-              sourceInfo // { inherit sourceInfo outPath; };
+    in
+    {
+      result =
+        if node.flake or true then
+          assert builtins.isFunction flake.outputs;
+          result
+        else
+          sourceInfo // { inherit sourceInfo outPath; };
 
-          inherit outPath sourceInfo;
-        }
-    )
-    lockFile.nodes;
+      inherit outPath sourceInfo;
+    }
+  ) lockFile.nodes;
 
   result =
     if !(builtins.pathExists lockFilePath) then

@@ -1,17 +1,16 @@
 # Tests in: ../dev/tests/eval-tests.nix (bundlersExample)
 
-{ lib
-, flake-parts-lib
-, ...
+{
+  lib,
+  flake-parts-lib,
+  ...
 }:
 let
-  inherit
-    (lib)
+  inherit (lib)
     mkOption
     types
     ;
-  inherit
-    (flake-parts-lib)
+  inherit (flake-parts-lib)
     mkTransposedPerSystemModule
     ;
 in

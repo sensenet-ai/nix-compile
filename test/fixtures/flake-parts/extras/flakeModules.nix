@@ -1,4 +1,10 @@
-{ self, lib, flake-parts-lib, moduleLocation, ... }:
+{
+  self,
+  lib,
+  flake-parts-lib,
+  moduleLocation,
+  ...
+}:
 let
   inherit (lib)
     mapAttrs
@@ -12,12 +18,14 @@ let
   flakeModulesOption = mkOption {
     type = types.lazyAttrsOf types.deferredModule;
     default = { };
-    apply = mapAttrs (k: v: {
-      _file = "${toString moduleLocation}#flakeModules.${k}";
-      key = "${toString moduleLocation}#flakeModules.${k}";
-      imports = [ v ];
-      _class = "flake";
-    });
+    apply = mapAttrs (
+      k: v: {
+        _file = "${toString moduleLocation}#flakeModules.${k}";
+        key = "${toString moduleLocation}#flakeModules.${k}";
+        imports = [ v ];
+        _class = "flake";
+      }
+    );
     description = ''
       flake-parts modules for use by other flakes.
 

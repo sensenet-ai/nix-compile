@@ -2,7 +2,10 @@
 #   NIX_SHOW_STATS=1 nix eval --expr 'import ./measure-bytes-per-char.nix { control = false; size = 10; }' --impure
 #   NIX_SHOW_STATS=1 nix eval --expr 'import ./measure-bytes-per-char.nix { control = true; size = 10; }' --impure
 
-{ control ? false, size ? 10 }:
+{
+  control ? false,
+  size ? 10,
+}:
 
 let
   lib = import <nixpkgs/lib>;
@@ -18,6 +21,7 @@ let
   prime = memoId "";
 
 in
-if control
-then builtins.seq prime key  # Return key after priming
-else builtins.seq prime (memoId key)  # Pass through memoization after priming
+if control then
+  builtins.seq prime key # Return key after priming
+else
+  builtins.seq prime (memoId key) # Pass through memoization after priming

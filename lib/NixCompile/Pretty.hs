@@ -1,16 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- |
--- Module      : NixCompile.Pretty
--- Description : Unified pretty printing infrastructure
---
--- This module re-exports commonly used prettyprinter types and defines
--- the standard styling for the application (colors, indentation).
-module NixCompile.Pretty
-  ( -- * Re-exports
+{- |
+Module      : NixCompile.Pretty
+Description : Unified pretty printing infrastructure
+
+This module re-exports commonly used prettyprinter types and defines
+the standard styling for the application (colors, indentation).
+-}
+module NixCompile.Pretty (
+    -- * Re-exports
     module Prettyprinter,
     module Prettyprinter.Render.Terminal,
-    
+
     -- * Standard Styles
     styleType,
     styleVar,
@@ -22,22 +23,22 @@ module NixCompile.Pretty
     styleInfo,
     styleSuccess,
     styleMuted,
-    
+
     -- * Helpers
     renderStdOut,
     renderStdErr,
     toText,
-    
+
     -- * Layout Helpers
     block,
     property,
-  )
+)
 where
 
 import Data.Text (Text)
 import Prettyprinter
 import Prettyprinter.Render.Terminal
-import System.IO (stdout, stderr)
+import System.IO (stderr, stdout)
 
 -- ============================================================================
 -- Styles
@@ -103,19 +104,21 @@ toText = renderStrict . layoutSmart defaultLayoutOptions
 -- Layout Helpers
 -- ============================================================================
 
--- | A standard indented block
--- header {
---   body
--- }
+{- | A standard indented block
+header {
+  body
+}
+-}
 block :: Doc AnsiStyle -> Doc AnsiStyle -> Doc AnsiStyle
 block header body =
-  vsep
-    [ header <+> lbrace
-    , indent 2 body
-    , rbrace
-    ]
+    vsep
+        [ header <+> lbrace
+        , indent 2 body
+        , rbrace
+        ]
 
--- | A property key-value pair
--- key = value;
+{- | A property key-value pair
+key = value;
+-}
 property :: Doc AnsiStyle -> Doc AnsiStyle -> Doc AnsiStyle
 property key value = key <+> equals <+> value <> semi

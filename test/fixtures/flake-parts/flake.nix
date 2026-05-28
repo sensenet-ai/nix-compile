@@ -5,15 +5,13 @@
     nixpkgs-lib.url = "github:nix-community/nixpkgs.lib";
   };
 
-  outputs = inputs@{ nixpkgs-lib, ... }:
+  outputs =
+    inputs@{ nixpkgs-lib, ... }:
     let
       lib = import ./lib.nix {
         inherit (nixpkgs-lib) lib;
         # Extra info for version check message
-        revInfo =
-          if nixpkgs-lib?rev
-          then " (nixpkgs-lib.rev: ${nixpkgs-lib.rev})"
-          else "";
+        revInfo = if nixpkgs-lib ? rev then " (nixpkgs-lib.rev: ${nixpkgs-lib.rev})" else "";
       };
       templates = {
         default = {
