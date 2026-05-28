@@ -10,7 +10,10 @@
   outputs =
     inputs@{ flake-parts, treefmt-nix, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      imports = [ treefmt-nix.flakeModule ];
+      imports = [
+        treefmt-nix.flakeModule
+        ./flake-module.nix
+      ];
 
       systems = [
         "x86_64-linux"
@@ -64,13 +67,13 @@
               nix-compile.env
               config.treefmt.build.devShell
             ];
-            buildInputs = with pkgs; [
-              ghc
-              cabal-install
-              haskell-language-server
-              hlint
-              jq
-              mdbook
+            buildInputs = [
+              pkgs.ghc
+              pkgs.cabal-install
+              pkgs.haskell-language-server
+              pkgs.hlint
+              pkgs.jq
+              pkgs.mdbook
             ];
             shellHook = ''
               echo "nix-compile development shell"
@@ -92,18 +95,7 @@
             };
             doc = {
               type = "app";
-              program =
-                let
-                  script = pkgs.writeShellScript "nix-compile-doc" ''
-                    dir=$(mktemp -d)
-                    trap "rm -rf $dir" EXIT
-                    cp -r ${./doc}/* "$dir/"
-                    chmod -R u+w "$dir"
-                    echo "serving docs at http://localhost:3000"
-                    exec ${pkgs.mdbook}/bin/mdbook serve "$dir"
-                  '';
-                in
-                "${script}";
+              program = "${pkgs.mdbook}/bin/mdbook";
             };
           };
         };

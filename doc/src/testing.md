@@ -23,33 +23,34 @@ cabal test nix-compile-flake-parts
 
 114 QuickCheck property tests across 21 categories:
 
-| Category | Count | What it tests |
-|----------|-------|---------------|
-| Type algebra | 9 | Reflexive, symmetric, valid subst, order-independent solving |
-| Constraints | 4 | Empty identity, reflexive, satisfaction, order-independence |
-| Fact extraction | 5 | DefaultIs, Required, AssignFrom, ConfigAssign, ConfigLit vectors |
-| Schema building | 8 | Complete, defaults, required, defaulted-vars diagnostic |
-| Merge correctness | 4 | Required preserved, default kept, duplicate merged, identity law |
-| Parser | 4 | Labeled success/failure, deterministic, empty, comments |
-| Pattern matching | 5 | Default, required, simple, numeric, alpha rejection |
-| Builtins | 6 | Database integrity, known flags, unknown handling |
-| Config tree | 2 | Completeness (conflict-free), deterministic |
-| Scope graph | 7 | Priority, let/attrset/func/with/var construction, cross-file merge |
-| Nix inference | 10 | Totality, determinism, all literal types, lists, attrsets, functions, let |
-| Nix lint | 3 | `with` detected, `rec` detected, clean passes |
-| Bash lint | 3 | Heredoc, backtick detected, clean passes |
-| Emit-config | 8 | `${VAR:?}` guards, no null, literal, string quoted, balanced braces, no heredoc, nested |
-| Format | 4 | Simple annotation, preserves source, function annotation, no-crash |
-| E2E integration | 5 | Config extraction, required vars, type conflicts, empty, store paths |
-| Edge cases | 4 | Comments-only, long names, deep config, all fact types |
-| Bash AST | 4 | Arithmetic, subshell, pipe, for-loop body extraction |
-| Overlay algebra | 5 | Identity, associativity, satisfaction, propagation |
-| Stress | 4 | Large scripts (structural), many vars (>0), deep config, chains |
-| Literals | 3 | Int/bool roundtrip, type consistency |
+| Category          | Count | What it tests                                                                           |
+| ----------------- | ----- | --------------------------------------------------------------------------------------- |
+| Type algebra      | 9     | Reflexive, symmetric, valid subst, order-independent solving                            |
+| Constraints       | 4     | Empty identity, reflexive, satisfaction, order-independence                             |
+| Fact extraction   | 5     | DefaultIs, Required, AssignFrom, ConfigAssign, ConfigLit vectors                        |
+| Schema building   | 8     | Complete, defaults, required, defaulted-vars diagnostic                                 |
+| Merge correctness | 4     | Required preserved, default kept, duplicate merged, identity law                        |
+| Parser            | 4     | Labeled success/failure, deterministic, empty, comments                                 |
+| Pattern matching  | 5     | Default, required, simple, numeric, alpha rejection                                     |
+| Builtins          | 6     | Database integrity, known flags, unknown handling                                       |
+| Config tree       | 2     | Completeness (conflict-free), deterministic                                             |
+| Scope graph       | 7     | Priority, let/attrset/func/with/var construction, cross-file merge                      |
+| Nix inference     | 10    | Totality, determinism, all literal types, lists, attrsets, functions, let               |
+| Nix lint          | 3     | `with` detected, `rec` detected, clean passes                                           |
+| Bash lint         | 3     | Heredoc, backtick detected, clean passes                                                |
+| Emit-config       | 8     | `${VAR:?}` guards, no null, literal, string quoted, balanced braces, no heredoc, nested |
+| Format            | 4     | Simple annotation, preserves source, function annotation, no-crash                      |
+| E2E integration   | 5     | Config extraction, required vars, type conflicts, empty, store paths                    |
+| Edge cases        | 4     | Comments-only, long names, deep config, all fact types                                  |
+| Bash AST          | 4     | Arithmetic, subshell, pipe, for-loop body extraction                                    |
+| Overlay algebra   | 5     | Identity, associativity, satisfaction, propagation                                      |
+| Stress            | 4     | Large scripts (structural), many vars (>0), deep config, chains                         |
+| Literals          | 3     | Int/bool roundtrip, type consistency                                                    |
 
 ### `nix-compile-fixtures` (Fixtures.hs)
 
 Integration tests against real-world scripts:
+
 - **check-by-name.sh** -- nixpkgs script, verifies env var extraction and bare command detection
 - **qemu-common.nix** -- verifies type inference and `rec`/`with` lint detection
 - **kernel.nix** -- clean file, verifies zero violations

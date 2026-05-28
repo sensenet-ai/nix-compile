@@ -106,7 +106,7 @@ defaultConfig =
 
 loadConfig :: FilePath -> IO (Either Text Config)
 loadConfig path = do
-    result <- try (Dhall.input Dhall.auto (T.pack path))
+    result <- try (Dhall.inputFile Dhall.auto path)
     case result of
         Left (e :: SomeException) -> pure (Left (T.pack (show e)))
         Right config -> pure (Right config)

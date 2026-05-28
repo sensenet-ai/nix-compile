@@ -57,7 +57,7 @@ import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified
 import NixCompile.Schema.Build (validateConfigPaths)
-import System.Directory (canonicalizePath, doesDirectoryExist, listDirectory)
+import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, listDirectory)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (makeRelative, takeDirectory, takeExtension, (</>))
@@ -70,8 +70,23 @@ main = runLog InfoS $ do
     args <- liftIO getArgs
     let (mConfigPath, restArgs) = parseConfigArg args
     config <- case mConfigPath of
-        Just path -> either (const Config.defaultConfig) id <$> liftIO (Config.loadConfig path)
-        Nothing -> pure Config.defaultConfig
+        Just path -> do
+            result <- liftIO $ Config.loadConfig path
+            case result of
+                Left err -> do
+                    $(logTM) WarningS $ logStr $ "Failed to load config: " <> err
+                    pure Config.defaultConfig
+                Right cfg -> pure cfg
+        Nothing ->
+            liftIO (doesFileExist ".nix-compile.dhall") >>= \case
+                True -> do
+                    result <- liftIO $ Config.loadConfig ".nix-compile.dhall"
+                    case result of
+                        Left err -> do
+                            $(logTM) WarningS $ logStr $ "Failed to load .nix-compile.dhall: " <> err
+                            pure Config.defaultConfig
+                        Right cfg -> pure cfg
+                False -> pure Config.defaultConfig
     $(logTM) InfoS $
         logStr $
             "Config: profile="
@@ -785,7 +800,6 @@ cmdGraph config dir asDot = do
         let parseFailures = Mod.mgFailures graph
         let lintFailures = Mod.mgLintFailures graph
         let layoutFailures = Mod.mgLayoutFailures graph
-        let lintViolationCount = sum (map (length . Mod.lfViolations) lintFailures)
         let layoutViolationCount = sum (map (length . Mod.layViolations) layoutFailures)
         let pkgViolationCount = length pkgViolations
         let patternVCount = length patternViolations
@@ -800,14 +814,21 @@ cmdGraph config dir asDot = do
                         putStrLn "=== Parse Failures (banned syntax) ==="
                         mapM_ (printParseFailure rootDir) parseFailures
                         putStrLn ""
-                    else return ()
+                    else
+                        return ()
 
                 if not (null lintFailures)
                     then do
-                        putStrLn $ "Lint violations: " ++ show lintViolationCount ++ " in " ++ show (length lintFailures) ++ " files"
+                        let filteredLint =
+                                [ lf{Mod.lfViolations = active}
+                                | lf <- lintFailures
+                                , let (_, active) = partitionNixViolations config (Mod.lfViolations lf)
+                                , not (null active)
+                                ]
+                        putStrLn $ "Lint violations: " ++ show (sum (map (length . Mod.lfViolations) filteredLint)) ++ " in " ++ show (length filteredLint) ++ " files"
                         putStrLn ""
                         putStrLn "=== Lint Failures (with/rec banned) ==="
-                        mapM_ (printLintFailure rootDir) lintFailures
+                        mapM_ (printLintFailure rootDir) filteredLint
                         putStrLn ""
                     else return ()
 
