@@ -4,11 +4,14 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{ flake-parts, treefmt-nix, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ treefmt-nix.flakeModule ];
+
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -28,14 +31,11 @@
         let
           haskellPackages = pkgs.haskellPackages.override {
             overrides = hself: hsuper: {
-              # Disable tests for packages that have flaky tests
               cryptonite = pkgs.haskell.lib.dontCheck hsuper.cryptonite;
               hashing = pkgs.haskell.lib.dontCheck hsuper.hashing;
               hnix-store-core = pkgs.haskell.lib.dontCheck hsuper.hnix-store-core;
               hnix-store-remote = pkgs.haskell.lib.dontCheck hsuper.hnix-store-remote;
-              # Use hnix from nixpkgs (0.17.x)
               hnix = pkgs.haskell.lib.dontCheck hsuper.hnix;
-              # ShellCheck is available as ShellCheck
               ShellCheck = hsuper.ShellCheck;
             };
           };
@@ -52,15 +52,23 @@
             nix-compile-test = pkgs.haskell.lib.doCheck nix-compile;
           };
 
+          treefmt = {
+            projectRootFile = "flake.nix";
+            programs.fourmolu.enable = true;
+            programs.nixfmt.enable = true;
+          };
+
           devShells.default = pkgs.mkShell {
             name = "nix-compile-dev";
-            inputsFrom = [ nix-compile.env ];
+            inputsFrom = [
+              nix-compile.env
+              config.treefmt.build.devShell
+            ];
             buildInputs = with pkgs; [
               ghc
               cabal-install
               haskell-language-server
               hlint
-              ormolu
               jq
               mdbook
             ];
@@ -69,6 +77,7 @@
               echo "  nix-compile parse <script>   Show facts"
               echo "  nix-compile infer <script>   Show schema (JSON)"
               echo "  nix-compile check <script>   Check policies"
+              echo "  treefmt                      Format all sources"
             '';
           };
 

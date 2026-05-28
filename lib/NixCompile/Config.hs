@@ -3,8 +3,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module NixCompile.Config
-  ( Severity (..),
+module NixCompile.Config (
+    Severity (..),
     RuleOverride (..),
     Config (..),
     loadConfig,
@@ -18,7 +18,7 @@ module NixCompile.Config
     derivRuleId,
     packageRuleId,
     patternRuleId,
-  )
+)
 where
 
 import Control.Exception (SomeException, try)
@@ -39,54 +39,54 @@ import System.FilePath qualified as FP
 -------------------------------------------------------------------------------
 
 data Severity
-  = SevOff
-  | SevInfo
-  | SevWarning
-  | SevError
-  deriving stock (Eq, Ord, Show, Generic)
+    = SevOff
+    | SevInfo
+    | SevWarning
+    | SevError
+    deriving stock (Eq, Ord, Show, Generic)
 
 instance FromDhall Severity where
-  autoWith _norm =
-    genericAutoWith
-      (defaultInterpretOptions {constructorModifier = T.drop 3})
+    autoWith _norm =
+        genericAutoWith
+            (defaultInterpretOptions{constructorModifier = T.drop 3})
 
 data RuleOverride = RuleOverride
-  { overrideId :: !Text,
-    overrideSeverity :: !Severity,
-    overrideReason :: !(Maybe Text)
-  }
-  deriving stock (Eq, Show, Generic)
+    { overrideId :: !Text
+    , overrideSeverity :: !Severity
+    , overrideReason :: !(Maybe Text)
+    }
+    deriving stock (Eq, Show, Generic)
 
 instance FromDhall RuleOverride where
-  autoWith _norm =
-    genericAutoWith
-      ( defaultInterpretOptions
-          { fieldModifier = \case
-              "overrideId" -> "id"
-              "overrideSeverity" -> "severity"
-              "overrideReason" -> "reason"
-              n -> n
-          }
-      )
+    autoWith _norm =
+        genericAutoWith
+            ( defaultInterpretOptions
+                { fieldModifier = \case
+                    "overrideId" -> "id"
+                    "overrideSeverity" -> "severity"
+                    "overrideReason" -> "reason"
+                    n -> n
+                }
+            )
 
 data Config = Config
-  { configProfile :: !Text,
-    configExtraIgnores :: ![Text],
-    configOverrides :: ![RuleOverride]
-  }
-  deriving stock (Eq, Show, Generic)
+    { configProfile :: !Text
+    , configExtraIgnores :: ![Text]
+    , configOverrides :: ![RuleOverride]
+    }
+    deriving stock (Eq, Show, Generic)
 
 instance FromDhall Config where
-  autoWith _norm =
-    genericAutoWith
-      ( defaultInterpretOptions
-          { fieldModifier = \case
-              "configProfile" -> "profile"
-              "configExtraIgnores" -> "extra-ignores"
-              "configOverrides" -> "overrides"
-              n -> n
-          }
-      )
+    autoWith _norm =
+        genericAutoWith
+            ( defaultInterpretOptions
+                { fieldModifier = \case
+                    "configProfile" -> "profile"
+                    "configExtraIgnores" -> "extra-ignores"
+                    "configOverrides" -> "overrides"
+                    n -> n
+                }
+            )
 
 -------------------------------------------------------------------------------
 -- Defaults
@@ -94,11 +94,11 @@ instance FromDhall Config where
 
 defaultConfig :: Config
 defaultConfig =
-  Config
-    { configProfile = "standard",
-      configExtraIgnores = [],
-      configOverrides = []
-    }
+    Config
+        { configProfile = "standard"
+        , configExtraIgnores = []
+        , configOverrides = []
+        }
 
 -------------------------------------------------------------------------------
 -- Loading
@@ -106,10 +106,10 @@ defaultConfig =
 
 loadConfig :: FilePath -> IO (Either Text Config)
 loadConfig path = do
-  result <- try (Dhall.input Dhall.auto (T.pack path))
-  case result of
-    Left (e :: SomeException) -> pure (Left (T.pack (show e)))
-    Right config -> pure (Right config)
+    result <- try (Dhall.input Dhall.auto (T.pack path))
+    case result of
+        Left (e :: SomeException) -> pure (Left (T.pack (show e)))
+        Right config -> pure (Right config)
 
 -------------------------------------------------------------------------------
 -- Queries
@@ -117,9 +117,9 @@ loadConfig path = do
 
 effectiveSeverity :: Config -> Text -> Maybe Severity
 effectiveSeverity config ruleId =
-  case filter ((== ruleId) . overrideId) (configOverrides config) of
-    o : _ -> Just (overrideSeverity o)
-    [] -> Nothing
+    case filter ((== ruleId) . overrideId) (configOverrides config) of
+        o : _ -> Just (overrideSeverity o)
+        [] -> Nothing
 
 configIgnores :: Config -> [Text]
 configIgnores = configExtraIgnores
@@ -134,43 +134,43 @@ isSuppressed config ruleId = effectiveSeverity config ruleId == Just SevOff
 
 bashRuleId :: Bash.ViolationType -> Text
 bashRuleId = \case
-  Bash.VHeredoc -> "no-heredoc-in-inline-bash"
-  Bash.VHereString -> "no-heredoc-in-inline-bash"
-  Bash.VEval -> "no-eval"
-  Bash.VBacktick -> "no-backtick"
+    Bash.VHeredoc -> "no-heredoc-in-inline-bash"
+    Bash.VHereString -> "no-heredoc-in-inline-bash"
+    Bash.VEval -> "no-eval"
+    Bash.VBacktick -> "no-backtick"
 
 nixRuleId :: NixLint.ViolationType -> Text
 nixRuleId = \case
-  NixLint.VWith -> "with-lib"
-  NixLint.VRec -> "rec-anywhere"
-  NixLint.VSubstituteAll -> "no-substitute-all"
-  NixLint.VRawMkDerivation -> "no-raw-mkderivation"
-  NixLint.VRawRunCommand -> "no-raw-runcommand"
-  NixLint.VRawWriteShellApplication -> "no-raw-writeshellapplication"
-  NixLint.VWriteShellScript -> "prefer-write-shell-application"
-  NixLint.VLongInlineString _ -> "long-inline-string"
+    NixLint.VWith -> "with-lib"
+    NixLint.VRec -> "rec-anywhere"
+    NixLint.VSubstituteAll -> "no-substitute-all"
+    NixLint.VRawMkDerivation -> "no-raw-mkderivation"
+    NixLint.VRawRunCommand -> "no-raw-runcommand"
+    NixLint.VRawWriteShellApplication -> "no-raw-writeshellapplication"
+    NixLint.VWriteShellScript -> "prefer-write-shell-application"
+    NixLint.VLongInlineString _ -> "long-inline-string"
 
 derivRuleId :: Deriv.DerivViolationType -> Text
 derivRuleId = Deriv.derivRuleId
 
 packageRuleId :: LintPackages.PackageViolationCode -> Text
 packageRuleId = \case
-  LintPackages.P001 -> "default-nix-in-packages"
+    LintPackages.P001 -> "default-nix-in-packages"
 
 patternRuleId :: LintPatterns.PatternViolationType -> Text
 patternRuleId = \case
-  LintPatterns.VOrNullFallback -> "or-null-fallback"
-  LintPatterns.VAttrTranslation -> "no-translate-attrs-outside-prelude"
+    LintPatterns.VOrNullFallback -> "or-null-fallback"
+    LintPatterns.VAttrTranslation -> "no-translate-attrs-outside-prelude"
 
 -------------------------------------------------------------------------------
 -- Internal: glob matching
 -------------------------------------------------------------------------------
 
 data Token
-  = GlobStar
-  | Star
-  | Lit !String
-  deriving (Show)
+    = GlobStar
+    | Star
+    | Lit !String
+    deriving (Show)
 
 tokenise :: String -> [Token]
 tokenise = go
@@ -180,10 +180,10 @@ tokenise = go
     go ('*' : rest) = Star : go rest
     go ('/' : rest) = go rest
     go cs =
-      let (lit, rest') = break (`elem` ("*/" :: String)) cs
-       in if null lit
-            then go rest'
-            else Lit lit : go rest'
+        let (lit, rest') = break (`elem` ("*/" :: String)) cs
+         in if null lit
+                then go rest'
+                else Lit lit : go rest'
 
 charMatch :: String -> String -> Bool
 charMatch [] [] = True
@@ -204,29 +204,29 @@ splitComponents = map tokenise . splitOn '/'
 splitOn :: Char -> String -> [String]
 splitOn _ [] = [""]
 splitOn c s =
-  let (before, after) = break (== c) s
-   in before : case after of
-        "" -> []
-        _ : rest -> splitOn c rest
+    let (before, after) = break (== c) s
+     in before : case after of
+            "" -> []
+            _ : rest -> splitOn c rest
 
 matchComponents :: [[Token]] -> [String] -> Bool
 matchComponents [] [] = True
 matchComponents [] _ = False
 matchComponents (comp : crest) segs = case comp of
-  [] -> matchComponents crest segs
-  [GlobStar] -> matchGlobStar crest segs
-  pattern ->
-    case segs of
-      seg : srest -> charMatch (tokensToPattern pattern) seg && matchComponents crest srest
-      [] -> False
+    [] -> matchComponents crest segs
+    [GlobStar] -> matchGlobStar crest segs
+    clob ->
+        case segs of
+            seg : srest -> charMatch (tokensToPattern clob) seg && matchComponents crest srest
+            [] -> False
   where
     matchGlobStar restC [] = matchComponents restC []
     matchGlobStar restC sgs@(_ : _) = matchComponents restC sgs || matchComponents (comp : restC) (drop 1 sgs)
 
 matchGlob :: Text -> FilePath -> Bool
-matchGlob pattern fp
-  | '/' `elem` pat = matchComponents (splitComponents pat) segs
-  | otherwise = any (charMatch pat) segs
+matchGlob patt fp
+    | '/' `elem` pat = matchComponents (splitComponents pat) segs
+    | otherwise = any (charMatch pat) segs
   where
-    pat = T.unpack pattern
+    pat = T.unpack patt
     segs = FP.splitDirectories fp

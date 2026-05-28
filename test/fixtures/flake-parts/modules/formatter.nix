@@ -1,4 +1,9 @@
-{ config, lib, flake-parts-lib, ... }:
+{
+  config,
+  lib,
+  flake-parts-lib,
+  ...
+}:
 let
   inherit (lib)
     filterAttrs
@@ -35,16 +40,13 @@ in
     };
   };
   config = {
-    flake.formatter =
-      mapAttrs
-        (k: v: v.formatter)
-        (filterAttrs
-          (k: v: v.formatter != null)
-          config.allSystems
-        );
+    flake.formatter = mapAttrs (k: v: v.formatter) (
+      filterAttrs (k: v: v.formatter != null) config.allSystems
+    );
 
-    perInput = system: flake:
-      optionalAttrs (flake?formatter.${system}) {
+    perInput =
+      system: flake:
+      optionalAttrs (flake ? formatter.${system}) {
         formatter = flake.formatter.${system};
       };
 

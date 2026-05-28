@@ -1,7 +1,15 @@
-{ hci-effects, nix, git, path }:
+{
+  hci-effects,
+  nix,
+  git,
+  path,
+}:
 
 hci-effects.mkEffect {
-  inputs = [ nix git ];
+  inputs = [
+    nix
+    git
+  ];
   effectScript = ''
     ann() { # announce
       printf '\n\e[34;1m%s\e[0m\n' "$*"

@@ -1,4 +1,8 @@
-{ stdenv, lib, runtimeShell }:
+{
+  stdenv,
+  lib,
+  runtimeShell,
+}:
 
 let
   # Bring fileset functions into scope.

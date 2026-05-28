@@ -1,16 +1,16 @@
 { pkgs, ... }:
 let
   # "Theorems for Free": Structural limits enforcing runtime safety
-  
+
   # Theorem 1: Identity Wrapper Transparency
-  # Any function that takes a string and returns a derivation 
+  # Any function that takes a string and returns a derivation
   # preserves the "script-ness" property if content signatures exist.
   mkIdentity = name: text: pkgs.writeShellScriptBin name text;
 
   # Theorem 2: Evaluation Purity
-  # Dynamic evaluation (eval, source dynamic) is structurally impossible 
+  # Dynamic evaluation (eval, source dynamic) is structurally impossible
   # to represent in a valid nix-compile program.
-  
+
   # Theorem 3: Dependency Explicitness
   # All dependencies must be structurally visible (store paths),
   # preventing "hidden" dependencies via string injection.

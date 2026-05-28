@@ -1,1 +1,8 @@
-let lib = {}; pkgs = {}; stdenv = {}; in with lib; with pkgs; stdenv
+let
+  lib = { };
+  pkgs = { };
+  stdenv = { };
+in
+with lib;
+with pkgs;
+stdenv

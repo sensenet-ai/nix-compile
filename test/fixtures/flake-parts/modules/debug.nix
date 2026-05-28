@@ -1,4 +1,12 @@
-{ config, flake-parts-lib, lib, options, getSystem, extendModules, ... }:
+{
+  config,
+  flake-parts-lib,
+  lib,
+  options,
+  getSystem,
+  extendModules,
+  ...
+}:
 let
   inherit (lib)
     mapAttrs
@@ -11,12 +19,19 @@ let
     mkPerSystemOption
     ;
 
-  mkDebugConfig = { config, options, extendModules }: config // {
-    inherit config;
-    inherit (config) _module;
-    inherit options;
-    inherit extendModules;
-  };
+  mkDebugConfig =
+    {
+      config,
+      options,
+      extendModules,
+    }:
+    config
+    // {
+      inherit config;
+      inherit (config) _module;
+      inherit options;
+      inherit extendModules;
+    };
 in
 {
   options = {
@@ -49,8 +64,14 @@ in
         See [Expore and debug option values](../debug.html) for more examples.
       '';
     };
-    perSystem = mkPerSystemOption
-      ({ options, config, extendModules, ... }: {
+    perSystem = mkPerSystemOption (
+      {
+        options,
+        config,
+        extendModules,
+        ...
+      }:
+      {
         _file = ./formatter.nix;
         options = {
           debug = mkOption {
@@ -64,14 +85,16 @@ in
         config = {
           debug = mkDebugConfig { inherit config options extendModules; };
         };
-      });
+      }
+    );
   };
 
   config = mkIf config.debug {
     flake = {
       debug = mkDebugConfig { inherit config options extendModules; };
       allSystems = mapAttrs (_s: c: c.debug) config.allSystems;
-    } // optionalAttrs (builtins?currentSystem) {
+    }
+    // optionalAttrs (builtins ? currentSystem) {
       currentSystem = (getSystem builtins.currentSystem).debug;
     };
   };

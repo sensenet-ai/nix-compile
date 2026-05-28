@@ -10,9 +10,14 @@ in
     flake.overlays = mkOption {
       # uniq -> ordered: https://github.com/NixOS/nixpkgs/issues/147052
       # also update description when done
-      type = types.lazyAttrsOf (types.uniq (types.functionTo (types.functionTo (types.lazyAttrsOf types.unspecified))));
+      type = types.lazyAttrsOf (
+        types.uniq (types.functionTo (types.functionTo (types.lazyAttrsOf types.unspecified)))
+      );
       # This eta expansion exists for the sole purpose of making nix flake check happy.
-      apply = lib.mapAttrs (_k: f: final: prev: f final prev);
+      apply = lib.mapAttrs (
+        _k: f: final: prev:
+        f final prev
+      );
       default = { };
       example = lib.literalExpression ''
         {
