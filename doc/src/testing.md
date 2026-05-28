@@ -1,6 +1,6 @@
 # Testing
 
-nix-compile has four test suites with 114 property tests and 10 integration tests.
+nix-compile has four test suites with 315 property tests and 10 integration tests.
 
 ## Running tests
 
