@@ -45,6 +45,7 @@ library
         NixCompile.Nix.LintPatterns
         NixCompile.Nix.Module
         NixCompile.Nix.ModuleKind
+        NixCompile.Nix.ModuleSystem
         NixCompile.Nix.Naming
         NixCompile.Nix.Parse
         NixCompile.Nix.Pretty
