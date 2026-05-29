@@ -1,5 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // tests // flake // parts
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "The people who designed these places, maybe eighty, a hundred years ago,
+--    they had the idea they'd make 'em as self-sufficient as possible. Make
+--    'em grow food. Make 'em heat themselves, generate power, whatever. But
+--    this one, you drill far enough down, is sitting on top of a lot of
+--    geothermal water. It's real hot down there, but not hot enough to run an
+--    engine, so it wasn't gonna give 'em any power. They made a stab at
+--    power, up on the roof, with about a hundred Darrieus rotors, what they
+--    call eggbeaters. Had themselves a wind farm, see?"
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // flake-parts // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module Main (main) where
 
 import Control.Monad (forM)

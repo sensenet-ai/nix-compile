@@ -2,22 +2,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{- |
-Module      : NixCompile.Nix.Layout
-Description : Flake layout validation
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                       // nix // layout
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "A wing of night swept Barcelona's sky."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // layout // validation
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Validates flake directory structure according to RFC-013.
-
-Layout rules:
-  - No _index.nix files (graph derived from directory scan)
-  - No _main.nix files (explicit imports in flake.nix)
-  - All modules must have _class attribute
-  - Directory structure matches kind (flake/, nixos/, home/)
-  - One module per file (filename = export name)
-
-The goal: if layout validation passes, the module graph is statically
-extractable without Nix evaluation.
--}
 module NixCompile.Nix.Layout (
     -- * Violations
     LayoutViolation (..),
@@ -51,43 +47,36 @@ import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath (normalise, splitPath, takeFileName, (</>))
 
--- ============================================================================
--- Types
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- types
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Layout violation codes
 data LayoutCode
-    = L001 -- _index.nix file found
-    | L002 -- _main.nix file found
-    | L003 -- Module missing _class attribute
-    | L004 -- Wrong _class for directory
-    | L005 -- Invalid module location
+    = L001
+    | L002
+    | L003
+    | L004
+    | L005
     deriving (Show, Eq)
 
--- | A layout violation
 data LayoutViolation = LayoutViolation
     { lvCode :: !LayoutCode
     , lvPath :: !FilePath
     , lvMessage :: !Text
-    , lvSpan :: !(Maybe Span) -- Location in file if applicable
+    , lvSpan :: !(Maybe Span)
     }
     deriving (Show, Eq)
 
--- ============================================================================
--- File Classification
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- file classification
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Check if a file is an index file (banned)
 isIndexFile :: FilePath -> Bool
 isIndexFile path = takeFileName path == "_index.nix"
 
--- | Check if a file is a main file (banned)
 isMainFile :: FilePath -> Bool
 isMainFile path = takeFileName path == "_main.nix"
 
-{- | Get the expected _class for a module based on its directory
-Returns Nothing if the path isn't in a known module directory
--}
 expectedModuleClass :: FilePath -> Maybe Text
 expectedModuleClass path = case getModuleKind (normalise path) of
     Just "flake" -> Just "flake"
@@ -95,17 +84,11 @@ expectedModuleClass path = case getModuleKind (normalise path) of
     Just "home" -> Just "home"
     _ -> Nothing
 
-{- | Extract the module kind from a path
-e.g., "nix/modules/flake/foo.nix" -> Just "flake"
-Uses normalised path to handle ../.. references
--}
 getModuleKind :: FilePath -> Maybe String
 getModuleKind path =
     let
-        -- Normalise the path to resolve ../.. references
         normPath = normalise path
         parts = splitPath normPath
-        -- Look for pattern: .../modules/<kind>/...
         findKind [] = Nothing
         findKind [_] = Nothing
         findKind (x : y : rest)
@@ -116,11 +99,10 @@ getModuleKind path =
      in
         findKind parts
 
--- ============================================================================
--- Validation
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- validation
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Find layout violations in a single file
 findLayoutViolations :: FilePath -> NExprLoc -> [LayoutViolation]
 findLayoutViolations path expr =
     concat
@@ -129,7 +111,6 @@ findLayoutViolations path expr =
         , checkModuleClass path expr
         ]
 
--- | Check for banned _index.nix
 checkIndexFile :: FilePath -> [LayoutViolation]
 checkIndexFile path
     | isIndexFile path =
@@ -142,7 +123,6 @@ checkIndexFile path
         ]
     | otherwise = []
 
--- | Check for banned _main.nix
 checkMainFile :: FilePath -> [LayoutViolation]
 checkMainFile path
     | isMainFile path =
@@ -155,10 +135,9 @@ checkMainFile path
         ]
     | otherwise = []
 
--- | Check that modules in nix/modules/ have correct _class
 checkModuleClass :: FilePath -> NExprLoc -> [LayoutViolation]
 checkModuleClass path expr = case expectedModuleClass path of
-    Nothing -> [] -- Not in a modules directory
+    Nothing -> []
     Just expectedClass ->
         case findClassAttr expr of
             Nothing ->
@@ -180,20 +159,13 @@ checkModuleClass path expr = case expectedModuleClass path of
                     ]
                 | otherwise -> []
 
-{- | Find _class attribute in a Nix expression
-Handles both direct attr sets and function bodies
--}
 findClassAttr :: NExprLoc -> Maybe (Text, Span)
 findClassAttr = go
   where
     go (Fix (Compose (AnnUnit _ e))) = case e of
-        -- Direct attr set: { _class = "foo"; ... }
         NSet _ bindings -> findInBindings bindings
-        -- Function: { ... }: { _class = "foo"; ... }
         NAbs _ body -> go body
-        -- Let: let ... in { _class = "foo"; ... }
         NLet _ body -> go body
-        -- With: with ...; { _class = "foo"; ... }
         NWith _ body -> go body
         _ -> Nothing
 
@@ -233,23 +205,21 @@ findClassAttr = go
     sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
     sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
 
--- ============================================================================
--- Directory Scanning
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- directory scanning
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Find all layout violations in a directory tree
 findLayoutViolationsInDir :: FilePath -> IO [LayoutViolation]
 findLayoutViolationsInDir rootDir = do
     files <- findNixFiles rootDir
     violations <- forM files $ \path -> do
         result <- try (parseNixFileLoc (NixPath.Path path))
         case result of
-            Left (_ :: IOException) -> pure [] -- File errors handled elsewhere
-            Right (Left _) -> pure [] -- Parse errors are handled elsewhere
+            Left (_ :: IOException) -> pure []
+            Right (Left _) -> pure []
             Right (Right expr) -> pure $ findLayoutViolations path expr
     pure $ concat violations
 
--- | Recursively find all .nix files
 findNixFiles :: FilePath -> IO [FilePath]
 findNixFiles dir = do
     exists <- doesDirectoryExist dir

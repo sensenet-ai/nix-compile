@@ -1,3 +1,14 @@
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // NixCompile.Docs.Types // types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "He raised himself on one elbow to look at her."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                             // Docs // shared documentation types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -7,12 +18,13 @@ module NixCompile.Docs.Types (
 )
 where
 
-import Data.Aeson (ToJSON (..), object, (.=))
 import Data.Text (Text)
 import GHC.Generics (Generic)
+
+import Data.Aeson (ToJSON (..), object, (.=))
+
 import NixCompile.Types (Span)
 
--- | A documentation item extracted from source
 data DocItem = DocItem
     { docName :: Text
     , docDescription :: Text

@@ -4,20 +4,18 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile.Nix.Types
-Description : Type system for Nix expressions
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                        // nix // types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "The box was a universe, a poem."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // type // system
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-A Hindley-Milner style type system for a subset of Nix.
-We infer types from:
-  - Default values in function parameters
-  - Builtin function signatures
-  - Operators
-  - Literal values
-
-The goal is to make Nix feel like a typed language, with
-type signatures generated as comments.
--}
 module NixCompile.Nix.Types (
     -- * Types
     NixType (..),
@@ -56,41 +54,36 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics (Generic)
 
--- ============================================================================
--- Types
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- types
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Type variables for unification
 newtype TypeVar = TypeVar {unTypeVar :: Int}
     deriving stock (Eq, Ord, Show, Generic)
     deriving newtype (FromJSON, ToJSON)
 
--- | Nix types
 data NixType
-    = TVar !TypeVar -- Type variable (for inference)
-    | TInt -- Integers
-    | TFloat -- Floats
-    | TBool -- Booleans
-    | TString -- Strings
-    | TStrLit !Text -- String literal (singleton type)
-    | TPath -- Paths (including store paths)
-    | TNull -- null
-    | TList !NixType -- Lists (homogeneous)
-    | TAttrs !(Map Text (NixType, Bool)) -- Attribute sets (type, isOptional)
-    | TAttrsOpen !(Map Text (NixType, Bool)) -- Open attrset
-    | TFun !NixType !NixType -- Functions
-    | TDerivation -- Derivations (special)
-    | TUnion ![NixType] -- Union types (for builtins that accept multiple)
-    | TAny -- Top type (unknown, accepts anything)
+    = TVar !TypeVar
+    | TInt
+    | TFloat
+    | TBool
+    | TString
+    | TStrLit !Text
+    | TPath
+    | TNull
+    | TList !NixType
+    | TAttrs !(Map Text (NixType, Bool))
+    | TAttrsOpen !(Map Text (NixType, Bool))
+    | TFun !NixType !NixType
+    | TDerivation
+    | TUnion ![NixType]
+    | TAny
     deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON NixType
 
 instance ToJSON NixType
 
-{- | Type scheme (polymorphic type with quantified variables)
-e.g., forall a. a -> a
--}
 data Scheme = Forall ![TypeVar] !NixType
     deriving stock (Eq, Show, Generic)
 
@@ -98,22 +91,20 @@ instance FromJSON Scheme
 
 instance ToJSON Scheme
 
--- ============================================================================
--- Constraints
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- constraints
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Type constraint
 data Constraint
-    = NixType :~: NixType -- Equality constraint
+    = NixType :~: NixType
     deriving stock (Eq, Show, Generic)
 
 infix 4 :~:
 
--- ============================================================================
--- Substitution
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- substitution
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Substitution from type variables to types
 type Subst = Map TypeVar NixType
 
 emptySubst :: Subst
@@ -122,11 +113,10 @@ emptySubst = Map.empty
 singleSubst :: TypeVar -> NixType -> Subst
 singleSubst = Map.singleton
 
--- | Compose substitutions (apply s1 then s2)
 composeSubst :: Subst -> Subst -> Subst
-composeSubst s1 s2 = Map.map (applySubst s1) s2 `Map.union` s1
+composeSubst substitution1 substitution2 =
+    Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
 
--- | Apply substitution to a type
 applySubst :: Subst -> NixType -> NixType
 applySubst s = go
   where
@@ -139,16 +129,14 @@ applySubst s = go
         TUnion ts -> TUnion (map go ts)
         t -> t
 
--- | Apply substitution to a scheme
 applySubstScheme :: Subst -> Scheme -> Scheme
 applySubstScheme s (Forall vars t) =
     Forall vars (applySubst (foldr Map.delete s vars) t)
 
--- ============================================================================
--- Free type variables
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- free type variables
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Get free type variables in a type
 freeTypeVars :: NixType -> Set TypeVar
 freeTypeVars = \case
     TVar v -> Set.singleton v
@@ -159,16 +147,14 @@ freeTypeVars = \case
     TUnion ts -> Set.unions (map freeTypeVars ts)
     _ -> Set.empty
 
--- | Get free type variables in a scheme
 freeTypeVarsScheme :: Scheme -> Set TypeVar
 freeTypeVarsScheme (Forall vars t) =
     freeTypeVars t `Set.difference` Set.fromList vars
 
--- ============================================================================
--- Pretty Printing
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- pretty printing
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Pretty print a type using normalized variable names (a, b, c...)
 prettyType :: NixType -> Text
 prettyType t = prettyTypeWith mapping t
   where
@@ -176,12 +162,10 @@ prettyType t = prettyTypeWith mapping t
     names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
     mapping = Map.fromList $ zip vars names
 
--- | Pretty print a type scheme
 prettyScheme :: Scheme -> Text
 prettyScheme (Forall [] t) = prettyType t
 prettyScheme (Forall vars t) =
     let
-        -- Combine bound variables and free variables (if any)
         free = Set.toAscList (freeTypeVars t `Set.difference` Set.fromList vars)
         allVars = vars ++ free
         names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
@@ -191,7 +175,6 @@ prettyScheme (Forall vars t) =
      in
         "forall " <> T.intercalate " " (map prettyVar vars) <> ". " <> prettyTypeWith mapping t
 
--- | Internal helper: pretty print with variable mapping
 prettyTypeWith :: Map TypeVar Text -> NixType -> Text
 prettyTypeWith mapping = go
   where

@@ -5,21 +5,21 @@
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-{- |
-Module      : NixAdversarial
-Description : Brutal adversarial property tests for the Nix type inference system
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // tests // nix // adversarial
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "The soap had been running continuously since before he was born, the
+--    plot a multiheaded narrative tapeworm that coiled back in to devour
+--    itself every few months, then sprouted new heads hungry for tension and
+--    thrust."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                  // nix // adversarial // property // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Attacks the Nix type inferrer (NixCompile.Nix.Infer):
-  - Degenerate unification
-  - Type variable exhaustion
-  - Deep nesting
-  - Scheme instantiation bomb
-  - With-scope memoization integrity
-  - __functor edge cases
-  - Row polymorphism edges
-
-This module is imported by Props.hs.
--}
 module NixAdversarial where
 
 import Control.Exception (SomeException, evaluate, try)

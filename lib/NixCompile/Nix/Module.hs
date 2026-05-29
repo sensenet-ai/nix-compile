@@ -2,26 +2,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{- |
-Module      : NixCompile.Nix.Module
-Description : Module graph construction and import following
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                   // nix // module
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "And the next. And ever was."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // module // graph
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Builds a dependency graph of Nix files by following imports.
-This is essential for cross-file type inference.
-
-Import patterns we handle:
-
-  import ./path.nix
-  import ./path.nix { arg = value; }
-  import ./path { inherit lib; }
-  import inputs.nixpkgs { system = "x86_64-linux"; }
-  inputs.flake-parts.lib.mkFlake { inherit inputs; } (import ./main.nix)
-
-We track:
-  - Which files import which other files
-  - What arguments are passed to imports
-  - The type signature of each module
--}
 module NixCompile.Nix.Module (
     -- * Module graph
     ModuleGraph (..),
@@ -72,65 +64,58 @@ import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))
 
--- ============================================================================
--- Types
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- types
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | A module (Nix file) in the graph
 data Module = Module
-    { modPath :: !FilePath -- Canonical path
-    , modExpr :: !NExprLoc -- Parsed AST
-    , modType :: !NixType -- Inferred type
-    , modImports :: ![Import] -- Imports from this module
+    { modPath :: !FilePath
+    , modExpr :: !NExprLoc
+    , modType :: !NixType
+    , modImports :: ![Import]
     }
     deriving (Show)
 
--- | An import reference
 data Import = Import
-    { impPath :: !FilePath -- Resolved path (canonical)
-    , impRawPath :: !Text -- Original path in source
-    , impArgs :: !(Maybe NExprLoc) -- Arguments passed (if any)
-    , impSpan :: !Span -- Source location
+    { impPath :: !FilePath
+    , impRawPath :: !Text
+    , impArgs :: !(Maybe NExprLoc)
+    , impSpan :: !Span
     }
     deriving (Show)
 
--- | A parse failure record
 data ParseFailure = ParseFailure
-    { pfPath :: !FilePath -- File that failed to parse
-    , pfError :: !Text -- Error message
+    { pfPath :: !FilePath
+    , pfError :: !Text
     }
     deriving (Show)
 
--- | A lint failure record (with/rec violation)
 data LintFailure = LintFailure
-    { lfPath :: !FilePath -- File with violation
-    , lfViolations :: ![NixViolation] -- Violations found
+    { lfPath :: !FilePath
+    , lfViolations :: ![NixViolation]
     }
     deriving (Show)
 
--- | A layout failure record (_index.nix, missing _class, etc.)
 data LayoutFailure = LayoutFailure
-    { layPath :: !FilePath -- File with violation
-    , layViolations :: ![LayoutViolation] -- Violations found
+    { layPath :: !FilePath
+    , layViolations :: ![LayoutViolation]
     }
     deriving (Show)
 
--- | The complete module graph
 data ModuleGraph = ModuleGraph
-    { mgModules :: !(Map FilePath Module) -- All modules by path
-    , mgRoot :: !FilePath -- Entry point (e.g., flake.nix)
-    , mgOrder :: ![FilePath] -- Topological order (deps first)
-    , mgFailures :: ![ParseFailure] -- Files that failed to parse
-    , mgLintFailures :: ![LintFailure] -- Files with with/rec
-    , mgLayoutFailures :: ![LayoutFailure] -- Files with layout violations
+    { mgModules :: !(Map FilePath Module)
+    , mgRoot :: !FilePath
+    , mgOrder :: ![FilePath]
+    , mgFailures :: ![ParseFailure]
+    , mgLintFailures :: ![LintFailure]
+    , mgLayoutFailures :: ![LayoutFailure]
     }
     deriving (Show)
 
--- ============================================================================
--- Building
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- building
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Internal build state
 data BuildState = BuildState
     { bsModules :: !(Map FilePath Module)
     , bsFailures :: ![ParseFailure]
@@ -138,7 +123,11 @@ data BuildState = BuildState
     , bsLayoutFailures :: ![LayoutFailure]
     }
 
--- | Build a module graph starting from a root file
+-- ── entry points ─────────────────────────────────────────────────
+
+{- | build a complete module graph starting from a root nix file
+resolves imports transitively, computes topological order, collects failures
+-}
 buildModuleGraph :: FilePath -> IO (Either Text ModuleGraph)
 buildModuleGraph rootPath = do
     canonRoot <- canonicalizePath rootPath
@@ -156,7 +145,7 @@ buildModuleGraph rootPath = do
                 , mgLayoutFailures = reverse (bsLayoutFailures finalState)
                 }
 
--- | Build module graph from a flake directory
+-- | build module graph starting from flake.nix in the given directory
 buildModuleGraphFromFlake :: FilePath -> IO (Either Text ModuleGraph)
 buildModuleGraphFromFlake dir = do
     let flakePath = dir </> "flake.nix"
@@ -165,208 +154,222 @@ buildModuleGraphFromFlake dir = do
         then buildModuleGraph flakePath
         else pure $ Left $ "No flake.nix found in " <> T.pack dir
 
-{- | Recursively build modules
-Tolerant: skips files that fail to parse, continues with others
--}
+-- ── recursive module loading ─────────────────────────────────────
+
+-- | build modules by recursively walking imports, guarding against cycles via visited set
 buildModules :: FilePath -> FilePath -> Set FilePath -> BuildState -> IO BuildState
-buildModules rootDir path visited state
-    | path `Set.member` visited = pure state -- Already processed
-    | otherwise = do
-        exists <- doesFileExist path
-        if not exists
-            then pure state -- Skip non-existent (might be external input)
-            else do
-                result <- try (parseNixFileLoc (NixPath.Path path))
-                case result of
-                    Left (e :: IOException) -> do
-                        let failure = ParseFailure path (T.pack $ show e)
-                        let state' = state{bsFailures = failure : bsFailures state}
-                        pure state'
-                    Right (Left doc) -> do
-                        -- Record the parse failure
-                        let failure = ParseFailure path (T.pack (show doc))
-                        let state' = state{bsFailures = failure : bsFailures state}
-                        pure state'
-                    Right (Right expr) -> do
-                        let imports = findImports (takeDirectory path) expr
-                        let modType = case inferExpr expr of
-                                Right (t, _) -> t
-                                Left _ -> TAny
+buildModules _rootDir path visited state
+    | path `Set.member` visited = pure state
+    | otherwise = processFile path visited state
 
-                        -- Check for with/rec violations
-                        let lintViolations = findNixViolations expr
-
-                        -- Check for layout violations
-                        let layoutViolations = findLayoutViolations path expr
-
-                        let modDef =
-                                Module
-                                    { modPath = path
-                                    , modExpr = expr
-                                    , modType = modType
-                                    , modImports = imports
-                                    }
-
-                        let state' = state{bsModules = Map.insert path modDef (bsModules state)}
-
-                        -- Record lint failures if any
-                        let state'' =
-                                if null lintViolations
-                                    then state'
-                                    else state'{bsLintFailures = LintFailure path lintViolations : bsLintFailures state'}
-
-                        -- Record layout failures if any
-                        let state''' =
-                                if null layoutViolations
-                                    then state''
-                                    else state''{bsLayoutFailures = LayoutFailure path layoutViolations : bsLayoutFailures state''}
-
-                        let visited' = Set.insert path visited
-
-                        -- Recursively process imports
-                        foldM (processImport rootDir visited') state''' imports
-
--- | Process a single import, checking for path traversal
-processImport :: FilePath -> Set FilePath -> BuildState -> Import -> IO BuildState
-processImport rootDir visited state imp = do
-    exists <- doesFileExist (impPath imp)
-    if not exists
-        then pure state -- Skip non-existent imports
+-- | parse a single file and, on success, process its imports
+processFile :: FilePath -> Set FilePath -> BuildState -> IO BuildState
+processFile path visited state = do
+    fileExists <- doesFileExist path
+    if not fileExists
+        then pure state
         else do
-            canonPath <- canonicalizePath (impPath imp)
+            parseResult <- try (parseNixFileLoc (NixPath.Path path))
+            case parseResult of
+                Left (exception :: IOException) ->
+                    pure $ state{bsFailures = ParseFailure path (T.pack $ show exception) : bsFailures state}
+                Right (Left parseError) ->
+                    pure $ state{bsFailures = ParseFailure path (T.pack (show parseError)) : bsFailures state}
+                Right (Right expr) ->
+                    processParsedFile path visited state expr
+
+-- ── process a successfully parsed file ───────────────────────────
+
+-- | extract imports, run type inference / lint / layout checks, then recurse
+processParsedFile :: FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
+processParsedFile path visited state expr = do
+    let imports = findImports (takeDirectory path) expr
+    let moduleType = case inferExpr expr of
+            Right (type_, _) -> type_
+            Left _ -> TAny
+    let lintViolations = findNixViolations expr
+    let layoutViolations = findLayoutViolations path expr
+
+    let moduleDefinition =
+            Module
+                { modPath = path
+                , modExpr = expr
+                , modType = moduleType
+                , modImports = imports
+                }
+
+    let withModule = state{bsModules = Map.insert path moduleDefinition (bsModules state)}
+    let withLint = recordLintFailures path lintViolations withModule
+    let withLayout = recordLayoutFailures path layoutViolations withLint
+    let updatedVisited = Set.insert path visited
+
+    foldM (processImport (takeDirectory path) updatedVisited) withLayout imports
+
+-- | record lint violations only if non-empty (avoids cluttering failure list)
+recordLintFailures :: FilePath -> [NixViolation] -> BuildState -> BuildState
+recordLintFailures path violations state
+    | null violations = state
+    | otherwise = state{bsLintFailures = LintFailure path violations : bsLintFailures state}
+
+recordLayoutFailures :: FilePath -> [LayoutViolation] -> BuildState -> BuildState
+recordLayoutFailures path violations state
+    | null violations = state
+    | otherwise = state{bsLayoutFailures = LayoutFailure path violations : bsLayoutFailures state}
+
+-- ── import processing ────────────────────────────────────────────
+
+{- | process a single import: check existence, enforce root-boundary, recurse
+n.b. imports outside rootDir are silently skipped (vendored deps boundary)
+-}
+processImport :: FilePath -> Set FilePath -> BuildState -> Import -> IO BuildState
+processImport rootDir visited state importBinding = do
+    exists <- doesFileExist (impPath importBinding)
+    if not exists
+        then pure state
+        else do
+            canonPath <- canonicalizePath (impPath importBinding)
             let rootPrefix = rootDir ++ [pathSeparator]
             if rootPrefix `isPrefixOf` canonPath || canonPath == rootDir
                 then buildModules rootDir canonPath visited state
-                else pure state -- Path traversal blocked silently
+                else pure state
 
--- ============================================================================
--- Import Finding
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- import finding
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Find all imports in an expression
+-- ── import finding: walk AST for `import ./path` calls ───────────
+
+-- | walk an entire expression tree looking for import calls
 findImports :: FilePath -> NExprLoc -> [Import]
-findImports baseDir = go
+findImports baseDir = walkExpr
   where
-    go :: NExprLoc -> [Import]
-    go (Fix (Compose (AnnUnit srcSpan e))) = case e of
-        -- import ./path  or  (import ./path) { args }
-        NApp func arg ->
-            -- First check if func is directly the import builtin
-            case isImportBuiltin func of
-                Just () ->
-                    -- func is `import`, arg is the path
-                    makeImport baseDir (extractPath arg) Nothing srcSpan
-                Nothing ->
-                    -- func might be (import ./path) and arg is the args
-                    case unwrapImport func of
-                        Just (rawPath, Nothing) ->
-                            makeImport baseDir rawPath (Just arg) srcSpan ++ go arg
-                        Just (rawPath, Just inner) ->
-                            makeImport baseDir rawPath (Just arg) srcSpan ++ go inner ++ go arg
-                        Nothing -> go func ++ go arg
-        -- Recurse into all expressions
-        NLet bindings body ->
-            concatMap goBinding bindings ++ go body
-        NSet _ bindings -> concatMap goBinding bindings
-        NIf c t f -> go c ++ go t ++ go f
-        NWith s b -> go s ++ go b
-        NAssert c b -> go c ++ go b
-        NAbs _ b -> go b
-        NList xs -> concatMap go xs
-        NSelect _ b _ -> go b
-        NBinary _ l r -> go l ++ go r
-        NUnary _ x -> go x
+    walkExpr :: NExprLoc -> [Import]
+    walkExpr (Fix (Compose (AnnUnit srcSpan expr))) = case expr of
+        NApp func arg -> processApplication baseDir srcSpan func arg walkExpr
+        NLet bindings body -> concatMap walkBinding bindings ++ walkExpr body
+        NSet _ bindings -> concatMap walkBinding bindings
+        NIf cond thenBranch elseBranch -> walkExpr cond ++ walkExpr thenBranch ++ walkExpr elseBranch
+        NWith scope body -> walkExpr scope ++ walkExpr body
+        NAssert cond body -> walkExpr cond ++ walkExpr body
+        NAbs _ body -> walkExpr body
+        NList elements -> concatMap walkExpr elements
+        NSelect _ base _ -> walkExpr base
+        NBinary _ left right -> walkExpr left ++ walkExpr right
+        NUnary _ operand -> walkExpr operand
         _ -> []
 
-    goBinding :: Nix.Binding NExprLoc -> [Import]
-    goBinding = \case
-        Nix.NamedVar _ expr _ -> go expr
-        Nix.Inherit (Just scope) _ _ -> go scope
-        Nix.Inherit Nothing _ _ -> []
+    walkBinding :: Nix.Binding NExprLoc -> [Import]
+    walkBinding (Nix.NamedVar _ expr _) = walkExpr expr
+    walkBinding (Nix.Inherit (Just scope) _ _) = walkExpr scope
+    walkBinding (Nix.Inherit Nothing _ _) = []
 
-    -- Try to unwrap an import expression, returning the path and any remaining args
-    -- Returns: Just (path, maybeRemainingExpr) if this is an import
-    unwrapImport :: NExprLoc -> Maybe (Text, Maybe NExprLoc)
-    unwrapImport (Fix (Compose (AnnUnit _ e))) = case e of
-        -- import path  or  import path { args }
-        NApp func pathExpr -> case func of
-            -- Direct: import ./path
-            Fix (Compose (AnnUnit _ (NSym name)))
-                | varNameText name == "import" -> Just (extractPath pathExpr, Nothing)
-            -- Curried: (import ./path) { args } - pathExpr is the args, recurse into func
-            _ -> case unwrapImport func of
-                Just (path, Nothing) | not (T.null path) -> Just (path, Just pathExpr)
-                _ -> case isImportBuiltin func of
-                    Just () -> Just (extractPath pathExpr, Nothing)
-                    Nothing -> Nothing
-        _ -> Nothing
+-- ── import application analysis ──────────────────────────────────
 
-    -- Check if expression is `import` or `builtins.import`
-    isImportBuiltin :: NExprLoc -> Maybe ()
-    isImportBuiltin (Fix (Compose (AnnUnit _ e))) = case e of
-        NSym name | varNameText name == "import" -> Just ()
-        NSelect _ _ (attr :| rest)
-            | varNameText (keyName (last (attr : rest))) == "import" -> Just ()
-        _ -> Nothing
+{- | given an application node, determine if it's an import and extract its parts
+handles: import ./path, builtins.import ./path, import ./path (arg)
+-}
+processApplication :: FilePath -> SrcSpan -> NExprLoc -> NExprLoc -> (NExprLoc -> [Import]) -> [Import]
+processApplication baseDir srcSpan func arg continue
+    | Just () <- checkImportBuiltin func = makeImport baseDir (extractImportPath arg) Nothing srcSpan
+    | Just (rawPath, Nothing) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue arg
+    | Just (rawPath, Just inner) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue inner ++ continue arg
+    | otherwise = continue func ++ continue arg
 
-    -- Extract path from path expression
-    extractPath :: NExprLoc -> Text
-    extractPath (Fix (Compose (AnnUnit _ e))) = case e of
-        NLiteralPath (NixPath.Path p) -> T.pack p
-        NStr (DoubleQuoted [Plain t]) -> t
-        NStr (Indented _ [Plain t]) -> t
-        _ -> ""
+-- | check if an expression is literally the `import` builtin (or builtins.import)
+checkImportBuiltin :: NExprLoc -> Maybe ()
+checkImportBuiltin (Fix (Compose (AnnUnit _ expr))) = case expr of
+    NSym name | nixVarNameText name == "import" -> Just ()
+    NSelect _ _ (attr :| rest)
+        | nixVarNameText (nixKeyName (last (attr : rest))) == "import" -> Just ()
+    _ -> Nothing
 
-    keyName (StaticKey k) = k
-    keyName (DynamicKey _) = VarName ""
+{- | try to unwrap a nested import expression: import (./path + args)
+returns (path, maybe inner-arg-expr)
+-}
+unwrapImportExpression :: NExprLoc -> Maybe (Text, Maybe NExprLoc)
+unwrapImportExpression (Fix (Compose (AnnUnit _ expr))) = case expr of
+    NApp func pathExpr -> unwrapImportHelper func pathExpr
+    _ -> Nothing
 
-    varNameText :: VarName -> Text
-    varNameText = coerce
+-- | helper to unwrap import at the head of a chain of applications
+unwrapImportHelper :: NExprLoc -> NExprLoc -> Maybe (Text, Maybe NExprLoc)
+unwrapImportHelper func pathExpr
+    | Fix (Compose (AnnUnit _ (NSym name))) <- func
+    , nixVarNameText name == "import" =
+        Just (extractImportPath pathExpr, Nothing)
+    | Just (path, Nothing) <- unwrapImportExpression func
+    , not (T.null path) =
+        Just (path, Just pathExpr)
+    | Just () <- checkImportBuiltin func = Just (extractImportPath pathExpr, Nothing)
+    | otherwise = Nothing
 
-    makeImport :: FilePath -> Text -> Maybe NExprLoc -> SrcSpan -> [Import]
-    makeImport base rawPath args srcSpan
-        | T.null rawPath = []
-        | otherwise =
-            let resolved = resolveImportPath base (T.unpack rawPath)
-             in [ Import
-                    { impPath = resolved
-                    , impRawPath = rawPath
-                    , impArgs = args
-                    , impSpan = toSpan srcSpan
-                    }
-                ]
+-- | extract the file path text from an import argument expression
+extractImportPath :: NExprLoc -> Text
+extractImportPath (Fix (Compose (AnnUnit _ expr))) = case expr of
+    NLiteralPath (NixPath.Path p) -> T.pack p
+    NStr (DoubleQuoted [Plain t]) -> t
+    NStr (Indented _ [Plain t]) -> t
+    _ -> ""
 
-    toSpan :: SrcSpan -> Span
-    toSpan srcSpan =
-        let begin = getSpanBegin srcSpan
-            end = getSpanEnd srcSpan
-            fileFromBegin = case begin of
-                NSourcePos path _ _ -> Just (coerce path)
-         in Span
-                { spanStart = Loc (sourceLine begin) (sourceCol begin)
-                , spanEnd = Loc (sourceLine end) (sourceCol end)
-                , spanFile = fileFromBegin
+-- ── key & name helpers ───────────────────────────────────────────
+
+nixKeyName :: NKeyName r -> VarName
+nixKeyName (StaticKey key) = key
+nixKeyName (DynamicKey _) = VarName ""
+
+nixVarNameText :: VarName -> Text
+nixVarNameText = coerce
+
+-- | construct an Import record from a raw path string and source location
+makeImport :: FilePath -> Text -> Maybe NExprLoc -> SrcSpan -> [Import]
+makeImport baseDirectory rawPath arguments srcSpan
+    | T.null rawPath = []
+    | otherwise =
+        let resolvedPath = resolveImportPath baseDirectory (T.unpack rawPath)
+         in [ Import
+                { impPath = resolvedPath
+                , impRawPath = rawPath
+                , impArgs = arguments
+                , impSpan = nixSrcSpanToSpan srcSpan
                 }
+            ]
 
-    sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-    sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
+-- ── Nix SrcSpan → our Span type ──────────────────────────────────
 
--- | Resolve an import path relative to a base directory
+nixSrcSpanToSpan :: SrcSpan -> Span
+nixSrcSpanToSpan srcSpan =
+    let begin = getSpanBegin srcSpan
+        end = getSpanEnd srcSpan
+        fileFromBegin = case begin of
+            NSourcePos path _ _ -> Just (coerce path)
+     in Span
+            { spanStart = Loc (nixSourceLine begin) (nixSourceCol begin)
+            , spanEnd = Loc (nixSourceLine end) (nixSourceCol end)
+            , spanFile = fileFromBegin
+            }
+
+nixSourceLine :: NSourcePos -> Int
+nixSourceLine (NSourcePos _ (NPos line) _) = unPos line
+
+nixSourceCol :: NSourcePos -> Int
+nixSourceCol (NSourcePos _ _ (NPos col)) = unPos col
+
+-- | resolve a relative or absolute import path against the base directory
 resolveImportPath :: FilePath -> FilePath -> FilePath
 resolveImportPath baseDir path = case path of
     '.' : _ -> normalise (baseDir </> path)
     '/' : _ -> path
-    _ -> path -- External input, keep as-is
+    _ -> path
 
--- ============================================================================
--- Queries
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════
+-- queries
+-- ═════════════════════════════════════════════════════════════════════════════
 
--- | Get all imports for a module
+-- | look up the imports of a specific module by path
 moduleImports :: ModuleGraph -> FilePath -> [Import]
 moduleImports mg path = maybe [] modImports (Map.lookup path (mgModules mg))
 
--- | Get all modules that import a given module
+-- | find all modules that directly import the given path
 moduleDependents :: ModuleGraph -> FilePath -> [FilePath]
 moduleDependents mg path =
     [ modPath m
@@ -374,26 +377,27 @@ moduleDependents mg path =
     , any (\i -> impPath i == path) (modImports m)
     ]
 
--- | Get topological order (dependencies first)
+-- | expose the pre-computed topological order
 topologicalOrder :: ModuleGraph -> [FilePath]
 topologicalOrder = mgOrder
 
--- | Check if the module graph has any violations
+-- | does this graph have any failures at all (parse, lint, or layout)?
 hasViolations :: ModuleGraph -> Bool
 hasViolations mg =
     not (null (mgFailures mg))
         || not (null (mgLintFailures mg))
         || not (null (mgLayoutFailures mg))
 
--- | Count total violations across all categories
+-- | total count of all violations across all categories
 totalViolationCount :: ModuleGraph -> Int
 totalViolationCount mg =
     length (mgFailures mg)
-        + sum (map (length . lfViolations) (mgLintFailures mg)) -- Parse failures
-        + sum (map (length . layViolations) (mgLayoutFailures mg)) -- Lint violations
-        -- Layout violations
+        + sum (map (length . lfViolations) (mgLintFailures mg))
+        + sum (map (length . layViolations) (mgLayoutFailures mg))
 
--- | Compute topological order using DFS
+{- | compute a DFS-based topological order starting from the root module
+n.b. result is reversed so root appears first
+-}
 computeOrder :: FilePath -> Map FilePath Module -> [FilePath]
 computeOrder root modules = reverse $ snd $ dfs Set.empty [] root
   where

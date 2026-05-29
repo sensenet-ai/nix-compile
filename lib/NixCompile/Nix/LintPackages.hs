@@ -1,3 +1,15 @@
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                          // NixCompile.Nix.LintPackages // check
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "The black Honda hovered twenty meters above the octagonal deck of the
+--    derelict oil rig."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                             // Nix // package directory lint rules
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -13,9 +25,10 @@ import Control.Monad (filterM)
 import Data.List (nub)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
-import NixCompile.Nix.ModuleKind (detectKindFromFile, isPackage)
 import System.Directory (doesFileExist, listDirectory)
 import System.FilePath (takeDirectory, takeExtension, (</>))
+
+import NixCompile.Nix.ModuleKind (detectKindFromFile, isPackage)
 
 data PackageViolationCode
     = P001
@@ -35,35 +48,35 @@ checkPackageDirs nixFiles = do
     catMaybes <$> mapM checkDefaultNix packageDirs
 
 isPackageDir :: FilePath -> IO Bool
-isPackageDir dir = do
-    result <- try (listDirectory dir)
-    case result of
+isPackageDir directory = do
+    listResult <- try (listDirectory directory)
+    case listResult of
         Left (_ :: IOException) -> pure False
-        Right entries -> do
+        Right entries ->
             let nixFilesInDir = filter ((== ".nix") . takeExtension) entries
-            anyM (\f -> isPackageModule (dir </> f)) nixFilesInDir
+             in anyM (\file -> isPackageModule (directory </> file)) nixFilesInDir
 
 isPackageModule :: FilePath -> IO Bool
 isPackageModule path = do
-    det <- detectKindFromFile path
-    pure (isPackage det)
+    moduleKind <- detectKindFromFile path
+    pure (isPackage moduleKind)
 
 checkDefaultNix :: FilePath -> IO (Maybe PackageViolation)
-checkDefaultNix dir = do
-    exists <- doesFileExist (dir </> "default.nix")
-    pure $
-        if exists
-            then Nothing
-            else
-                Just $
-                    PackageViolation
-                        { pvCode = P001
-                        , pvPath = dir
-                        , pvMessage = "Package directory missing default.nix"
-                        }
+checkDefaultNix directory = do
+    fileExists <- doesFileExist (directory </> "default.nix")
+    pure $ missingDefaultViolation directory fileExists
+  where
+    missingDefaultViolation _ True = Nothing
+    missingDefaultViolation directoryPath False =
+        Just
+            PackageViolation
+                { pvCode = P001
+                , pvPath = directoryPath
+                , pvMessage = "Package directory missing default.nix"
+                }
 
 anyM :: (Monad m) => (a -> m Bool) -> [a] -> m Bool
 anyM _ [] = pure False
-anyM f (x : xs) = do
-    r <- f x
-    if r then pure True else anyM f xs
+anyM predicate (element : rest) = do
+    result <- predicate element
+    if result then pure True else anyM predicate rest

@@ -3,6 +3,18 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                   // nix // compile // config
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Credit me with a certain talent for obtaining desired results."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // config // dhall
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module NixCompile.Config (
     Severity (..),
     RuleOverride (..),
@@ -22,21 +34,23 @@ module NixCompile.Config (
 where
 
 import Control.Exception (SomeException, try)
+import GHC.Generics (Generic)
+
 import Data.Text (Text)
 import Data.Text qualified as T
 import Dhall (FromDhall, InterpretOptions (..), defaultInterpretOptions, genericAutoWith)
 import Dhall qualified
-import GHC.Generics (Generic)
+import System.FilePath qualified as FP
+
 import NixCompile.Lint.Forbidden qualified as Bash
 import NixCompile.Nix.Lint qualified as NixLint
 import NixCompile.Nix.LintDerivation qualified as Deriv
 import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.LintPatterns qualified as LintPatterns
-import System.FilePath qualified as FP
 
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 -- Types
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 
 data Severity
     = SevOff
@@ -88,9 +102,9 @@ instance FromDhall Config where
                 }
             )
 
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 -- Defaults
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 
 defaultConfig :: Config
 defaultConfig =
@@ -100,9 +114,9 @@ defaultConfig =
         , configOverrides = []
         }
 
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 -- Loading
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 
 loadConfig :: FilePath -> IO (Either Text Config)
 loadConfig path = do
@@ -111,23 +125,23 @@ loadConfig path = do
         Left (e :: SomeException) -> pure (Left (T.pack (show e)))
         Right config -> pure (Right config)
 
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 -- Queries
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 
 effectiveSeverity :: Config -> Text -> Maybe Severity
 effectiveSeverity config ruleId =
     case filter ((== ruleId) . overrideId) (configOverrides config) of
-        o : _ -> Just (overrideSeverity o)
+        override : _ -> Just (overrideSeverity override)
         [] -> Nothing
 
 configIgnores :: Config -> [Text]
 configIgnores = configExtraIgnores
 
 isIgnored :: Config -> FilePath -> Bool
-isIgnored config path = any (`matchGlob` npath) (configExtraIgnores config)
+isIgnored config filePath = any (`matchGlob` normalisedPath) (configExtraIgnores config)
   where
-    npath = FP.normalise path
+    normalisedPath = FP.normalise filePath
 
 isSuppressed :: Config -> Text -> Bool
 isSuppressed config ruleId = effectiveSeverity config ruleId == Just SevOff
@@ -162,9 +176,9 @@ patternRuleId = \case
     LintPatterns.VOrNullFallback -> "or-null-fallback"
     LintPatterns.VAttrTranslation -> "no-translate-attrs-outside-prelude"
 
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 -- Internal: glob matching
--------------------------------------------------------------------------------
+-- ────────────────────────────────────────────────────────────────────────────
 
 data Token
     = GlobStar
@@ -179,54 +193,57 @@ tokenise = go
     go ('*' : '*' : rest) = GlobStar : go rest
     go ('*' : rest) = Star : go rest
     go ('/' : rest) = go rest
-    go cs =
-        let (lit, rest') = break (`elem` ("*/" :: String)) cs
-         in if null lit
+    go chars =
+        let (literal, rest') = break (`elem` ("*/" :: String)) chars
+         in if null literal
                 then go rest'
-                else Lit lit : go rest'
+                else Lit literal : go rest'
 
 charMatch :: String -> String -> Bool
 charMatch [] [] = True
 charMatch ('*' : pat) [] = charMatch pat []
-charMatch ('*' : pat) str@(_ : rest) = charMatch pat str || charMatch ('*' : pat) rest
-charMatch (c : pat) (d : rest) = c == d && charMatch pat rest
+charMatch ('*' : pat) string@(_ : rest) = charMatch pat string || charMatch ('*' : pat) rest
+charMatch (char : pat) (otherChar : rest) = char == otherChar && charMatch pat rest
 charMatch _ _ = False
 
 tokensToPattern :: [Token] -> String
 tokensToPattern [] = []
 tokensToPattern (GlobStar : rest) = '*' : '*' : tokensToPattern rest
 tokensToPattern (Star : rest) = '*' : tokensToPattern rest
-tokensToPattern (Lit l : rest) = l <> tokensToPattern rest
+tokensToPattern (Lit literal : rest) = literal <> tokensToPattern rest
 
 splitComponents :: String -> [[Token]]
 splitComponents = map tokenise . splitOn '/'
 
 splitOn :: Char -> String -> [String]
 splitOn _ [] = [""]
-splitOn c s =
-    let (before, after) = break (== c) s
+splitOn delimiter string =
+    let (before, after) = break (== delimiter) string
      in before : case after of
             "" -> []
-            _ : rest -> splitOn c rest
+            _ : rest -> splitOn delimiter rest
 
 matchComponents :: [[Token]] -> [String] -> Bool
 matchComponents [] [] = True
 matchComponents [] _ = False
-matchComponents (comp : crest) segs = case comp of
-    [] -> matchComponents crest segs
-    [GlobStar] -> matchGlobStar crest segs
-    clob ->
-        case segs of
-            seg : srest -> charMatch (tokensToPattern clob) seg && matchComponents crest srest
-            [] -> False
+matchComponents (component : remainingComponents) segments
+    | null component = matchComponents remainingComponents segments
+    | [GlobStar] <- component = matchGlobStar remainingComponents segments
+    | segment : remainingSegments <- segments =
+        charMatch (tokensToPattern component) segment
+            && matchComponents remainingComponents remainingSegments
+    | otherwise = False
   where
-    matchGlobStar restC [] = matchComponents restC []
-    matchGlobStar restC sgs@(_ : _) = matchComponents restC sgs || matchComponents (comp : restC) (drop 1 sgs)
+    matchGlobStar remainingComponentPatterns [] =
+        matchComponents remainingComponentPatterns []
+    matchGlobStar remainingComponentPatterns globSegments@(_ : _) =
+        matchComponents remainingComponentPatterns globSegments
+            || matchComponents (component : remainingComponentPatterns) (drop 1 globSegments)
 
 matchGlob :: Text -> FilePath -> Bool
-matchGlob patt fp
-    | '/' `elem` pat = matchComponents (splitComponents pat) segs
-    | otherwise = any (charMatch pat) segs
+matchGlob patternText filePath
+    | '/' `elem` globPattern = matchComponents (splitComponents globPattern) segments
+    | otherwise = any (charMatch globPattern) segments
   where
-    pat = T.unpack patt
-    segs = FP.splitDirectories fp
+    globPattern = T.unpack patternText
+    segments = FP.splitDirectories filePath

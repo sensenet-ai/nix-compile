@@ -1,5 +1,21 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                      // bash // parsing
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "When Beauvoir or I talk to you about the loa and their horses, as we
+--    call those few the loa choose to ride, you should pretend that we are
+--    talking two languages at once. One of them, you already understand.
+--    That's the language of street tech, as you call it. We may be using
+--    different words, but we're talking tech."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                  // shellcheck // bridge
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module NixCompile.Bash.Parse (
     parseBash,
     parseBashWithFilename,
@@ -42,15 +58,15 @@ ShellCheck includes the filename in diagnostics; we also propagate it into
 'Span's at higher layers.
 -}
 parseBashWithFilename :: FilePath -> Text -> Either Text BashAST
-parseBashWithFilename filename src =
-    let spec =
+parseBashWithFilename filename sourceText =
+    let parseSpec =
             newParseSpec
                 { psFilename = filename
-                , psScript = T.unpack src
+                , psScript = T.unpack sourceText
                 }
-        result = runIdentity $ parseScript sysInterface spec
+        result = runIdentity $ parseScript sysInterface parseSpec
      in case prRoot result of
-            Just ast -> Right $ BashAST ast (prTokenPositions result)
+            Just astRoot -> Right $ BashAST astRoot (prTokenPositions result)
             Nothing -> Left $ T.pack $ "Parse errors: " ++ show (length (prComments result))
   where
     sysInterface :: SystemInterface Identity

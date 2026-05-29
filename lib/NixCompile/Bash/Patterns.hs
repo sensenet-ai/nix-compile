@@ -1,17 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile.Bash.Patterns
-Description : Pattern recognition for bash constructs
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // bash // patterns
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "He'd learned to value what little she did say, but he'd learned to
+--    value what little she did say, and, always, she held him. And
+--    listened."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // bash // parsing
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Recognizes:
-  - ${VAR:-default}   parameter expansion with default
-  - ${VAR:?}          required parameter
-  - ${VAR:+alt}       alternative value
-  - config.x.y=$VAR   config assignment
-  - /nix/store/...    store paths
--}
 module NixCompile.Bash.Patterns (
     -- * Parameter expansion
     ParamExpansion (..),
@@ -39,106 +42,102 @@ import Data.Text qualified as T
 import NixCompile.Types
 import Text.Read (readMaybe)
 
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Parameter Expansion
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--- | Bash parameter expansion patterns
 data ParamExpansion
-    = -- | \${VAR:-default} or ${VAR-default}
-      DefaultValue Text (Maybe Text)
-    | -- | \${VAR:=default} - assign default
-      AssignDefault Text (Maybe Text)
-    | -- | \${VAR:?message} or ${VAR:?} - error if unset
-      ErrorIfUnset Text (Maybe Text)
-    | -- | \${VAR:+alt} - use alt if set
-      UseAlternate Text (Maybe Text)
-    | -- | \$VAR or ${VAR} - simple reference
-      SimpleRef Text
+    = DefaultValue Text (Maybe Text)
+    | AssignDefault Text (Maybe Text)
+    | ErrorIfUnset Text (Maybe Text)
+    | UseAlternate Text (Maybe Text)
+    | SimpleRef Text
     deriving (Eq, Show)
 
-{- | Parse a parameter expansion from text
-Handles: $VAR, ${VAR}, ${VAR:-default}, ${VAR:?}, etc.
--}
+-- ── top-level dispatch: ${...} or $VAR ───────────────────────────
+
+-- | parse ${expr} or $VAR into a ParamExpansion
 parseParamExpansion :: Text -> Maybe ParamExpansion
-parseParamExpansion t
-    | "${" `T.isPrefixOf` t && "}" `T.isSuffixOf` t =
-        parseExpansionBody (T.dropEnd 1 (T.drop 2 t))
-    | "$" `T.isPrefixOf` t =
-        Just (SimpleRef (T.drop 1 t))
+parseParamExpansion text
+    | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
+        parseExpansionBody (T.dropEnd 1 (T.drop 2 text))
+    | "$" `T.isPrefixOf` text =
+        Just (SimpleRef (T.drop 1 text))
     | otherwise = Nothing
 
+-- ── ${body} parser: with or without : modifier ───────────────────
+
+{- | parse the inner body of ${...} into the specific expansion form
+dispatches based on presence of : separator (e.g. ${var:-default} vs ${var-default})
+-}
 parseExpansionBody :: Text -> Maybe ParamExpansion
 parseExpansionBody body =
-    -- Support:
-    --   ${VAR} ${VAR:-default} ${VAR-default}
-    --   ${VAR:=default} ${VAR=default}
-    --   ${VAR:?} ${VAR?}
     case T.breakOn ":" body of
-        -- Operators with ":" (bash semantics differ for unset vs null)
-        (var, rest)
-            | ":" `T.isPrefixOf` rest ->
-                parseOpWithColon var (T.drop 1 rest)
-        -- Operators without ":" (only test for unset)
+        (variable, remaining)
+            | ":" `T.isPrefixOf` remaining ->
+                -- \${var:-word}, ${var:=word}, ${var:?word}, ${var:+word}
+                parseOpWithColon variable (T.drop 1 remaining)
         _ ->
+            -- \${var-word}, ${var=word}, ${var?word}, ${var+word}
             parseOpWithoutColon body
   where
-    parseOpWithColon var rest = do
-        guard (isVarName var)
-        case T.uncons rest of
-            -- For default/assign operators, empty IS meaningful (empty string default)
-            Just ('-', def) -> Just (DefaultValue var (Just def))
-            Just ('=', def) -> Just (AssignDefault var (Just def))
-            -- For error/alternate, empty means "no message"/"no alternate"
-            Just ('?', msg) -> Just (ErrorIfUnset var (nonEmpty msg))
-            Just ('+', alt) -> Just (UseAlternate var (nonEmpty alt))
-            _ -> Just (SimpleRef var)
+    -- ── : variants (colon prefix) ──
+    -- these use ":" before the operator character
+    parseOpWithColon variable remaining = do
+        guard (isVarName variable)
+        case T.uncons remaining of
+            Just ('-', defaultValue) -> Just (DefaultValue variable (Just defaultValue))
+            Just ('=', defaultValue) -> Just (AssignDefault variable (Just defaultValue))
+            Just ('?', message) -> Just (ErrorIfUnset variable (nonEmpty message))
+            Just ('+', alternate) -> Just (UseAlternate variable (nonEmpty alternate))
+            _ -> Just (SimpleRef variable)
+    -- \${var:} is just $var
 
-    parseOpWithoutColon b = do
-        let (var, rest) = T.break isOpChar b
-        guard (isVarName var)
-        case T.uncons rest of
-            Just ('-', def) -> Just (DefaultValue var (Just def))
-            Just ('=', def) -> Just (AssignDefault var (Just def))
-            Just ('?', msg) -> Just (ErrorIfUnset var (nonEmpty msg))
-            Just ('+', alt) -> Just (UseAlternate var (nonEmpty alt))
-            Nothing -> Just (SimpleRef var)
+    -- ── non-: variants (operator immediately after var name) ──
+    parseOpWithoutColon expansionBody = do
+        let (variable, remaining) = T.break isOpChar expansionBody
+        guard (isVarName variable)
+        case T.uncons remaining of
+            Just ('-', defaultValue) -> Just (DefaultValue variable (Just defaultValue))
+            Just ('=', defaultValue) -> Just (AssignDefault variable (Just defaultValue))
+            Just ('?', message) -> Just (ErrorIfUnset variable (nonEmpty message))
+            Just ('+', alternate) -> Just (UseAlternate variable (nonEmpty alternate))
+            Nothing -> Just (SimpleRef variable) -- plain ${var}
             _ -> Nothing
 
-    nonEmpty t = if T.null t then Nothing else Just t
+    -- ── helpers ──
+    nonEmpty text = if T.null text then Nothing else Just text
 
-    isOpChar c = c == '-' || c == '=' || c == '?' || c == '+'
+    isOpChar character = character == '-' || character == '=' || character == '?' || character == '+'
 
-    isVarName t =
-        not (T.null t)
-            && isValidStart t
-            && T.all isVarChar t
+    isVarName text =
+        not (T.null text)
+            && isValidStart text
+            && T.all isVarChar text
 
-    isValidStart t = case T.uncons t of
-        Just (c, _) -> isAsciiAlpha c || c == '_'
+    isValidStart text = case T.uncons text of
+        Just (character, _) -> isAsciiAlpha character || character == '_'
         Nothing -> False
 
-    isVarChar c = isAsciiAlphaNum c || c == '_'
+    isVarChar character = isAsciiAlphaNum character || character == '_'
 
-    isAsciiAlpha c = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-    isAsciiAlphaNum c = isAsciiAlpha c || (c >= '0' && c <= '9')
+    isAsciiAlpha character = (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')
+    isAsciiAlphaNum character = isAsciiAlpha character || (character >= '0' && character <= '9')
 
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Config Assignment
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--- | config.* assignment pattern
 data ConfigAssignment = ConfigAssignment
     { configPath :: [Text]
-    , configValue :: Either Text Literal -- Left = var reference, Right = literal
+    , configValue :: Either Text Literal
     , configQuoted :: Quoted
     }
     deriving (Eq, Show)
 
-{- | Parse config assignment in either format:
-  - config[path.to.key]=$VAR   (associative array, ShellCheck-compliant)
-  - config.x.y.z=$VAR          (legacy dot syntax)
--}
+-- ── config assignment dispatching ────────────────────────────────
+
+-- | try config[...]= then config.= syntax, in that order
 parseConfigAssignment :: Text -> Maybe ConfigAssignment
 parseConfigAssignment line =
     parseConfigArraySyntax line <|> parseConfigDotSyntax line
@@ -146,24 +145,20 @@ parseConfigAssignment line =
     (<|>) Nothing b = b
     (<|>) a _ = a
 
--- | Parse config[path.to.key]=$VAR (associative array syntax)
+-- ── config[...]=value syntax ─────────────────────────────────────
+
+-- | parse config[path.to.key]=value
 parseConfigArraySyntax :: Text -> Maybe ConfigAssignment
 parseConfigArraySyntax line = do
-    -- Split on first =
-    let (lhs, rest) = T.breakOn "=" line
-    -- Check it starts with config[
-    inner <- T.stripPrefix "config[" lhs
-    -- Must end with ]
+    let (leftHandSide, rest) = T.breakOn "=" line
+    inner <- T.stripPrefix "config[" leftHandSide
     guard ("]" `T.isSuffixOf` inner)
-    let pathText = T.dropEnd 1 inner -- drop the ]
-    -- Must have = and something after
+    let pathText = T.dropEnd 1 inner
     guard (not (T.null rest))
-    let rhs = T.drop 1 rest -- drop the =
-    -- Parse the path (dots separate levels)
+    let rightHandSide = T.drop 1 rest
     let pathParts = T.splitOn "." pathText
     guard (validConfigPath pathParts)
-    -- Parse the value
-    (value, quoted) <- parseConfigValue rhs
+    (value, quoted) <- parseConfigValue rightHandSide
     Just
         ConfigAssignment
             { configPath = pathParts
@@ -171,21 +166,18 @@ parseConfigArraySyntax line = do
             , configQuoted = quoted
             }
 
--- | Parse config.x.y.z=$VAR (legacy dot syntax)
+-- ── config.=value syntax ────────────────────────────────────────
+
+-- | parse config.path.to.key=value
 parseConfigDotSyntax :: Text -> Maybe ConfigAssignment
 parseConfigDotSyntax line = do
-    -- Split on first =
-    let (lhs, rest) = T.breakOn "=" line
-    -- Check it starts with config.
-    path <- T.stripPrefix "config." lhs
-    -- Must have = and something after
+    let (leftHandSide, rest) = T.breakOn "=" line
+    path <- T.stripPrefix "config." leftHandSide
     guard (not (T.null rest))
-    let rhs = T.drop 1 rest -- drop the =
-    -- Parse the path
+    let rightHandSide = T.drop 1 rest
     let pathParts = T.splitOn "." path
     guard (validConfigPath pathParts)
-    -- Parse the value
-    (value, quoted) <- parseConfigValue rhs
+    (value, quoted) <- parseConfigValue rightHandSide
     Just
         ConfigAssignment
             { configPath = pathParts
@@ -193,117 +185,116 @@ parseConfigDotSyntax line = do
             , configQuoted = quoted
             }
 
-{- | Config paths must be non-empty and contain no empty segments.
+-- ── config path validation ───────────────────────────────────────
 
-Examples (invalid):
-  config..a=...
-  config.=...
-  config[.a]=...
--}
+-- | a valid config path is non-empty, each segment is non-empty and alpha-num-safe
 validConfigPath :: [Text] -> Bool
 validConfigPath parts =
-    not (null parts) && all (\p -> not (T.null p) && T.all isSafeConfigChar p) parts
+    not (null parts) && all (\part -> not (T.null part) && T.all isSafeConfigChar part) parts
 
 isSafeConfigChar :: Char -> Bool
-isSafeConfigChar c = c == '_' || c == '-' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+isSafeConfigChar character = character == '_' || character == '-' || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
 
+-- ── value side parser ────────────────────────────────────────────
+
+{- | parse the RHS of a config assignment into (variable-name or literal, quoting)
+handles quoted "${...}", "$VAR", plain strings, and ${...} expansions
+-}
 parseConfigValue :: Text -> Maybe (Either Text Literal, Quoted)
-parseConfigValue t
-    -- Quoted brace variable: "${VAR}" or "${VAR:-default}"
-    | "\"${" `T.isPrefixOf` t && "\"" `T.isSuffixOf` t =
-        let inner = T.dropEnd 1 (T.drop 1 t)
+parseConfigValue text
+    | "\"${" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
+        let inner = T.dropEnd 1 (T.drop 1 text)
          in if "${" `T.isPrefixOf` inner && "}" `T.isSuffixOf` inner
                 then case parseParamExpansion inner of
-                    Just pe -> Just (leftVar pe, Quoted)
+                    Just paramExpansion -> Just (leftVar paramExpansion, Quoted)
                     Nothing -> Just (Right (parseLiteralValue inner), Quoted)
                 else Just (Right (parseLiteralValue inner), Quoted)
-    -- Quoted simple variable: "$VAR"
-    | "\"$" `T.isPrefixOf` t && "\"" `T.isSuffixOf` t =
-        Just (Left (T.dropEnd 1 (T.drop 2 t)), Quoted)
-    -- Quoted literal string: "hello"
-    | "\"" `T.isPrefixOf` t && "\"" `T.isSuffixOf` t =
-        Just (Right (LitString (T.dropEnd 1 (T.drop 1 t))), Quoted)
-    -- Unquoted brace variable: ${VAR} or ${VAR:-default}
-    | "${" `T.isPrefixOf` t && "}" `T.isSuffixOf` t =
-        case parseParamExpansion t of
-            Just pe -> Just (leftVar pe, Unquoted)
-            Nothing -> Just (Right (parseLiteralValue t), Unquoted)
-    -- Unquoted simple variable: $VAR
-    | "$" `T.isPrefixOf` t =
-        Just (Left (T.drop 1 t), Unquoted)
-    -- Unquoted literal
+    | "\"$" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
+        Just (Left (T.dropEnd 1 (T.drop 2 text)), Quoted)
+    | "\"" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
+        Just (Right (LitString (T.dropEnd 1 (T.drop 1 text))), Quoted)
+    | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
+        case parseParamExpansion text of
+            Just paramExpansion -> Just (leftVar paramExpansion, Unquoted)
+            Nothing -> Just (Right (parseLiteralValue text), Unquoted)
+    | "$" `T.isPrefixOf` text =
+        Just (Left (T.drop 1 text), Unquoted)
     | otherwise =
-        Just (Right (parseLiteralValue t), Unquoted)
+        Just (Right (parseLiteralValue text), Unquoted)
   where
-    leftVar (SimpleRef v) = Left v
-    leftVar (DefaultValue v _) = Left v
-    leftVar (AssignDefault v _) = Left v
-    leftVar (ErrorIfUnset v _) = Left v
-    leftVar (UseAlternate v _) = Left v
+    -- extract variable name from any expansion form (we only care about the name)
+    leftVar (SimpleRef variable) = Left variable
+    leftVar (DefaultValue variable _) = Left variable
+    leftVar (AssignDefault variable _) = Left variable
+    leftVar (ErrorIfUnset variable _) = Left variable
+    leftVar (UseAlternate variable _) = Left variable
 
+-- | naive literal parsing: bool, int, or string
 parseLiteralValue :: Text -> Literal
-parseLiteralValue t
-    | t == "true" = LitBool True
-    | t == "false" = LitBool False
-    | isNumericLiteral t = case safeParseInt t of
-        Just n -> LitInt n
-        Nothing -> LitString t
-    | otherwise = LitString t
+parseLiteralValue text
+    | text == "true" = LitBool True
+    | text == "false" = LitBool False
+    | isNumericLiteral text = case safeParseInt text of
+        Just numericValue -> LitInt numericValue
+        Nothing -> LitString text
+    | otherwise = LitString text
 
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Literals
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--- | Parse a literal value from text
+-- ── full literal parsing (with store path detection) ──────────────
+
+-- | parse a text literal: bool, int, store path, or plain string
 parseLiteral :: Text -> Literal
-parseLiteral t
-    | t == "true" = LitBool True
-    | t == "false" = LitBool False
-    | isNumericLiteral t = case safeParseInt t of
-        Just n -> LitInt n
-        Nothing -> LitString t -- Overflow, treat as string
-    | isStorePathSafe t = LitPath (StorePath t)
-    | otherwise = LitString t
+parseLiteral text
+    | text == "true" = LitBool True
+    | text == "false" = LitBool False
+    | isNumericLiteral text = case safeParseInt text of
+        Just numericValue -> LitInt numericValue
+        Nothing -> LitString text
+    | isStorePathSafe text = LitPath (StorePath text)
+    | otherwise = LitString text
 
--- | Check if text is a valid store path (no traversal)
+-- ── store path validation ────────────────────────────────────────
+
+-- | safe store path: starts with /nix/store/, no .. or // traversal
 isStorePathSafe :: Text -> Bool
-isStorePathSafe t =
-    "/nix/store/" `T.isPrefixOf` t
-        && not (".." `T.isInfixOf` t)
-        && not ("//" `T.isInfixOf` t)
+isStorePathSafe text =
+    "/nix/store/" `T.isPrefixOf` text
+        && not (".." `T.isInfixOf` text)
+        && not ("//" `T.isInfixOf` text)
 
-{- | Check if text is a numeric literal
-Must have at least one digit, optional leading minus
-Must fit in Int64 range
+-- ── numeric literal validation ───────────────────────────────────
+
+{- | is this text a valid Int64 literal?
+n.b. we check digit count to reject values wider than Int64
 -}
 isNumericLiteral :: Text -> Bool
-isNumericLiteral t =
-    not (T.null t)
-        && T.all isDigitOrSign t
-        && T.any isDigit t -- Must have at least one digit
-        && validMinus t
-        && validLength t
-        && fitsInt64 t
+isNumericLiteral text =
+    not (T.null text)
+        && T.all isDigitOrSign text
+        && T.any isDigit text
+        && validMinus text
+        && validLength text
+        && fitsInt64 text
   where
-    isDigitOrSign c = isDigit c || c == '-'
-    -- Minus only valid at start, and only one
-    validMinus s = case T.uncons s of
-        Just ('-', rest) -> not (T.null rest) && not (T.any (== '-') rest)
-        _ -> not (T.any (== '-') s)
-    -- Quick length check before parsing (Int64 max is 19 digits)
-    validLength s = T.length (T.dropWhile (== '-') s) <= 19
-    -- Actually check if it fits
-    fitsInt64 s = case readMaybe (T.unpack s) :: Maybe Integer of
+    isDigitOrSign character = isDigit character || character == '-'
+    validMinus sourceText = case T.uncons sourceText of
+        Just ('-', remaining) -> not (T.null remaining) && not (T.any (== '-') remaining)
+        _ -> not (T.any (== '-') sourceText)
+    validLength sourceText = T.length (T.dropWhile (== '-') sourceText) <= 19
+    fitsInt64 sourceText = case readMaybe (T.unpack sourceText) :: Maybe Integer of
         Nothing -> False
-        Just n -> n >= -9223372036854775808 && n <= 9223372036854775807
+        Just parsedInteger -> parsedInteger >= -9223372036854775808 && parsedInteger <= 9223372036854775807
 
--- | Safely parse an integer, returning Nothing on overflow
+-- | parse text as Int, returning Nothing if out of range
 safeParseInt :: Text -> Maybe Int
-safeParseInt t = case readMaybe (T.unpack t) :: Maybe Integer of
+safeParseInt text = case readMaybe (T.unpack text) :: Maybe Integer of
     Nothing -> Nothing
-    Just n | n >= fromIntegral (minBound :: Int) && n <= fromIntegral (maxBound :: Int) -> Just (fromInteger n)
+    Just parsedInteger | parsedInteger >= fromIntegral (minBound :: Int) && parsedInteger <= fromIntegral (maxBound :: Int) -> Just (fromInteger parsedInteger)
     _ -> Nothing
 
--- | Check if text is a boolean literal
+-- | is this text exactly "true" or "false"?
 isBoolLiteral :: Text -> Bool
-isBoolLiteral t = t == "true" || t == "false"
+isBoolLiteral text = text == "true" || text == "false"

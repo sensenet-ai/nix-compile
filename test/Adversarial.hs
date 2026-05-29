@@ -6,6 +6,26 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                    // tests // adversarial
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "'And all that time,' the Finn continued, 'you know how many people ever
+--    dumb enough to try to get in here to take me off? None! Not one, not
+--    till this morning, and I get fucking three already. Well,' he shot Bobby
+--    a hostile glance, 'that's not counting the odd little lump of shit, I
+--    guess, but...' He shrugged.
+--
+--    'He looks kind of lopsided,' Bobby said staring at the first corpse.
+--
+--    'That's 'cause he's dog food, inside.' The Finn leered. 'All mashed up.'"
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // security // property // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module Adversarial where
 
 import Control.Exception (SomeException, evaluate, try)

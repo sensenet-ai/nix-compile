@@ -7,24 +7,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
-{- |
-Module      : NixCompile.Nix.Scope
-Description : Scope graphs for Nix
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                   // nix // compile // scope
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Machine dreams hold a special vertigo. Turner lay down on a
+--    virgin slab of green temperfoam in the makeshift dorm and
+--    jacked Mitchell's dossier."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // core // types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Implements Visser's scope graph theory for Nix expressions.
-This enables:
-  - Go-to-definition
-  - Find references
-  - Rename refactoring
-  - Documentation generation (zeitschrift integration)
-  - Cross-file analysis
-
-The scope graph is THE data structure for tooling. Everything else
-(hover info, completions, diagnostics) derives from it.
-
-Reference: Néron, Tolmach, Visser, Wachsmuth. "A Theory of Name Resolution"
-ESOP 2015. https://doi.org/10.1007/978-3-662-46669-8_9
--}
 module NixCompile.Nix.Scope (
     -- * Core Types
     ScopeGraph (..),
@@ -67,8 +63,6 @@ where
 
 import Control.Monad (forM_)
 import Control.Monad.State.Strict
-import Data.Aeson (ToJSON (..), ToJSONKey (..), (.=))
-import Data.Aeson qualified as Aeson
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.List (sortOn)
@@ -79,27 +73,24 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import GHC.Generics (Generic)
+import Numeric.Natural (Natural)
+
+import Data.Aeson (ToJSON (..), ToJSONKey (..), (.=))
+import Data.Aeson qualified as Aeson
 import Dhall (ToDhall (..))
 import Dhall qualified
 import Dhall.Core qualified as Dhall
 import Dhall.Marshal.Encode qualified as Encode
-import GHC.Generics (Generic)
 import Nix.Expr.Types hiding (Binding, SourcePos)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
-import Numeric.Natural (Natural)
 
--- ============================================================================
--- Core Types
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // core // types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-{- | A scope graph for Nix code.
-
-Note: For Dhall export, we use a separate 'ScopeGraphExport' type
-that uses Natural instead of Int and List instead of Map, to match
-the Dhall schema in dhall/ScopeGraph.dhall.
--}
 data ScopeGraph = ScopeGraph
     { sgScopes :: Map ScopeId Scope
     , sgRoot :: ScopeId
@@ -108,7 +99,6 @@ data ScopeGraph = ScopeGraph
     }
     deriving stock (Eq, Show, Generic)
 
--- | A scope contains declarations and references.
 data Scope = Scope
     { scopeId :: ScopeId
     , scopeDeclarations :: [Declaration]
@@ -118,20 +108,13 @@ data Scope = Scope
     }
     deriving stock (Eq, Show, Generic)
 
--- | What kind of scope this is (for documentation/UI).
 data ScopeKind
-    = -- | Top-level file
-      FileScope
-    | -- | let ... in
-      LetScope
-    | -- | { ... }
-      AttrSetScope
-    | -- | rec { ... }
-      RecAttrSetScope
-    | -- | { args }: body
-      FunctionScope
-    | -- | with expr;
-      WithScope
+    = FileScope
+    | LetScope
+    | AttrSetScope
+    | RecAttrSetScope
+    | FunctionScope
+    | WithScope
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
@@ -139,21 +122,16 @@ newtype ScopeId = ScopeId {unScopeId :: Int}
     deriving stock (Eq, Ord, Show, Generic)
     deriving newtype (Num, ToJSON, ToJSONKey)
 
--- | A declaration introduces a name into a scope.
 data Declaration = Declaration
     { declName :: Text
     , declSpan :: SourceSpan
     , declScope :: ScopeId
     , declAssocScope :: Maybe ScopeId
-    -- ^ For attr sets: scope of the value
     , declType :: Maybe Text
-    -- ^ Inferred type (if available)
     , declDoc :: Maybe Text
-    -- ^ Doc comment (if any)
     }
     deriving stock (Eq, Show, Generic)
 
--- | A reference uses a name, to be resolved to a declaration.
 data Reference = Reference
     { refName :: Text
     , refSpan :: SourceSpan
@@ -162,20 +140,14 @@ data Reference = Reference
     }
     deriving stock (Eq, Show, Generic)
 
--- | What kind of reference this is.
 data RefKind
-    = -- | Simple variable: x
-      VarRef
-    | -- | Attribute access: x.y
-      AttrRef
-    | -- | inherit x; or inherit (e) x;
-      InheritRef
-    | -- | import ./path
-      ImportRef
+    = VarRef
+    | AttrRef
+    | InheritRef
+    | ImportRef
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | An edge connects scopes.
 data Edge = Edge
     { edgeSource :: ScopeId
     , edgeTarget :: ScopeId
@@ -183,24 +155,18 @@ data Edge = Edge
     }
     deriving stock (Eq, Show, Generic)
 
--- | Edge labels determine resolution order.
 data EdgeLabel
-    = -- | Lexical parent scope
-      Parent
-    | -- | import ./file.nix
-      Import
-    | -- | with expr; (low priority)
-      With
-    | -- | inherit (expr) names;
-      Inherit
-    | -- | x.y (enter x's scope)
-      AttrAccess
+    = Parent
+    | Import
+    | With
+    | Inherit
+    | AttrAccess
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (ToDhall)
 
--- ============================================================================
--- Source Locations
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // source // locations
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data SourceSpan = SourceSpan
     { spanStart :: SourcePos
@@ -215,9 +181,11 @@ data SourcePos = SourcePos
     }
     deriving stock (Eq, Show, Generic)
 
--- ============================================================================
--- Construction State
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // construction // state
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- ── build state: graph under construction + current insertion point ─
 
 data BuildState = BuildState
     { bsGraph :: ScopeGraph
@@ -226,6 +194,7 @@ data BuildState = BuildState
 
 type Build a = State BuildState a
 
+-- | allocate a new scope node with the given kind, insert into graph
 freshScope :: ScopeKind -> Build ScopeId
 freshScope kind = do
     st <- get
@@ -241,6 +210,7 @@ freshScope kind = do
             }
     pure newId
 
+-- | append a declaration to the current scope's declaration list
 addDecl :: Declaration -> Build ()
 addDecl decl = do
     st <- get
@@ -254,6 +224,7 @@ addDecl decl = do
                     }
             }
 
+-- | record a reference in the current scope
 addRef :: Reference -> Build ()
 addRef ref = do
     st <- get
@@ -267,6 +238,7 @@ addRef ref = do
                     }
             }
 
+-- | add an edge between two scopes (parent, import, with, inherit, attr-access)
 addEdge :: Edge -> Build ()
 addEdge edge = do
     st <- get
@@ -280,9 +252,11 @@ addEdge edge = do
                     }
             }
 
+-- | read the current scope (insertion point)
 currentScope :: Build ScopeId
 currentScope = gets bsCurrentScope
 
+-- | run an action under a given scope, restoring the previous one after
 withScope :: ScopeId -> Build a -> Build a
 withScope sid action = do
     old <- gets bsCurrentScope
@@ -291,11 +265,21 @@ withScope sid action = do
     modify $ \st -> st{bsCurrentScope = old}
     pure result
 
--- ============================================================================
--- Construction from Nix
--- ============================================================================
+-- | create a child scope, link it to parent via Parent edge, run action
+withChildScope :: ScopeKind -> (ScopeId -> Build ()) -> Build ()
+withChildScope kind action = do
+    parent <- currentScope
+    childScope <- freshScope kind
+    addEdge (Edge childScope parent Parent)
+    withScope childScope (action childScope)
 
--- | Create an empty scope graph.
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // construction // from // nix
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- ── graph construction ───────────────────────────────────────────
+
+-- | empty scope graph: one root FileScope node
 empty :: ScopeGraph
 empty =
     ScopeGraph
@@ -305,221 +289,206 @@ empty =
         , sgFile = Nothing
         }
 
--- | Build a scope graph from a Nix expression.
+-- | build a scope graph from a single Nix expression (may be file-backed)
 fromNixExpr :: Maybe FilePath -> NExprLoc -> ScopeGraph
-fromNixExpr mpath expr =
+fromNixExpr maybeFilePath expr =
     let initState =
             BuildState
-                { bsGraph = empty{sgFile = mpath}
+                { bsGraph = empty{sgFile = maybeFilePath}
                 , bsCurrentScope = ScopeId 0
                 }
         finalState = execState (buildExpr expr) initState
      in bsGraph finalState
 
--- | Build a scope graph from a Nix file.
+-- | build scope graph, recording the file path
 fromNixFile :: FilePath -> NExprLoc -> ScopeGraph
 fromNixFile = fromNixExpr . Just
 
-{- | Build a unified scope graph from an already-built module graph.
-Each file gets its own scope graph, then we merge all scopes into a single
-graph with import edges connecting file roots.
--}
+-- | build a combined scope graph from multiple files, linking imports
 fromModuleGraph :: Map FilePath NExprLoc -> ScopeGraph
 fromModuleGraph modules
     | Map.null modules = empty
     | otherwise =
         let fileGraphs = Map.mapWithKey fromNixFile modules
-            -- Merge all file scope graphs, remapping IDs to avoid collisions
             (merged, fileRoots) = mergeGraphs (Map.elems fileGraphs)
-            -- Add import edges between file roots
             withImports = addImportEdges merged fileRoots
          in withImports
 
-{- | Merge multiple scope graphs into one, remapping scope IDs.
-Returns the merged graph and the list of root scope IDs (one per file).
--}
+-- | merge multiple scope graphs into one by offsetting scope IDs
 mergeGraphs :: [ScopeGraph] -> (ScopeGraph, [ScopeId])
 mergeGraphs [] = (empty, [])
 mergeGraphs graphs =
-    let (finalGraph, _, roots) = foldl mergeOne (empty, sgNextId empty, []) graphs
+    let (finalGraph, _, roots) = foldl mergeOneGraph (empty, sgNextId empty, []) graphs
      in (finalGraph, reverse roots)
-  where
-    mergeOne (acc, nextId, roots) sg =
-        let offset = nextId - unScopeId (sgRoot sg)
-            remap sid = ScopeId (unScopeId sid + offset)
-            remappedScopes =
-                Map.fromList
-                    [ (remap sid, remapScope remap scope)
-                    | (sid, scope) <- Map.toList (sgScopes sg)
-                    ]
-            newRoot = remap (sgRoot sg)
-            maxId =
-                if Map.null remappedScopes
-                    then nextId
-                    else maximum (map (unScopeId . fst) (Map.toList remappedScopes)) + 1
-            acc' =
-                acc
-                    { sgScopes = Map.union (sgScopes acc) remappedScopes
-                    , sgNextId = maxId
-                    , sgFile = sgFile acc <|> sgFile sg
-                    }
-         in (acc', maxId, newRoot : roots)
 
-    remapScope remap s =
-        s
-            { scopeId = remap (scopeId s)
-            , scopeDeclarations = map (remapDecl remap) (scopeDeclarations s)
-            , scopeReferences = map (remapRef remap) (scopeReferences s)
-            , scopeEdges = map (remapEdge remap) (scopeEdges s)
-            }
-    remapDecl remap d = d{declScope = remap (declScope d), declAssocScope = fmap remap (declAssocScope d)}
-    remapRef remap r = r{refScope = remap (refScope r)}
-    remapEdge remap e = e{edgeSource = remap (edgeSource e), edgeTarget = remap (edgeTarget e)}
+{- | merge a single graph into the accumulator, remapping all IDs by an offset
+n.b. the offset ensures no ID collisions across files
+-}
+mergeOneGraph :: (ScopeGraph, Int, [ScopeId]) -> ScopeGraph -> (ScopeGraph, Int, [ScopeId])
+mergeOneGraph (accumulator, nextId, roots) scopeGraph =
+    let offset = nextId - unScopeId (sgRoot scopeGraph)
+        remappedScopes =
+            Map.fromList
+                [ (remapScopeId offset scopeId, remapEntireScope offset scope)
+                | (scopeId, scope) <- Map.toList (sgScopes scopeGraph)
+                ]
+        newRoot = remapScopeId offset (sgRoot scopeGraph)
+        maxId =
+            if Map.null remappedScopes
+                then nextId
+                else maximum (map (unScopeId . fst) (Map.toList remappedScopes)) + 1
+        updatedAccumulator =
+            accumulator
+                { sgScopes = Map.union (sgScopes accumulator) remappedScopes
+                , sgNextId = maxId
+                , sgFile = chooseFile (sgFile accumulator) (sgFile scopeGraph)
+                }
+     in (updatedAccumulator, maxId, newRoot : roots)
 
-    (<|>) Nothing b = b
-    (<|>) a _ = a
+-- | shift a ScopeId by a constant offset (to avoid collisions during merge)
+remapScopeId :: Int -> ScopeId -> ScopeId
+remapScopeId offset scopeId = ScopeId (unScopeId scopeId + offset)
 
--- | Add import edges from a global root to each file's root scope.
+-- | remap all IDs inside a scope (declarations, refs, edges)
+remapEntireScope :: Int -> Scope -> Scope
+remapEntireScope offset scope =
+    scope
+        { scopeId = remapScopeId offset (scopeId scope)
+        , scopeDeclarations = map (remapDeclaration offset) (scopeDeclarations scope)
+        , scopeReferences = map (remapReference offset) (scopeReferences scope)
+        , scopeEdges = map (remapEdge' offset) (scopeEdges scope)
+        }
+
+remapDeclaration :: Int -> Declaration -> Declaration
+remapDeclaration offset declaration =
+    declaration{declScope = remapScopeId offset (declScope declaration), declAssocScope = fmap (remapScopeId offset) (declAssocScope declaration)}
+
+remapReference :: Int -> Reference -> Reference
+remapReference offset reference = reference{refScope = remapScopeId offset (refScope reference)}
+
+remapEdge' :: Int -> Edge -> Edge
+remapEdge' offset edge = edge{edgeSource = remapScopeId offset (edgeSource edge), edgeTarget = remapScopeId offset (edgeTarget edge)}
+
+-- | prefer the first file path over the second
+chooseFile :: Maybe FilePath -> Maybe FilePath -> Maybe FilePath
+chooseFile (Just a) _ = Just a
+chooseFile Nothing b = b
+
+{- | add Import edges connecting file roots under a synthetic global root
+single-file graphs just use that file as root; multi-file gets a virtual parent
+-}
 addImportEdges :: ScopeGraph -> [ScopeId] -> ScopeGraph
-addImportEdges sg [] = sg
-addImportEdges sg [single] = sg{sgRoot = single}
-addImportEdges sg fileRoots =
-    -- Create a global root that connects to all file roots via Import edges
-    let globalRoot = ScopeId (sgNextId sg)
+addImportEdges scopeGraph [] = scopeGraph
+addImportEdges scopeGraph [single] = scopeGraph{sgRoot = single}
+addImportEdges scopeGraph fileRoots =
+    let globalRoot = ScopeId (sgNextId scopeGraph)
         globalScope = Scope globalRoot [] [] (map (\fr -> Edge globalRoot fr Import) fileRoots) FileScope
-     in sg
-            { sgScopes = Map.insert globalRoot globalScope (sgScopes sg)
+     in scopeGraph
+            { sgScopes = Map.insert globalRoot globalScope (sgScopes scopeGraph)
             , sgRoot = globalRoot
-            , sgNextId = sgNextId sg + 1
+            , sgNextId = sgNextId scopeGraph + 1
             }
 
--- | Build scope graph from a Nix expression.
+-- ── expression traversal helpers ─────────────────────────────────
+
+-- | register a symbol reference at the current scope
+buildSymbolRef :: SrcSpan -> VarName -> Build ()
+buildSymbolRef srcSpan name = do
+    scope <- currentScope
+    addRef $
+        Reference
+            { refName = coerce name
+            , refSpan = toSourceSpan srcSpan
+            , refScope = scope
+            , refKind = VarRef
+            }
+
+-- | register an attribute reference (e.name) at a given scope
+addAttrRef :: SrcSpan -> ScopeId -> NKeyName NExprLoc -> Build ()
+addAttrRef srcSpan scope keyName =
+    addRef $
+        Reference
+            { refName = keyToText keyName
+            , refSpan = toSourceSpan srcSpan
+            , refScope = scope
+            , refKind = AttrRef
+            }
+
+{- | build scope sub-graph for `with expr; body`
+creates two scopes: one for the with-expression, one for the body
+body scope has a With-edge to the expr scope
+-}
+buildWithExpr :: SrcSpan -> NExprLoc -> NExprLoc -> Build ()
+buildWithExpr _srcSpan withExpr body = do
+    parent <- currentScope
+    withExprScope <- freshScope WithScope
+    addEdge (Edge withExprScope parent Parent)
+    withScope withExprScope $ buildExpr withExpr
+    bodyScopeId <- freshScope LetScope
+    addEdge (Edge bodyScopeId parent Parent)
+    addEdge (Edge bodyScopeId withExprScope With)
+    withScope bodyScopeId $ buildExpr body
+
+-- ── walk an expression, building scope graph nodes ─────────────────
+
+{- | dispatch on AST node to create scopes, declarations, and references
+each scope-creating AST form (let, set, lambda, with) opens a child scope
+-}
 buildExpr :: NExprLoc -> Build ()
 buildExpr (Fix (Compose (AnnUnit srcSpan e))) = case e of
-    -- Let bindings: introduce a new scope
-    NLet bindings body -> do
-        parent <- currentScope
-        letScope <- freshScope LetScope
-        addEdge (Edge letScope parent Parent)
-
-        withScope letScope $ do
-            -- First pass: add all declarations (for mutual recursion)
+    -- ── let ... in ...: child scope, declare all bindings in it ──
+    NLet bindings body ->
+        withChildScope LetScope $ \letScope -> do
             mapM_ (addBindingDecl letScope) bindings
-            -- Second pass: process binding values
             mapM_ buildBinding bindings
-            -- Process body
             buildExpr body
-
-    -- Attribute set: each binding is a declaration
-    NSet NonRecursive bindings -> do
-        parent <- currentScope
-        attrScope <- freshScope AttrSetScope
-        addEdge (Edge attrScope parent Parent)
-
-        withScope attrScope $ do
+    -- ── non-recursive set: child scope ──
+    NSet NonRecursive bindings ->
+        withChildScope AttrSetScope $ \attrScope -> do
             mapM_ (addBindingDecl attrScope) bindings
             mapM_ buildBinding bindings
-
-    -- Recursive attribute set
-    NSet Recursive bindings -> do
-        parent <- currentScope
-        attrScope <- freshScope RecAttrSetScope
-        addEdge (Edge attrScope parent Parent)
-
-        withScope attrScope $ do
+    -- ── recursive set: separate scope kind so we can distinguish ──
+    NSet Recursive bindings ->
+        withChildScope RecAttrSetScope $ \attrScope -> do
             mapM_ (addBindingDecl attrScope) bindings
             mapM_ buildBinding bindings
-
-    -- Function: parameters are declarations in function scope
-    NAbs params body -> do
-        parent <- currentScope
-        funScope <- freshScope FunctionScope
-        addEdge (Edge funScope parent Parent)
-
-        withScope funScope $ do
+    -- ── lambda: function scope with parameter declarations ──
+    NAbs params body ->
+        withChildScope FunctionScope $ \funScope -> do
             addParamDecls funScope params
             buildExpr body
-
-    -- With: adds a low-priority scope for the with-expression's attributes
-    -- In `with expr; body`, names from `expr` are available in `body` at
-    -- lower priority than lexical bindings. We create a separate scope for
-    -- the with-expression and point a With edge to it.
-    NWith withExpr body -> do
-        parent <- currentScope
-        -- Scope for the with-expression (holds its declarations)
-        withExprScope <- freshScope WithScope
-        addEdge (Edge withExprScope parent Parent)
-        withScope withExprScope $ buildExpr withExpr
-        -- Scope for the body (lexical parent + low-priority with)
-        bodyScopeId <- freshScope LetScope
-        addEdge (Edge bodyScopeId parent Parent)
-        addEdge (Edge bodyScopeId withExprScope With)
-        withScope bodyScopeId $ buildExpr body
-
-    -- Variable reference
-    NSym name -> do
-        scope <- currentScope
-        addRef $
-            Reference
-                { refName = coerce name
-                , refSpan = toSourceSpan srcSpan
-                , refScope = scope
-                , refKind = VarRef
-                }
-
-    -- Attribute selection: x.y
+    -- ── with expr; body: special With-scope linked to expr scope ──
+    NWith withExpr body -> buildWithExpr srcSpan withExpr body
+    -- ── symbol reference ──
+    NSym name -> buildSymbolRef srcSpan name
+    -- ── attribute select: base + attr references ──
     NSelect _ base (attr :| rest) -> do
         buildExpr base
-        -- The attribute path creates references
         scope <- currentScope
-        addRef $
-            Reference
-                { refName = keyToText attr
-                , refSpan = toSourceSpan srcSpan
-                , refScope = scope
-                , refKind = AttrRef
-                }
-        mapM_
-            ( \k ->
-                addRef $
-                    Reference
-                        { refName = keyToText k
-                        , refSpan = toSourceSpan srcSpan
-                        , refScope = scope
-                        , refKind = AttrRef
-                        }
-            )
-            rest
-
-    -- Application: recurse into both
-    NApp f x -> do
-        buildExpr f
-        buildExpr x
-
-    -- Binary op
-    NBinary _ l r -> do
-        buildExpr l
-        buildExpr r
-
-    -- Unary op
-    NUnary _ x -> buildExpr x
-    -- If-then-else
-    NIf c t f -> do
-        buildExpr c
-        buildExpr t
-        buildExpr f
-
-    -- Assert
-    NAssert c b -> do
-        buildExpr c
-        buildExpr b
-
-    -- List
-    NList xs -> mapM_ buildExpr xs
-    -- Literals and other cases: no bindings
+        addAttrRef srcSpan scope attr
+        mapM_ (addAttrRef srcSpan scope) rest
+    -- ── application: both sides ──
+    NApp func arg -> do
+        buildExpr func
+        buildExpr arg
+    -- ── binary / unary: recurse ──
+    NBinary _ left right -> do
+        buildExpr left
+        buildExpr right
+    NUnary _ operand -> buildExpr operand
+    -- ── conditional: all branches ──
+    NIf cond thenBranch elseBranch -> do
+        buildExpr cond
+        buildExpr thenBranch
+        buildExpr elseBranch
+    -- ── assertion: cond + body ──
+    NAssert cond body -> do
+        buildExpr cond
+        buildExpr body
+    -- ── list: every element ──
+    NList elements -> mapM_ buildExpr elements
     _ -> pure ()
 
--- | Add a binding's declaration to a scope.
 addBindingDecl :: ScopeId -> Nix.Binding NExprLoc -> Build ()
 addBindingDecl scope = \case
     Nix.NamedVar (StaticKey name :| []) _ srcSpan -> do
@@ -532,18 +501,7 @@ addBindingDecl scope = \case
                 , declType = Nothing
                 , declDoc = Nothing
                 }
-    Nix.Inherit Nothing names srcSpan ->
-        forM_ names $ \varName ->
-            addDecl $
-                Declaration
-                    { declName = coerce varName
-                    , declSpan = toSourceSpan' srcSpan
-                    , declScope = scope
-                    , declAssocScope = Nothing
-                    , declType = Nothing
-                    , declDoc = Nothing
-                    }
-    Nix.Inherit (Just _) names srcSpan ->
+    Nix.Inherit _ names srcSpan ->
         forM_ names $ \varName ->
             addDecl $
                 Declaration
@@ -556,16 +514,18 @@ addBindingDecl scope = \case
                     }
     _ -> pure ()
 
--- | Process a binding's value.
 buildBinding :: Nix.Binding NExprLoc -> Build ()
 buildBinding = \case
     Nix.NamedVar _ expr _ -> buildExpr expr
     Nix.Inherit (Just expr) _ _ -> buildExpr expr
     Nix.Inherit Nothing _ _ -> pure ()
 
--- | Add function parameter declarations.
+-- ── register parameter declarations in the function's scope ─────────
+
+-- | declare lambda parameters: simple name, or set-pattern (with optional @-bind)
 addParamDecls :: ScopeId -> Params NExprLoc -> Build ()
 addParamDecls scope = \case
+    -- simple param: f = x: ...
     Param name ->
         addDecl $
             Declaration
@@ -576,8 +536,9 @@ addParamDecls scope = \case
                 , declType = Nothing
                 , declDoc = Nothing
                 }
+    -- set pattern: { name ? default, ... } @ self ->
     ParamSet mname _variadic pset -> do
-        -- Named parameter set: { ... } @ name
+        -- @-binding: the whole attrset is also in scope
         case mname of
             Just pname ->
                 addDecl $
@@ -591,7 +552,7 @@ addParamDecls scope = \case
                         }
             Nothing -> pure ()
 
-        -- Each parameter in the set
+        -- each named field in the pattern
         forM_ pset $ \(pname, mdefault) -> do
             addDecl $
                 Declaration
@@ -602,143 +563,139 @@ addParamDecls scope = \case
                     , declType = Nothing
                     , declDoc = Nothing
                     }
-            -- Process default value if present
+            -- default expressions are traversed for references
             case mdefault of
                 Just expr -> buildExpr expr
                 Nothing -> pure ()
 
--- ============================================================================
--- Resolution
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                // resolution
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- ── name resolution: find which declaration a reference points to ──
 
 data ResolutionError
     = Unresolved Reference
     | Ambiguous Reference [Declaration]
     deriving stock (Eq, Show, Generic)
 
--- | Resolve a single reference.
+-- | resolve a single reference to its declaration
 resolve :: ScopeGraph -> Reference -> Either ResolutionError Declaration
-resolve sg ref =
-    case findPaths sg (refScope ref) (refName ref) of
+resolve scopeGraph ref =
+    case findPaths scopeGraph (refScope ref) (refName ref) of
         [] -> Left (Unresolved ref)
         [d] -> Right d
         ds -> Left (Ambiguous ref ds)
 
--- | Resolve all references in the scope graph.
+-- | resolve all references in a graph, collecting errors
 resolveAll :: ScopeGraph -> Either [ResolutionError] [(Reference, Declaration)]
-resolveAll sg =
-    let refs = concatMap scopeReferences (Map.elems (sgScopes sg))
-        results = map (\r -> (r, resolve sg r)) refs
-        errors = [e | (_, Left e) <- results]
-        successes = [(r, d) | (r, Right d) <- results]
+resolveAll scopeGraph =
+    let refs = concatMap scopeReferences (Map.elems (sgScopes scopeGraph))
+        results = map (\ref -> (ref, resolve scopeGraph ref)) refs
+        errors = [err | (_, Left err) <- results]
+        successes = [(ref, decl) | (ref, Right decl) <- results]
      in if null errors
             then Right successes
             else Left errors
 
-{- | Find all declarations reachable with a given name.
-
-Resolution respects edge priority: Parent > Import > With > Inherit > AttrAccess.
-If a higher-priority edge group yields declarations, lower-priority groups
-are not consulted (shadowing).
+{- | search for a declaration by name, walking up through edge chains
+edges are grouped by label and tried in priority order (Parent, Import, With, ...)
 -}
 findPaths :: ScopeGraph -> ScopeId -> Text -> [Declaration]
-findPaths sg startScope name = go Set.empty startScope
+findPaths scopeGraph startScope targetName = searchScope Set.empty startScope
   where
-    go :: Set ScopeId -> ScopeId -> [Declaration]
-    go visited sid
-        | Set.member sid visited = []
+    searchScope :: Set ScopeId -> ScopeId -> [Declaration]
+    searchScope visited scopeId
+        | Set.member scopeId visited = [] -- cycle guard
         | otherwise =
-            case Map.lookup sid (sgScopes sg) of
+            case Map.lookup scopeId (sgScopes scopeGraph) of
                 Nothing -> []
                 Just scope ->
-                    let visited' = Set.insert sid visited
-                        -- Local declarations with matching name
-                        local = filter (\d -> declName d == name) (scopeDeclarations scope)
-                        -- Group edges by label priority, try groups in order
+                    let updatedVisited = Set.insert scopeId visited
+                        localDeclarations = filter (\d -> declName d == targetName) (scopeDeclarations scope)
+                        -- try each edge label group in order; stop at the first group that yields results
                         fromEdges =
-                            firstNonEmpty
-                                [ concatMap (go visited' . edgeTarget) group
-                                | group <- groupByLabel (scopeEdges scope)
+                            firstNonEmptyGroup
+                                [ concatMap (searchScope updatedVisited . edgeTarget) group
+                                | group <- groupEdgesByLabel (scopeEdges scope)
                                 ]
-                     in if not (null local) then local else fromEdges
+                     in if not (null localDeclarations) then localDeclarations else fromEdges
 
-    -- Group edges by label (sorted by priority: Parent < Import < With < ...)
-    -- Returns list of groups, each group is edges with the same label.
-    groupByLabel :: [Edge] -> [[Edge]]
-    groupByLabel = groupBy (\a b -> edgeLabel a == edgeLabel b) . sortOn edgeLabel
+-- | group edges by their label, maintaining priority order within each group
+groupEdgesByLabel :: [Edge] -> [[Edge]]
+groupEdgesByLabel = groupByEdgeLabel . sortOn edgeLabel
 
-    -- Return the first non-empty list, or [] if all are empty
-    firstNonEmpty :: [[a]] -> [a]
-    firstNonEmpty [] = []
-    firstNonEmpty (xs : rest)
-        | null xs = firstNonEmpty rest
-        | otherwise = xs
+groupByEdgeLabel :: [Edge] -> [[Edge]]
+groupByEdgeLabel [] = []
+groupByEdgeLabel (edge : rest) =
+    let (sameLabel, different) = Prelude.span (\e -> edgeLabel e == edgeLabel edge) rest
+     in (edge : sameLabel) : groupByEdgeLabel different
 
-    groupBy :: (a -> a -> Bool) -> [a] -> [[a]]
-    groupBy _ [] = []
-    groupBy eq (x : xs) =
-        let (ys, zs) = Prelude.span (eq x) xs
-         in (x : ys) : groupBy eq zs
+-- | return the first non-empty group, or [] if all are empty
+firstNonEmptyGroup :: [[a]] -> [a]
+firstNonEmptyGroup [] = []
+firstNonEmptyGroup (group : rest)
+    | null group = firstNonEmptyGroup rest
+    | otherwise = group
 
--- ============================================================================
--- Queries
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                   // queries
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--- | Get all declarations visible in a scope.
+-- ── queries against the scope graph ──────────────────────────────
+
+-- | all declarations reachable from a scope (walking edges transitively)
 declarationsInScope :: ScopeGraph -> ScopeId -> [Declaration]
-declarationsInScope sg sid = go Set.empty sid
+declarationsInScope scopeGraph outerScopeId = go Set.empty outerScopeId
   where
-    go visited s
-        | Set.member s visited = []
-        | otherwise = case Map.lookup s (sgScopes sg) of
+    go visited currentScopeId
+        | Set.member currentScopeId visited = []
+        | otherwise = case Map.lookup currentScopeId (sgScopes scopeGraph) of
             Nothing -> []
             Just scope ->
-                let visited' = Set.insert s visited
+                let visited' = Set.insert currentScopeId visited
                  in scopeDeclarations scope
                         ++ concatMap (go visited' . edgeTarget) (scopeEdges scope)
 
--- | Get all references in a scope.
+-- | all references in a specific scope
 referencesInScope :: ScopeGraph -> ScopeId -> [Reference]
-referencesInScope sg sid = case Map.lookup sid (sgScopes sg) of
+referencesInScope scopeGraph scopeId = case Map.lookup scopeId (sgScopes scopeGraph) of
     Nothing -> []
     Just scope -> scopeReferences scope
 
--- | Find a declaration by name.
+-- | find all declarations with a given name across the whole graph
 findDeclaration :: ScopeGraph -> Text -> [Declaration]
-findDeclaration sg name =
+findDeclaration scopeGraph name =
     [ d
-    | scope <- Map.elems (sgScopes sg)
+    | scope <- Map.elems (sgScopes scopeGraph)
     , d <- scopeDeclarations scope
     , declName d == name
     ]
 
-{- | Find all references that resolve to a given declaration.
-Uses actual scope graph resolution to verify each reference
-points to this specific declaration, not just name matching.
--}
+-- | find all references that resolve to a specific declaration
 findReferences :: ScopeGraph -> Declaration -> [Reference]
-findReferences sg decl =
-    [ r
-    | scope <- Map.elems (sgScopes sg)
-    , r <- scopeReferences scope
-    , refName r == declName decl
-    , resolvesToDecl r
+findReferences scopeGraph decl =
+    [ ref
+    | scope <- Map.elems (sgScopes scopeGraph)
+    , ref <- scopeReferences scope
+    , refName ref == declName decl
+    , resolvesToDecl ref
     ]
   where
-    resolvesToDecl ref = case resolve sg ref of
+    resolvesToDecl ref = case resolve scopeGraph ref of
         Right d -> declScope d == declScope decl && declSpan d == declSpan decl
         Left _ -> False
 
--- ============================================================================
--- JSON Export (for zeitschrift)
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // json // export
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 instance ToJSON ScopeGraph where
-    toJSON sg =
+    toJSON scopeGraph =
         Aeson.object
-            [ "scopes" .= sgScopes sg
-            , "root" .= sgRoot sg
-            , "file" .= sgFile sg
+            [ "scopes" .= sgScopes scopeGraph
+            , "root" .= sgRoot scopeGraph
+            , "file" .= sgFile scopeGraph
             ]
 
 instance ToJSON Scope where
@@ -794,15 +751,10 @@ instance ToJSON SourcePos where
             , "col" .= posCol p
             ]
 
--- ============================================================================
--- Dhall Export (for zeitschrift)
--- ============================================================================
---
--- We define separate "export" types that match the Dhall schema exactly.
--- This allows us to use Dhall's generic ToDhall derivation for proper
--- serialization instead of string concatenation.
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                           // dhall // export
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--- | Source position for Dhall export (uses Natural)
 data SourcePosExport = SourcePosExport
     { line :: Natural
     , col :: Natural
@@ -810,7 +762,6 @@ data SourcePosExport = SourcePosExport
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | Source span for Dhall export
 data SourceSpanExport = SourceSpanExport
     { start :: SourcePosExport
     , end :: SourcePosExport
@@ -819,19 +770,17 @@ data SourceSpanExport = SourceSpanExport
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | Declaration for Dhall export
 data DeclarationExport = DeclarationExport
     { name :: Text
     , span :: SourceSpanExport
     , scope :: Natural
     , assocScope :: Maybe Natural
-    , type_ :: Maybe Text -- 'type' is reserved, use type_
+    , type_ :: Maybe Text
     , doc :: Maybe Text
     , kind :: Maybe Text
     }
     deriving stock (Eq, Show, Generic)
 
--- Manual ToDhall instance to rename type_ -> type
 instance ToDhall DeclarationExport where
     injectWith _normalizer =
         let opts =
@@ -840,7 +789,6 @@ instance ToDhall DeclarationExport where
                     }
          in Encode.genericToDhallWith opts
 
--- | Reference for Dhall export
 data ReferenceExport = ReferenceExport
     { name :: Text
     , span :: SourceSpanExport
@@ -850,7 +798,6 @@ data ReferenceExport = ReferenceExport
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | Edge for Dhall export
 data EdgeExport = EdgeExport
     { source :: Natural
     , target :: Natural
@@ -859,7 +806,6 @@ data EdgeExport = EdgeExport
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | Scope for Dhall export
 data ScopeExport = ScopeExport
     { id :: Natural
     , declarations :: [DeclarationExport]
@@ -870,7 +816,6 @@ data ScopeExport = ScopeExport
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | Scope graph for Dhall export (matches dhall/ScopeGraph.dhall)
 data ScopeGraphExport = ScopeGraphExport
     { scopes :: [ScopeExport]
     , root :: Natural
@@ -880,13 +825,12 @@ data ScopeGraphExport = ScopeGraphExport
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToDhall)
 
--- | Convert internal ScopeGraph to export format
 toExport :: ScopeGraph -> ScopeGraphExport
-toExport sg =
+toExport scopeGraph =
     ScopeGraphExport
-        { scopes = map scopeToExport (Map.elems (sgScopes sg))
-        , root = fromIntegral (unScopeId (sgRoot sg))
-        , file = T.pack <$> sgFile sg
+        { scopes = map scopeToExport (Map.elems (sgScopes scopeGraph))
+        , root = fromIntegral (unScopeId (sgRoot scopeGraph))
+        , file = T.pack <$> sgFile scopeGraph
         , files = []
         }
   where
@@ -930,11 +874,11 @@ toExport sg =
             }
 
     spanToExport :: SourceSpan -> SourceSpanExport
-    spanToExport sp =
+    spanToExport sourceSpan =
         SourceSpanExport
-            { start = posToExport (spanStart sp)
-            , end = posToExport (spanEnd sp)
-            , file = T.pack <$> spanFile sp
+            { start = posToExport (spanStart sourceSpan)
+            , end = posToExport (spanEnd sourceSpan)
+            , file = T.pack <$> spanFile sourceSpan
             }
 
     posToExport :: SourcePos -> SourcePosExport
@@ -944,14 +888,16 @@ toExport sg =
             , col = fromIntegral (posCol p)
             }
 
--- | Emit scope graph as Dhall expression using proper serialization
 toDhall :: ScopeGraph -> Text
-toDhall sg = Dhall.pretty (Dhall.embed Dhall.inject (toExport sg))
+toDhall scopeGraph = Dhall.pretty (Dhall.embed Dhall.inject (toExport scopeGraph))
 
--- ============================================================================
--- Utilities
--- ============================================================================
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                 // utilities
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- ── Nix SrcSpan → our SourceSpan ─────────────────────────────────
+
+-- | convert a ranged Nix SrcSpan (begin..end) to our SourceSpan
 toSourceSpan :: SrcSpan -> SourceSpan
 toSourceSpan srcSpan =
     let begin = getSpanBegin srcSpan
@@ -967,6 +913,7 @@ toSourceSpan srcSpan =
     sourceLine (NSourcePos _ (NPos l) _) = unPos l
     sourceCol (NSourcePos _ _ (NPos c)) = unPos c
 
+-- | convert a point Nix NSourcePos to a zero-width SourceSpan
 toSourceSpan' :: NSourcePos -> SourceSpan
 toSourceSpan' (NSourcePos path (NPos l) (NPos c)) =
     SourceSpan
@@ -975,9 +922,11 @@ toSourceSpan' (NSourcePos path (NPos l) (NPos c)) =
         , spanFile = Just (coerce path)
         }
 
+-- | sentinel span used for synthetic nodes (parameter declarations, etc.)
 emptySpan :: SourceSpan
 emptySpan = SourceSpan (SourcePos 0 0) (SourcePos 0 0) Nothing
 
+-- ── key → text (dynamic keys get a placeholder) ──────────────────
 keyToText :: NKeyName r -> Text
 keyToText (StaticKey name) = coerce name
 keyToText (DynamicKey _) = "<dynamic>"

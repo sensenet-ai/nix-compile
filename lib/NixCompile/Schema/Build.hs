@@ -2,13 +2,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- |
-Module      : NixCompile.Schema.Build
-Description : Build schema from facts and substitution
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                    // schema // builders
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Someone brought the machine here, welded it to the dome, and wired it
+--    to the traces of memory. And spilled, somehow, all the worn sad evidence
+--    of a family's humanity, and left it all to be stirred, to be sorted by
+--    a poet. To be sealed away in boxes. I know of no more extraordinary work
+--    than this. No more complex gesture..."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // schema // from facts
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Takes the raw facts and solved type substitution and produces
-the final schema with resolved types.
--}
 module NixCompile.Schema.Build (
     buildSchema,
     resolveType,
@@ -66,28 +75,27 @@ buildSchema facts subst =
 
 -- | Build environment variable schema
 buildEnvSchema :: [Fact] -> Subst -> Map Text EnvSpec
-buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap go facts)
+buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap factToEnvSpec facts)
   where
-    go = \case
-        DefaultIs var lit sp ->
-            [(var, EnvSpec (resolveType subst var) False (Just lit) sp)]
-        DefaultFrom var _ sp ->
-            [(var, EnvSpec (resolveType subst var) False Nothing sp)]
-        Required var sp ->
-            [(var, EnvSpec (resolveType subst var) True Nothing sp)]
-        AssignLit var lit sp ->
-            [(var, EnvSpec (resolveType subst var) False (Just lit) sp)]
-        AssignFrom var _ sp ->
-            [(var, EnvSpec (resolveType subst var) False Nothing sp)]
-        ConfigAssign _ var _ sp ->
-            [(var, EnvSpec (resolveType subst var) False Nothing sp)]
-        ConfigTemplate _ parts _ sp ->
-            [ (var, EnvSpec (resolveType subst var) False Nothing sp)
-            | var <- configPartVars parts
+    factToEnvSpec = \case
+        DefaultIs variable literal sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) False (Just literal) sourceSpan)]
+        DefaultFrom variable _ sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+        Required variable sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) True Nothing sourceSpan)]
+        AssignLit variable literal sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) False (Just literal) sourceSpan)]
+        AssignFrom variable _ sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+        ConfigAssign _ variable _ sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+        ConfigTemplate _ parts _ sourceSpan ->
+            [ (variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)
+            | variable <- configPartVars parts
             ]
-        -- Command argument usage: infer type from builtin database
-        CmdArg _ _ var sp ->
-            [(var, EnvSpec (resolveType subst var) False Nothing sp)]
+        CmdArg _ _ variable sourceSpan ->
+            [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
         _ -> []
 
 configPartVars :: [ConfigPart] -> [Text]
@@ -100,57 +108,56 @@ configPartVars = concatMap $ \case
 
 -- | Build config schema
 buildConfigSchema :: [Fact] -> Subst -> Map ConfigPath ConfigSpec
-buildConfigSchema facts subst = Map.fromListWith mergeConfigSpec (concatMap go facts)
+buildConfigSchema facts subst = Map.fromListWith mergeConfigSpec (concatMap factToConfigSpec facts)
   where
-    go = \case
-        ConfigAssign path var quoted sp ->
-            [(path, ConfigSpec (resolveType subst var) (Just var) (Just quoted) Nothing Nothing sp)]
-        ConfigLit path lit sp ->
-            [(path, ConfigSpec (literalType lit) Nothing Nothing (Just lit) Nothing sp)]
-        ConfigTemplate path parts quoted sp ->
-            [(path, ConfigSpec TString Nothing (Just quoted) Nothing (Just parts) sp)]
+    factToConfigSpec = \case
+        ConfigAssign path variable quoted sourceSpan ->
+            [(path, ConfigSpec (resolveType subst variable) (Just variable) (Just quoted) Nothing Nothing sourceSpan)]
+        ConfigLit path literal sourceSpan ->
+            [(path, ConfigSpec (literalType literal) Nothing Nothing (Just literal) Nothing sourceSpan)]
+        ConfigTemplate path parts quoted sourceSpan ->
+            [(path, ConfigSpec TString Nothing (Just quoted) Nothing (Just parts) sourceSpan)]
         _ -> []
 
 -- | Build command schema
 buildCommandSchema :: [Fact] -> [CommandSpec]
-buildCommandSchema facts = concatMap go facts
+buildCommandSchema facts = concatMap factToCommandSpec facts
   where
-    go = \case
-        UsesStorePath storePath sp ->
-            [CommandSpec (extractName storePath) (Just storePath) sp]
-        BareCommand cmd sp ->
-            [CommandSpec cmd Nothing sp]
+    factToCommandSpec = \case
+        UsesStorePath storePath sourceSpan ->
+            [CommandSpec (extractName storePath) (Just storePath) sourceSpan]
+        BareCommand command sourceSpan ->
+            [CommandSpec command Nothing sourceSpan]
         _ -> []
     extractName :: StorePath -> Text
-    extractName (StorePath p) =
-        -- /nix/store/hash-name/bin/cmd -> cmd
-        case reverse (T.splitOn "/" p) of
-            (cmd : _) | not (T.null cmd) -> cmd
-            _ -> p
+    extractName (StorePath path) =
+        case reverse (T.splitOn "/" path) of
+            (command : _) | not (T.null command) -> command
+            _ -> path
 
 -- | Collect store paths
 collectStorePaths :: [Fact] -> Set StorePath
-collectStorePaths facts = Set.fromList [sp | UsesStorePath sp _ <- facts]
+collectStorePaths facts = Set.fromList [storePath | UsesStorePath storePath _ <- facts]
 
 -- | Collect bare commands
 collectBareCommands :: [Fact] -> [Text]
-collectBareCommands facts = [cmd | BareCommand cmd _ <- facts]
+collectBareCommands facts = [command | BareCommand command _ <- facts]
 
 -- | Collect dynamic commands
 collectDynamicCommands :: [Fact] -> [Text]
-collectDynamicCommands facts = [var | DynamicCommand var _ <- facts]
+collectDynamicCommands facts = [variable | DynamicCommand variable _ <- facts]
 
 {- | Resolve a variable's type from substitution.
 Returns the resolved type and whether a default was applied (TVar -> TString).
 -}
 resolveType :: Subst -> Text -> Type
-resolveType subst var =
-    applyDefaults (applySubst subst (TVar (TypeVar var)))
+resolveType substitution variable =
+    applyDefaults (applySubst substitution (TVar (TypeVar variable)))
 
 -- | Check whether a variable's type was defaulted (unresolved TVar -> TString).
 wasDefaulted :: Subst -> Text -> Bool
-wasDefaulted subst var =
-    case applySubst subst (TVar (TypeVar var)) of
+wasDefaulted substitution variable =
+    case applySubst substitution (TVar (TypeVar variable)) of
         TVar _ -> True
         _ -> False
 
@@ -161,5 +168,5 @@ Use 'wasDefaulted' to detect when this occurs.
 applyDefaults :: Type -> Type
 applyDefaults = \case
     TNumeric -> TInt
-    TVar _ -> TString -- unresolved becomes string (conservative)
-    t -> t
+    TVar _ -> TString
+    typeValue -> typeValue

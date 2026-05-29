@@ -1,12 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile.Nix.Utils
-Description : Shared utility functions for Nix modules
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                       // nix // utils
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Complex geometric forms began to click into place in the tank, aligned
+--    with the nearly invisible planes of a three-dimensional grid. Beauvoir
+--    was sketching in the cyberspace coordinates for Barrytown, Bobby saw.
+--    'We'll call you this blue pyramid, Bobby. There you are.' A blue
+--    pyramid began to pulse softly at the very center of the tank."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                   // coordinate // transforms
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Common functions used across NixCompile.Nix.* modules.
-Consolidates duplicated code.
--}
 module NixCompile.Nix.Utils (
     -- * VarName extraction
     varNameText,

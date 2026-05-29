@@ -1,5 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // tests // fixtures
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Three times, in their descent, the elevator came to a halt at some
+--    floor and remained there, once for nearly fifteen minutes. The elevators
+--    were located at the core of the arcology, their shafts bundled together
+--    with water mains, sewage lines, huge power cables, and insulated pipes
+--    that Bobby assumed were part of the geothermal system. You could see
+--    it all whenever the doors opened; everything was exposed, raw, as though
+--    the people who built the place had wanted to be able to see exactly how
+--    everything worked and what was going where."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                    // golden // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module Main (main) where
 
 import Data.Map.Strict qualified as Map

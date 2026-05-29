@@ -1,3 +1,15 @@
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                              // NixCompile.Docs.Extract // extract
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "A stranger's face, but not the one his life in hotels had taught him to
+--    expect."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                             // Docs // extract documentation from scope graph
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -16,7 +28,6 @@ import NixCompile.Nix.Scope (Declaration (..), Scope (..), ScopeGraph (..), Scop
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Types (Loc (..), Span (..))
 
--- | Extract documentation from a scope graph and source code
 extractDocs :: ScopeGraph -> Text -> [DocItem]
 extractDocs sg src =
     let decls = concatMap scopeDeclarations (Map.elems (sgScopes sg))
@@ -46,10 +57,9 @@ inferDocKind scopeKinds decl = case Map.lookup (declScope decl) scopeKinds of
     Just RecAttrSetScope -> Attribute
     _ -> Variable
 
--- | Extract comments preceding annotations
 extractComment :: [Text] -> SourceSpan -> Text
-extractComment lines_ span' =
-    let lineIdx = posLine (Scope.spanStart span') - 1 -- 0-based index
+extractComment lines_ sourceSpan =
+    let lineIdx = posLine (Scope.spanStart sourceSpan) - 1
         preceding = take lineIdx lines_
         comments = takeWhileEnd isComment preceding
      in T.unlines (map cleanComment comments)

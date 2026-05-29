@@ -1,29 +1,23 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile.Nix.LintDerivation
-Description : Derivation quality lint rules
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                    // NixCompile.Nix.LintDerivation // lint
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "He was good as new. How good was that?"
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                          // Nix // derivation quality lint rules
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Detects derivation expressions missing required metadata:
-  - @missing-meta@: @mkDerivation { ... }@ without a @meta@ attribute
-  - @missing-description@: @meta = { ... }@ without a @description@ key
-
-These are configurable via the Dhall config under the rule IDs
-@"missing-meta"@ and @"missing-description"@.
--}
 module NixCompile.Nix.LintDerivation (
-    -- * Violations
     DerivViolationType (..),
     DerivViolation (..),
-
-    -- * Detection
     findDerivViolations,
-
-    -- * Formatting
     formatDerivViolations,
-
-    -- * Config
     derivRuleId,
 )
 where
@@ -39,13 +33,11 @@ import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, SrcSpan)
 import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
 import NixCompile.Types (Loc (..), Span (..))
 
--- | Type of derivation quality violation
 data DerivViolationType
     = VMissingMeta
     | VMissingDescription
     deriving (Eq, Show)
 
--- | A derivation quality violation found in Nix source
 data DerivViolation = DerivViolation
     { dvType :: !DerivViolationType
     , dvPath :: !FilePath
@@ -53,126 +45,166 @@ data DerivViolation = DerivViolation
     }
     deriving (Eq, Show)
 
--- | Find all derivation quality violations in a parsed Nix expression
+-- ── entry point ────────────────────────────────────────────────────
+
 findDerivViolations :: FilePath -> NExprLoc -> [DerivViolation]
-findDerivViolations filePath = go
+findDerivViolations filePath = traverseDerivExpr filePath
+
+-- ── tree walk ──────────────────────────────────────────────────────
+-- We need the file path threaded through for diagnostic messages, so
+-- it's passed explicitly rather than captured in a closure.
+
+traverseDerivExpr :: FilePath -> NExprLoc -> [DerivViolation]
+traverseDerivExpr filePath (Fix (Compose (AnnUnit srcSpan expression))) = case expression of
+    NApp func arg ->
+        checkDerivCall filePath srcSpan func arg ++ traverseDerivExpr filePath func ++ traverseDerivExpr filePath arg
+    NSet _ bindings -> concatMap (traverseDerivBinding filePath) bindings
+    NLet bindings body -> concatMap (traverseDerivBinding filePath) bindings ++ traverseDerivExpr filePath body
+    NList xs -> concatMap (traverseDerivExpr filePath) xs
+    NIf c t f -> traverseDerivExpr filePath c ++ traverseDerivExpr filePath t ++ traverseDerivExpr filePath f
+    NAssert c b -> traverseDerivExpr filePath c ++ traverseDerivExpr filePath b
+    NAbs _ b -> traverseDerivExpr filePath b
+    NWith scope body -> traverseDerivExpr filePath scope ++ traverseDerivExpr filePath body
+    NSelect alt b _ -> maybe [] (traverseDerivExpr filePath) alt ++ traverseDerivExpr filePath b
+    NHasAttr b _ -> traverseDerivExpr filePath b
+    NUnary _ x -> traverseDerivExpr filePath x
+    NBinary _ x y -> traverseDerivExpr filePath x ++ traverseDerivExpr filePath y
+    _ -> []
+
+traverseDerivBinding :: FilePath -> Binding NExprLoc -> [DerivViolation]
+traverseDerivBinding filePath = \case
+    NamedVar _ expr _ -> traverseDerivExpr filePath expr
+    Inherit (Just scope) _ _ -> traverseDerivExpr filePath scope
+    Inherit Nothing _ _ -> []
+
+-- ── mkDerivation inspection ────────────────────────────────────────
+-- When we spot an `NApp` whose function is `mkDerivation` (or
+-- `stdenv.mkDerivation`, etc.), we inspect the argument for required
+-- metadata fields.
+
+checkDerivCall :: FilePath -> SrcSpan -> NExprLoc -> NExprLoc -> [DerivViolation]
+checkDerivCall filePath sourceSpan function argument
+    | isMkDerivationCall function = checkDerivArg filePath sourceSpan argument
+    | otherwise = []
+
+-- ── mkDerivation call detection ────────────────────────────────────
+-- Matches both bare `mkDerivation` and qualified `attrset.mkDerivation`.
+
+isMkDerivationCall :: NExprLoc -> Bool
+isMkDerivationCall (Fix (Compose (AnnUnit _ (NSym name)))) =
+    varNameText name == "mkDerivation"
+isMkDerivationCall (Fix (Compose (AnnUnit _ (NSelect _ _ (StaticKey key :| []))))) =
+    varNameText key == "mkDerivation"
+isMkDerivationCall _ = False
+
+-- ── argument inspection ────────────────────────────────────────────
+-- The argument to `mkDerivation` must be an attrset. If it's a
+-- variable reference (NSym), we skip — the attrset might be defined
+-- elsewhere and we can't verify statically.
+
+checkDerivArg :: FilePath -> SrcSpan -> NExprLoc -> [DerivViolation]
+checkDerivArg filePath sourceSpan (Fix (Compose (AnnUnit _ (NSet _ bindings)))) =
+    checkDerivMeta filePath sourceSpan bindings
+checkDerivArg _ _ (Fix (Compose (AnnUnit _ (NSym _)))) = []
+checkDerivArg _ _ _ = []
+
+-- ── meta-attribute validation ──────────────────────────────────────
+-- Two checks in one pass:
+--   1. Does the attrset have a `meta` binding at all?
+--   2. If meta exists, does it contain a `description` key?
+-- The meta value itself is also traversed for nested violations.
+
+checkDerivMeta :: FilePath -> SrcSpan -> [Binding NExprLoc] -> [DerivViolation]
+checkDerivMeta filePath sourceSpan bindings = checkFoundMeta
   where
-    go :: NExprLoc -> [DerivViolation]
-    go (Fix (Compose (AnnUnit srcSpan e))) = case e of
-        NApp func arg ->
-            checkDeriv srcSpan func arg ++ go func ++ go arg
-        NSet _ bindings -> concatMap goBinding bindings
-        NLet bindings body -> concatMap goBinding bindings ++ go body
-        NList xs -> concatMap go xs
-        NIf c t f -> go c ++ go t ++ go f
-        NAssert c b -> go c ++ go b
-        NAbs _ b -> go b
-        NWith scope body -> go scope ++ go body
-        NSelect alt b _ -> maybe [] go alt ++ go b
-        NHasAttr b _ -> go b
-        NUnary _ x -> go x
-        NBinary _ x y -> go x ++ go y
-        _ -> []
+    found = findMetaBinding bindings
 
-    goBinding :: Binding NExprLoc -> [DerivViolation]
-    goBinding = \case
-        NamedVar _ expr _ -> go expr
-        Inherit (Just scope) _ _ -> go scope
-        Inherit Nothing _ _ -> []
-
-    checkDeriv :: SrcSpan -> NExprLoc -> NExprLoc -> [DerivViolation]
-    checkDeriv sp func arg
-        | isMkDerivationCall func = checkArg sp arg
+    checkFoundMeta
+        | Nothing <- found = [missingMetaViolation]
+        | Just (NamedVar _ metaValue _) <- found =
+            checkDerivDescription filePath metaValue ++ traverseDerivExpr filePath metaValue
         | otherwise = []
 
-    isMkDerivationCall :: NExprLoc -> Bool
-    isMkDerivationCall (Fix (Compose (AnnUnit _ (NSym name)))) =
-        varNameText name == "mkDerivation"
-    isMkDerivationCall (Fix (Compose (AnnUnit _ (NSelect _ _ (StaticKey k :| []))))) =
-        varNameText k == "mkDerivation"
-    isMkDerivationCall _ = False
+    missingMetaViolation =
+        DerivViolation
+            { dvType = VMissingMeta
+            , dvPath = filePath
+            , dvSpan = srcSpanToSpan sourceSpan
+            }
 
-    checkArg :: SrcSpan -> NExprLoc -> [DerivViolation]
-    checkArg sp (Fix (Compose (AnnUnit _ (NSet _ bindings)))) =
-        checkMeta sp bindings
-    checkArg _ (Fix (Compose (AnnUnit _ (NSym _)))) = []
-    checkArg _ _ = []
+-- ── description key check ──────────────────────────────────────────
+-- If `meta` resolves to an attrset literal, verify it has a
+-- `description` key. Dynamic or referenced meta values are skipped
+-- (conservative — we only flag what we can prove).
 
-    checkMeta :: SrcSpan -> [Binding NExprLoc] -> [DerivViolation]
-    checkMeta sp bindings =
-        case findMetaBinding bindings of
-            Nothing ->
-                [ DerivViolation
-                    { dvType = VMissingMeta
-                    , dvPath = filePath
-                    , dvSpan = srcSpanToSpan sp
-                    }
-                ]
-            Just (NamedVar _ metaVal _) ->
-                let metaVios = case metaVal of
-                        Fix (Compose (AnnUnit msp (NSet _ metaBindings))) ->
-                            if any isDescriptionBinding metaBindings
-                                then []
-                                else
-                                    [ DerivViolation
-                                        { dvType = VMissingDescription
-                                        , dvPath = filePath
-                                        , dvSpan = srcSpanToSpan msp
-                                        }
-                                    ]
-                        _ -> []
-                 in metaVios ++ go metaVal
-            _ -> []
+checkDerivDescription :: FilePath -> NExprLoc -> [DerivViolation]
+checkDerivDescription filePath metaValue
+    | Fix (Compose (AnnUnit metaSpan (NSet _ metaBindings))) <- metaValue
+    , not (any isDescriptionBinding metaBindings) =
+        [ DerivViolation
+            { dvType = VMissingDescription
+            , dvPath = filePath
+            , dvSpan = srcSpanToSpan metaSpan
+            }
+        ]
+    | otherwise = []
 
-    findMetaBinding :: [Binding NExprLoc] -> Maybe (Binding NExprLoc)
-    findMetaBinding = find $ \case
-        NamedVar (StaticKey name :| []) _ _ -> varNameText name == "meta"
-        _ -> False
+findMetaBinding :: [Binding NExprLoc] -> Maybe (Binding NExprLoc)
+findMetaBinding = find $ \case
+    NamedVar (StaticKey bindingName :| []) _ _ -> varNameText bindingName == "meta"
+    _ -> False
 
-    isDescriptionBinding :: Binding NExprLoc -> Bool
-    isDescriptionBinding (NamedVar (StaticKey name :| []) _ _) = varNameText name == "description"
-    isDescriptionBinding _ = False
+isDescriptionBinding :: Binding NExprLoc -> Bool
+isDescriptionBinding (NamedVar (StaticKey bindingName :| []) _ _) = varNameText bindingName == "description"
+isDescriptionBinding _ = False
 
--- | Map a violation type to its config rule ID
 derivRuleId :: DerivViolationType -> Text
 derivRuleId = \case
     VMissingMeta -> "missing-meta"
     VMissingDescription -> "missing-description"
 
--- | Format violations for display
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                           // output formatting
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 formatDerivViolations :: [DerivViolation] -> Text
-formatDerivViolations = T.unlines . map formatOne
-  where
-    formatOne v =
-        T.unlines
-            [ formatLoc (dvSpan v) <> ": " <> errorCode (dvType v)
-            , "  " <> contextLine (dvType v)
-            , ""
-            , note (dvType v)
-            ]
+formatDerivViolations = T.unlines . map formatOneDerivViolation
 
-    formatLoc span' =
-        let line = T.pack (show (locLine (spanStart span')))
-            col = T.pack (show (locCol (spanStart span')))
-         in case spanFile span' of
-                Just f -> T.pack f <> ":" <> line <> ":" <> col
-                Nothing -> line <> ":" <> col
+formatOneDerivViolation :: DerivViolation -> Text
+formatOneDerivViolation dv =
+    T.unlines
+        [ formatDerivLoc (dvSpan dv) <> ": " <> formatDerivErrorCode (dvType dv)
+        , "  " <> formatDerivContext (dvType dv)
+        , ""
+        , formatDerivNote (dvType dv)
+        ]
 
-    errorCode VMissingMeta = "ALEPH-N013: missing `meta`"
-    errorCode VMissingDescription = "ALEPH-N014: missing `description` in meta"
+formatDerivLoc :: Span -> Text
+formatDerivLoc span' =
+    let line = T.pack (show (locLine (spanStart span')))
+        col = T.pack (show (locCol (spanStart span')))
+     in case spanFile span' of
+            Just f -> T.pack f <> ":" <> line <> ":" <> col
+            Nothing -> line <> ":" <> col
 
-    contextLine VMissingMeta = "mkDerivation call without meta attribute"
-    contextLine VMissingDescription = "meta = { ... } without description key"
+formatDerivErrorCode :: DerivViolationType -> Text
+formatDerivErrorCode VMissingMeta = "ALEPH-N013: missing `meta`"
+formatDerivErrorCode VMissingDescription = "ALEPH-N014: missing `description` in meta"
 
-    note VMissingMeta =
-        T.unlines
-            [ "  Derivations should include a `meta` attribute for package metadata."
-            , ""
-            , "  Add:  meta = with lib; { ... };"
-            ]
-    note VMissingDescription =
-        T.unlines
-            [ "  The `meta` attribute should include a `description`."
-            , ""
-            , "  Add:  meta = with lib; { description = \"...\"; ... };"
-            ]
+formatDerivContext :: DerivViolationType -> Text
+formatDerivContext VMissingMeta = "mkDerivation call without meta attribute"
+formatDerivContext VMissingDescription = "meta = { ... } without description key"
+
+formatDerivNote :: DerivViolationType -> Text
+formatDerivNote VMissingMeta =
+    T.unlines
+        [ "  Derivations should include a `meta` attribute for package metadata."
+        , ""
+        , "  Add:  meta = with lib; { ... };"
+        ]
+formatDerivNote VMissingDescription =
+    T.unlines
+        [ "  The `meta` attribute should include a `description`."
+        , ""
+        , "  Add:  meta = with lib; { description = \"...\"; ... };"
+        ]

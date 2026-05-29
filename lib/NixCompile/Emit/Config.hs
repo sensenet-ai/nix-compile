@@ -2,36 +2,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-{- |
-Module      : NixCompile.Emit.Config
-Description : Generate emit-config bash function
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // emit // config
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Machine dreams hold a special vertigo. Turner lay down on a virgin
+--    slab of green temperfoam in the makeshift dorm and jacked
+--    Mitchell's dossier."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // emit // generation
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-The key innovation of nix-compile: generating bash functions that output
-structured config (JSON/YAML/TOML) based on config.* assignments.
-
-Instead of heredoc templating:
-@
-cat << EOF > config.json
-{
-  "server": {
-    "port": ${PORT},
-    "host": "${HOST}"
-  }
-}
-EOF
-@
-
-You write:
-@
-config.server.port=$PORT
-config.server.host="$HOST"
-emit-config json > config.json
-@
-
-The emit-config function is generated at build time with the correct
-structure based on static analysis. Type safety is enforced: unquoted
-values become JSON numbers/booleans, quoted become strings.
--}
 module NixCompile.Emit.Config (
     -- * Generation
     emitConfigFunction,
@@ -50,14 +34,12 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
-import NixCompile.Types
 import Numeric (showHex)
 
-{- | JSON-compliant escaping for double-quoted strings.
-Escapes all control characters (U+0000 through U+001F) per JSON spec (RFC 8259).
--}
+import NixCompile.Types
+
 jsonEscape :: Text -> Text
-jsonEscape = T.concatMap $ \c -> case c of
+jsonEscape = T.concatMap $ \character -> case character of
     '"' -> "\\\""
     '\\' -> "\\\\"
     '\n' -> "\\n"
@@ -66,10 +48,9 @@ jsonEscape = T.concatMap $ \c -> case c of
     '\b' -> "\\b"
     '\f' -> "\\f"
     _
-        | c < '\x20' -> "\\u" <> T.justifyRight 4 '0' (T.pack (showHex (fromEnum c) ""))
-        | otherwise -> T.singleton c
+        | character < '\x20' -> "\\u" <> T.justifyRight 4 '0' (T.pack (showHex (fromEnum character) ""))
+        | otherwise -> T.singleton character
 
--- | Render a literal as JSON
 renderJsonLit :: Literal -> Text
 renderJsonLit = \case
     LitInt n -> T.pack (show n)
@@ -78,7 +59,6 @@ renderJsonLit = \case
     LitString s -> "\"" <> jsonEscape s <> "\""
     LitPath sp -> "\"" <> jsonEscape (unStorePath sp) <> "\""
 
--- | Render a literal as YAML
 renderYamlLit :: Literal -> Text
 renderYamlLit = \case
     LitInt n -> T.pack (show n)
@@ -87,7 +67,6 @@ renderYamlLit = \case
     LitString s -> "\"" <> jsonEscape s <> "\""
     LitPath sp -> "\"" <> jsonEscape (unStorePath sp) <> "\""
 
--- | Render a literal as TOML
 renderTomlLit :: Literal -> Text
 renderTomlLit = \case
     LitInt n -> T.pack (show n)
@@ -96,124 +75,135 @@ renderTomlLit = \case
     LitString s -> "\"" <> jsonEscape s <> "\""
     LitPath sp -> "\"" <> jsonEscape (unStorePath sp) <> "\""
 
-{- | A tree representation of config structure
-config.server.port -> ConfigLeaf "server" (ConfigLeaf "port" (ConfigValue ...))
--}
 data ConfigTree
     = ConfigBranch !(Map Text ConfigTree)
     | ConfigLeaf !ConfigSpec
     deriving (Eq, Show)
 
-{- | Build a config tree from flat config specs
-[["server", "port"]] -> { server: { port: ... } }
--}
 buildConfigTree :: Map ConfigPath ConfigSpec -> ConfigTree
 buildConfigTree specs = foldr insertPath (ConfigBranch Map.empty) (Map.toList specs)
   where
     insertPath ([], spec) _ = ConfigLeaf spec
-    insertPath (k : ks, spec) (ConfigBranch m) =
-        ConfigBranch $ Map.alter (Just . go ks spec) k m
-    insertPath _ leaf = leaf -- shouldn't happen
+    insertPath (key : keys, spec) (ConfigBranch m) =
+        ConfigBranch $ Map.alter (Just . go keys spec) key m
+    insertPath _ leaf = leaf
     go [] spec Nothing = ConfigLeaf spec
-    go [] spec (Just _) = ConfigLeaf spec -- overwrite
-    go (k : ks) spec Nothing =
-        ConfigBranch $ Map.singleton k (go ks spec Nothing)
-    go (k : ks) spec (Just (ConfigBranch m)) =
-        ConfigBranch $ Map.alter (Just . go ks spec) k m
-    go _ _spec (Just leaf) = leaf -- can't descend into leaf
+    go [] spec (Just _) = ConfigLeaf spec
+    go (key : keys) spec Nothing =
+        ConfigBranch $ Map.singleton key (go keys spec Nothing)
+    go (key : keys) spec (Just (ConfigBranch m)) =
+        ConfigBranch $ Map.alter (Just . go keys spec) key m
+    go _ _spec (Just leaf) = leaf
 
-{- | Generate the emit-config bash function
-This function will be injected into the script at build time
-NOTE: Does NOT use heredocs (that would violate our own policy)
--}
+-- ── emit-config bash function ─────────────────────────────────────
+
 emitConfigFunction :: Schema -> Text
 emitConfigFunction schema =
-    T.unlines
-        [ "# Generated by nix-compile - do not edit"
-        , "emit-config() {"
-        , "  __nix_compile_escape_json() {"
-        , "    local s=\"$1\" out=\"\" c code esc i"
-        , "    for ((i = 0; i < ${#s}; i++)); do"
-        , "      c=\"${s:i:1}\""
-        , "      case \"$c\" in"
-        , "        '\"') out+='\\\"' ;;"
-        , "        '\\') out+='\\\\' ;;"
-        , "        $'\\n') out+='\\n' ;;"
-        , "        $'\\r') out+='\\r' ;;"
-        , "        $'\\t') out+='\\t' ;;"
-        , "        $'\\b') out+='\\b' ;;"
-        , "        $'\\f') out+='\\f' ;;"
-        , "        *)"
-        , "          printf -v code '%d' \"'$c\""
-        , "          if (( code < 32 )); then"
-        , "            printf -v esc '\\\\u%04x' \"$code\""
-        , "            out+=\"$esc\""
-        , "          else"
-        , "            out+=\"$c\""
-        , "          fi"
-        , "          ;;"
-        , "      esac"
-        , "    done"
-        , "    printf '%s' \"$out\""
-        , "  }"
-        , "  __nix_compile_require_int() {"
-        , "    case \"$2\" in"
-        , "      -[0-9]*|[0-9]*) ;;"
-        , "      *) echo \"$1 must be an integer\" >&2; return 1 ;;"
-        , "    esac"
-        , "    case \"$2\" in"
-        , "      *[!0-9-]*|*-*-*|*-) "
-        , "        echo \"$1 must be an integer\" >&2; return 1 ;;"
-        , "    esac"
-        , "    case \"$2\" in"
-        , "      0|-0|[1-9]*|-[1-9]*) ;;"
-        , "      *) echo \"$1 must be a JSON integer (no leading zeros)\" >&2; return 1 ;;"
-        , "    esac"
-        , "    case \"$2\" in"
-        , "      *) printf '%s' \"$2\" ;;"
-        , "    esac"
-        , "  }"
-        , "  __nix_compile_require_bool() {"
-        , "    case \"$2\" in"
-        , "      true|false) printf '%s' \"$2\" ;;"
-        , "      *) echo \"$1 must be true or false\" >&2; return 1 ;;"
-        , "    esac"
-        , "  }"
-        , "  local format=\"${1:-json}\""
-        , renderRuntimeGuards schema
-        , "  case \"$format\" in"
-        , "    json)"
-        , "      " <> emitConfigJson schema
-        , "      ;;"
-        , "    yaml)"
-        , "      " <> emitConfigYaml schema
-        , "      ;;"
-        , "    toml)"
-        , "      " <> emitConfigToml schema
-        , "      ;;"
-        , "    *)"
-        , "      echo \"Unknown format: $format\" >&2"
-        , "      return 1"
-        , "      ;;"
-        , "  esac"
-        , "}"
-        ]
+    T.unlines $
+        concat
+            [ emitConfigHeader
+            , emitEscapeJsonFn
+            , emitRequireIntFn
+            , emitRequireBoolFn
+            , emitRuntimeBlock schema
+            ]
 
-{- | Check whether an env var is required according to the schema.
-Returns True when the variable is either:
-  - explicitly marked as required in the schema (envRequired = True), or
-  - not present in the schema at all (conservative: assume required).
--}
+emitConfigHeader :: [Text]
+emitConfigHeader =
+    [ "# Generated by nix-compile - do not edit"
+    , "emit-config() {"
+    ]
+
+emitEscapeJsonFn :: [Text]
+-- shell-native JSON string escaper; mirrors the Haskell jsonEscape logic
+emitEscapeJsonFn =
+    [ "  __nix_compile_escape_json() {"
+    , "    local s=\"$1\" out=\"\" c code esc i"
+    , "    for ((i = 0; i < ${#s}; i++)); do"
+    , "      c=\"${s:i:1}\""
+    , "      case \"$c\" in"
+    , "        '\"') out+='\\\"' ;;"
+    , "        '\\') out+='\\\\' ;;"
+    , "        $'\\n') out+='\\n' ;;"
+    , "        $'\\r') out+='\\r' ;;"
+    , "        $'\\t') out+='\\t' ;;"
+    , "        $'\\b') out+='\\b' ;;"
+    , "        $'\\f') out+='\\f' ;;"
+    , "        *)"
+    , "          printf -v code '%d' \"'$c\""
+    , "          if (( code < 32 )); then"
+    , "            printf -v esc '\\\\u%04x' \"$code\""
+    , "            out+=\"$esc\""
+    , "          else"
+    , "            out+=\"$c\""
+    , "          fi"
+    , "          ;;"
+    , "      esac"
+    , "    done"
+    , "    printf '%s' \"$out\""
+    , "  }"
+    ]
+
+emitRequireIntFn :: [Text]
+-- n.b. checks both value-shape and JSON lexical rules (no leading zeros)
+emitRequireIntFn =
+    [ "  __nix_compile_require_int() {"
+    , "    case \"$2\" in"
+    , "      -[0-9]*|[0-9]*) ;;"
+    , "      *) echo \"$1 must be an integer\" >&2; return 1 ;;"
+    , "    esac"
+    , "    case \"$2\" in"
+    , "      *[!0-9-]*|*-*-*|*-) "
+    , "        echo \"$1 must be an integer\" >&2; return 1 ;;"
+    , "    esac"
+    , "    case \"$2\" in"
+    , "      0|-0|[1-9]*|-[1-9]*) ;;"
+    , "      *) echo \"$1 must be a JSON integer (no leading zeros)\" >&2; return 1 ;;"
+    , "    esac"
+    , "    case \"$2\" in"
+    , "      *) printf '%s' \"$2\" ;;"
+    , "    esac"
+    , "  }"
+    ]
+
+emitRequireBoolFn :: [Text]
+emitRequireBoolFn =
+    [ "  __nix_compile_require_bool() {"
+    , "    case \"$2\" in"
+    , "      true|false) printf '%s' \"$2\" ;;"
+    , "      *) echo \"$1 must be true or false\" >&2; return 1 ;;"
+    , "    esac"
+    , "  }"
+    ]
+
+emitRuntimeBlock :: Schema -> [Text]
+-- format dispatch + runtime guards; renderRuntimeGuards is multi-line
+emitRuntimeBlock schema =
+    [ "  local format=\"${1:-json}\""
+    , renderRuntimeGuards schema
+    , "  case \"$format\" in"
+    , "    json)"
+    , "      " <> emitConfigJson schema
+    , "      ;;"
+    , "    yaml)"
+    , "      " <> emitConfigYaml schema
+    , "      ;;"
+    , "    toml)"
+    , "      " <> emitConfigToml schema
+    , "      ;;"
+    , "    *)"
+    , "      echo \"Unknown format: $format\" >&2"
+    , "      return 1"
+    , "      ;;"
+    , "  esac"
+    , "}"
+    ]
+
 isRequiredEnv :: Map Text EnvSpec -> Text -> Bool
 isRequiredEnv env var = case Map.lookup var env of
-    Just es -> envRequired es
+    Just envSpec -> envRequired envSpec
     Nothing -> True
 
-{- | Emit preflight guards before producing output.
-Guards must run outside command substitutions: bash does not reliably abort
-the outer printf when ${VAR:?} fails inside $(...).
-Only generates guards for variables marked as required in the schema env.
--}
 renderRuntimeGuards :: Schema -> Text
 renderRuntimeGuards schema =
     T.unlines
@@ -247,24 +237,17 @@ renderRuntimeGuards schema =
         ConfigVarRequired var -> [var]
         _ -> []
 
--- | Generate JSON output command using printf (no heredocs)
 emitConfigJson :: Schema -> Text
 emitConfigJson schema =
     let env = schemaEnv schema
         tree = buildConfigTree (schemaConfig schema)
      in emitTemplate (renderJsonTree env 0 tree)
 
--- | Escape a string for use in single-quoted printf argument
 escapeForPrintf :: Text -> Text
 escapeForPrintf = T.concatMap $ \case
-    '\'' -> "'\\''" -- End quote, escaped quote, start quote
-    c -> T.singleton c
+    '\'' -> "'\\''"
+    character -> T.singleton character
 
-{- | A printf template plus shell arguments for runtime-expanded values.
-Static text stays in a single-quoted printf format string; dynamic values are
-passed as separate shell arguments, so ${VAR:?} and command substitutions are
-expanded by bash while literals remain inert.
--}
 data Template = Template !Text ![Text]
 
 appendTemplate :: Template -> Template -> Template
@@ -287,9 +270,6 @@ emitTemplate (Template fmt args) =
         | null args = ""
         | otherwise = " " <> T.unwords (map quoteShellArg args)
 
-    -- Quote runtime expressions so values with spaces, percent signs, glob chars,
-    -- or newlines are passed as one printf argument. Command substitutions remain
-    -- active inside double quotes (e.g. "$(escape "${VAR:?}")").
     quoteShellArg arg = "\"" <> arg <> "\""
 
 intersperseTemplate :: Template -> [Template] -> [Template]
@@ -297,7 +277,6 @@ intersperseTemplate _ [] = []
 intersperseTemplate _ [x] = [x]
 intersperseTemplate sep (x : xs) = x : sep : intersperseTemplate sep xs
 
--- | NixCompile config tree as JSON
 renderJsonTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
 renderJsonTree env indent = \case
     ConfigBranch m | Map.null m -> literalTemplate "{}"
@@ -315,11 +294,6 @@ renderJsonTree env indent = \case
     renderEntry ind (key, subtree) =
         literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJsonTree env (ind + 1) subtree
 
-{- | NixCompile a config value as JSON
-Uses bash variable expansion, with quoting based on type.
-Required env vars use ${VAR:?} to fail fast if unset;
-optional vars use ${VAR:-\} to default to empty string.
--}
 renderJsonValue :: Map Text EnvSpec -> ConfigSpec -> Template
 renderJsonValue env ConfigSpec{..} =
     case (cfgFrom, cfgLit, cfgTemplate) of
@@ -345,14 +319,12 @@ renderJsonValue env ConfigSpec{..} =
         _ ->
             literalTemplate "null"
 
--- | Generate YAML output command using printf (no heredocs)
 emitConfigYaml :: Schema -> Text
 emitConfigYaml schema =
     let env = schemaEnv schema
         tree = buildConfigTree (schemaConfig schema)
      in emitTemplate (renderYamlTree env 0 tree)
 
--- | NixCompile config tree as YAML
 renderYamlTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
 renderYamlTree env indent = \case
     ConfigBranch m | Map.null m -> literalTemplate "{}"
@@ -370,7 +342,6 @@ renderYamlTree env indent = \case
                 ConfigLeaf spec' ->
                     literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue env spec'
 
--- | NixCompile a config value as YAML
 renderYamlValue :: Map Text EnvSpec -> ConfigSpec -> Template
 renderYamlValue env ConfigSpec{..} =
     case (cfgFrom, cfgLit, cfgTemplate) of
@@ -396,14 +367,12 @@ renderYamlValue env ConfigSpec{..} =
         _ ->
             literalTemplate "null"
 
--- | Generate TOML output command using printf (no heredocs)
 emitConfigToml :: Schema -> Text
 emitConfigToml schema =
     let env = schemaEnv schema
         tree = buildConfigTree (schemaConfig schema)
      in emitTemplate (renderTomlTree env [] tree)
 
--- | NixCompile config tree as TOML
 renderTomlTree :: Map Text EnvSpec -> [Text] -> ConfigTree -> Template
 renderTomlTree env path = \case
     ConfigBranch m | Map.null m -> literalTemplate ""
@@ -422,7 +391,7 @@ renderTomlTree env path = \case
                     ++ intersperseTemplate (literalTemplate "\n") leafLines
                     ++ [literalTemplate (if not (Map.null leaves) && not (Map.null branches) then "\n\n" else "")]
                     ++ intersperseTemplate (literalTemplate "\n\n") branchLines
-    ConfigLeaf _ -> literalTemplate "" -- shouldn't be called at top level
+    ConfigLeaf _ -> literalTemplate ""
   where
     renderTomlLeaf (key, ConfigLeaf spec) =
         literalTemplate (key <> " = ") `appendTemplate` renderTomlValue env spec
@@ -431,7 +400,6 @@ renderTomlTree env path = \case
     renderTomlBranch parentPath (key, subtree) =
         renderTomlTree env (parentPath ++ [key]) subtree
 
--- | NixCompile a config value as TOML
 renderTomlValue :: Map Text EnvSpec -> ConfigSpec -> Template
 renderTomlValue env ConfigSpec{..} =
     case (cfgFrom, cfgLit, cfgTemplate) of
@@ -455,7 +423,7 @@ renderTomlValue env ConfigSpec{..} =
                     then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
                     else dynamicTemplate guardedVar
         _ ->
-            literalTemplate "\"\"" -- TOML has no null; emit empty string as safe default
+            literalTemplate "\"\""
 
 renderTemplateParts :: [ConfigPart] -> Template
 renderTemplateParts = concatTemplates . map renderPart

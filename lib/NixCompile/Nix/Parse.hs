@@ -3,26 +3,26 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{- |
-Module      : NixCompile.Nix.Parse
-Description : Parse Nix files to extract embedded bash scripts
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                      // nix // parsing
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Back into the living room, and amazed, somehow, that he hadn't moved;
+--    expecting him to jump up, hello, waving a few centimeters of trick wire.
+--    She removed his shoes, looked inside, felt the lining. Nothing. 'Don't
+--    do this to me.' And back into the bedroom. The narrow closet. Brushing
+--    aside a clatter of cheap white plastic hangers, a limp shroud of
+--    drycleaner's plastic. Dragging the stained bedslab over and standing on
+--    it, her heels sinking into the foam, to slide her hands the length of a
+--    pressboard shelf, and find, in the far corner, a hard little fold of
+--    paper, rectangular and blue."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // nix // parse // extract
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Uses hnix to parse Nix expressions and find writeShellScript* calls.
-Extracts the bash string content along with Nix interpolation sites.
-
-Key patterns we look for:
-
-  pkgs.writeShellScript "name" ''
-    bash content with ${pkgs.foo}/bin/bar
-  ''
-
-  pkgs.writeShellScriptBin "name" ''...''
-
-  lib.writeScript "name" ''...''
-
-Each interpolation ${...} is tracked with its source span and
-the Nix expression it contains (for store path verification).
--}
 module NixCompile.Nix.Parse (
     -- * Parsing
     parseNixFile,
@@ -55,27 +55,27 @@ import NixCompile.Types (Span (..))
 
 -- | A bash script extracted from a Nix file
 data BashScript = BashScript
-    { bsName :: !Text -- Script name (from first argument)
-    , bsContent :: !Text -- Raw bash content with interpolations as placeholders
-    , bsInterpolations :: ![Interpolation] -- All interpolation sites
-    , bsSpan :: !Span -- Source location of the bash string
+    { bsName :: !Text
+    , bsContent :: !Text
+    , bsInterpolations :: ![Interpolation]
+    , bsSpan :: !Span
     }
     deriving (Eq, Show)
 
 -- | An interpolation site in a bash string
 data Interpolation = Interpolation
-    { intExpr :: !Text -- The Nix expression text (e.g., "pkgs.curl")
-    , intIsStorePath :: !Bool -- True if this looks like a store path access
-    , intSpan :: !Span -- Source location within the bash string
+    { intExpr :: !Text
+    , intIsStorePath :: !Bool
+    , intSpan :: !Span
     }
     deriving (Eq, Show)
 
 -- | A writeShellScript* call found in Nix
 data ShellScriptCall = ShellScriptCall
-    { sscFunction :: !Text -- "writeShellScript", "writeShellScriptBin", etc.
-    , sscName :: !Text -- Script name
-    , sscBody :: !NExprLoc -- The body expression (usually a string)
-    , sscSpan :: !Span -- Source location of the call
+    { sscFunction :: !Text
+    , sscName :: !Text
+    , sscBody :: !NExprLoc
+    , sscSpan :: !Span
     }
     deriving (Show)
 
@@ -130,6 +130,24 @@ extractString (Fix (Compose (AnnUnit srcSpan expr))) = case expr of
          in Just (content, interps, toSpan srcSpan Nothing)
     _ -> Nothing
 
+-- | Generate a placeholder string for an interpolation site
+injectPlaceholders :: Bool -> Int -> Text
+injectPlaceholders isStore n
+    | isStore = "/nix/store/__nix_compile_interp_" <> T.pack (show n) <> "__"
+    | otherwise = "@__nix_compile_interp_" <> T.pack (show n) <> "__@"
+
+-- | Extract interpolation data from an antiquoted expression
+extractInterpolations :: Int -> NExprLoc -> (Text, Interpolation)
+extractInterpolations n expr =
+    let isStore = isStorePathExpr expr
+     in ( injectPlaceholders isStore n
+        , Interpolation
+            { intExpr = prettyExpr expr
+            , intIsStorePath = isStore
+            , intSpan = exprSpan expr
+            }
+        )
+
 {- | Extract text and interpolations from string parts.
 
 We replace interpolations with stable placeholders so downstream bash analysis can:
@@ -137,29 +155,16 @@ We replace interpolations with stable placeholders so downstream bash analysis c
   * treat "unknown" interpolations as explicit placeholders (by prefixing @...@)
 -}
 extractPartsWithInterps :: [Antiquoted Text NExprLoc] -> (Text, [Interpolation])
-extractPartsWithInterps = go (0 :: Int)
+extractPartsWithInterps = go 0
   where
-    go :: Int -> [Antiquoted Text NExprLoc] -> (Text, [Interpolation])
     go _ [] = ("", [])
     go n (part : rest) =
         let (restText, restInterps) = go n' rest
          in case part of
-                Plain txt ->
-                    (txt <> restText, restInterps)
-                EscapedNewline ->
-                    ("\n" <> restText, restInterps)
+                Plain txt -> (txt <> restText, restInterps)
+                EscapedNewline -> ("\n" <> restText, restInterps)
                 Antiquoted expr ->
-                    let isStore = isStorePathExpr expr
-                        placeholder =
-                            if isStore
-                                then "/nix/store/__nix_compile_interp_" <> T.pack (show n) <> "__"
-                                else "@__nix_compile_interp_" <> T.pack (show n) <> "__@"
-                        interp =
-                            Interpolation
-                                { intExpr = prettyExpr expr
-                                , intIsStorePath = isStore
-                                , intSpan = exprSpan expr
-                                }
+                    let (placeholder, interp) = extractInterpolations n expr
                      in (placeholder <> restText, interp : restInterps)
       where
         n' = case part of
@@ -171,13 +176,9 @@ e.g., ${pkgs.curl} or ${lib.getExe pkgs.ripgrep}
 -}
 isStorePathExpr :: NExprLoc -> Bool
 isStorePathExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
-    -- pkgs.foo or lib.foo
     NSelect _ base (k :| _) -> isPackageBase base || keyTextIs "pkgs" k || keyTextIs "lib" k
-    -- lib.getExe pkgs.foo
     NApp func arg -> isStorePathExpr func || isStorePathExpr arg
-    -- Direct reference like ${myPkg}
     NSym name -> isLikelyPackageVar (varNameText name)
-    -- Literal path /nix/store/...
     NLiteralPath p -> "/nix/store" `T.isPrefixOf` T.pack (show p)
     _ -> False
   where
@@ -211,9 +212,6 @@ prettyExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
     NLiteralPath p -> T.pack (show p)
     NEnvPath p -> "<" <> T.pack (show p) <> ">"
     _ -> "<expr>"
-  where
-    keyText (StaticKey k) = varNameText k
-    keyText (DynamicKey _) = "<dynamic>"
 
 -- | Get the source span of an expression
 exprSpan :: NExprLoc -> Span
@@ -221,115 +219,124 @@ exprSpan (Fix (Compose (AnnUnit srcSpan _))) = toSpan srcSpan Nothing
 
 -- | Find all writeShellScript* calls in an expression
 findShellScriptCalls :: NExprLoc -> [ShellScriptCall]
-findShellScriptCalls = go
+findShellScriptCalls = walkExpression
+
+-- | Walk the Nix AST, collecting shell script calls
+walkExpression :: NExprLoc -> [ShellScriptCall]
+walkExpression expr =
+    case extractScriptCall expr of
+        Just call -> [call]
+        Nothing -> walkSubExprs expr
+
+-- | Walk sub-expressions of a node
+walkSubExprs :: NExprLoc -> [ShellScriptCall]
+walkSubExprs (Fix (Compose (AnnUnit _ e))) = case e of
+    NConstant _ -> []
+    NStr _ -> []
+    NSym _ -> []
+    NList xs -> concatMap walkExpression xs
+    NSet _ bindings -> concatMap walkBinding bindings
+    NLiteralPath _ -> []
+    NEnvPath _ -> []
+    NLet bindings body -> concatMap walkBinding bindings ++ walkExpression body
+    NIf cond t f -> walkExpression cond ++ walkExpression t ++ walkExpression f
+    NWith scope body -> walkExpression scope ++ walkExpression body
+    NAssert cond body -> walkExpression cond ++ walkExpression body
+    NAbs _ body -> walkExpression body
+    NApp f x -> walkExpression f ++ walkExpression x
+    NSelect alt base _ -> walkExpression base ++ maybe [] walkExpression alt
+    NHasAttr base _ -> walkExpression base
+    NUnary _ x -> walkExpression x
+    NBinary _ x y -> walkExpression x ++ walkExpression y
+    NSynHole _ -> []
+
+-- | Process a binding node
+walkBinding :: Binding NExprLoc -> [ShellScriptCall]
+walkBinding = \case
+    NamedVar _ expr _ -> walkExpression expr
+    Inherit _ _ _ -> []
+
+-- | Check if a function name is a writeShellScript variant
+isShellScriptFunction :: Text -> Bool
+isShellScriptFunction name =
+    name == "writeShellScript"
+        || name == "writeShellScriptBin"
+        || name == "writeScript"
+        || name == "writeScriptBin"
+        || name == "writeShellApplication"
+
+-- | Unwrap nested applications to find the function name and all arguments
+unwrapApp :: NExprLoc -> [NExprLoc] -> Maybe (Text, [NExprLoc])
+unwrapApp (Fix (Compose (AnnUnit _ e))) args = case e of
+    NApp func arg -> unwrapApp func (arg : args)
+    NSym name -> Just (varNameText name, args)
+    NSelect _ _ (attr :| rest) ->
+        Just (keyText (last (attr : rest)), args)
+    _ -> Nothing
+
+-- | Extract key name text from a key node
+keyText :: NKeyName NExprLoc -> Text
+keyText (StaticKey k) = varNameText k
+keyText (DynamicKey _) = ""
+
+-- | Extract name and text from a record: { name = "foo"; text = ''body''; }
+extractFromRecord :: NExprLoc -> Maybe (Text, NExprLoc)
+extractFromRecord (Fix (Compose (AnnUnit _ e))) = case e of
+    NSet _ bindings ->
+        let nameVal = findBinding "name" bindings >>= extractStringLit
+            textVal = findBinding "text" bindings
+         in case (nameVal, textVal) of
+                (Just n, Just t) -> Just (n, t)
+                _ -> Nothing
+    _ -> Nothing
+
+-- | Find a binding by name in a binding list
+findBinding :: Text -> [Binding NExprLoc] -> Maybe NExprLoc
+findBinding name = foldr check Nothing
   where
-    go :: NExprLoc -> [ShellScriptCall]
-    go expr@(Fix (Compose (AnnUnit srcSpan e))) = case e of
-        -- Function application: check if it's a shell script writer
-        NApp _ _ -> case unwrapApp expr [] of
-            -- Pattern 1: writeShellScript "name" ''body''
-            Just (name, [nameArg, bodyArg])
-                | isPositionalShellFunc name ->
-                    case extractStringLit nameArg of
-                        Just scriptName ->
-                            [ ShellScriptCall
+    check (NamedVar (StaticKey k :| []) expr _) acc
+        | varNameText k == name = Just expr
+        | otherwise = acc
+    check _ acc = acc
+
+-- | Extract a string literal from an expression
+extractStringLit :: NExprLoc -> Maybe Text
+extractStringLit (Fix (Compose (AnnUnit _ e))) = case e of
+    NStr (DoubleQuoted [Plain t]) -> Just t
+    NStr (Indented _ [Plain t]) -> Just t
+    _ -> Nothing
+
+-- | Extract a ShellScriptCall from an expression node if it matches
+extractScriptCall :: NExprLoc -> Maybe ShellScriptCall
+extractScriptCall expr@(Fix (Compose (AnnUnit srcSpan e))) = case e of
+    NApp _ _ -> processApp (unwrapApp expr [])
+    _ -> Nothing
+  where
+    processApp (Just (name, args))
+        | not (isShellScriptFunction name) = Nothing
+        | otherwise = case args of
+            [nameArg, bodyArg]
+                | name `elem` positionalFuncs ->
+                    fmap
+                        (\n -> ShellScriptCall name n bodyArg (toSpan srcSpan Nothing))
+                        (extractStringLit nameArg)
+            [recordArg] | name == "writeShellApplication" ->
+                case extractFromRecord recordArg of
+                    Just (n, body) ->
+                        Just
+                            ShellScriptCall
                                 { sscFunction = name
-                                , sscName = scriptName
-                                , sscBody = bodyArg
-                                , sscSpan = toSpan srcSpan Nothing
-                                }
-                            ]
-                        Nothing -> recurse e
-            -- Pattern 2: writeShellApplication { name = "foo"; text = ''body''; }
-            Just (name, [recordArg])
-                | isRecordShellFunc name ->
-                    case extractFromRecord recordArg of
-                        Just (scriptName, body) ->
-                            [ ShellScriptCall
-                                { sscFunction = name
-                                , sscName = scriptName
+                                , sscName = n
                                 , sscBody = body
                                 , sscSpan = toSpan srcSpan Nothing
                                 }
-                            ]
-                        Nothing -> recurse e
-            _ -> recurse e
-        _ -> recurse e
+                    Nothing -> Nothing
+            _ -> Nothing
+    processApp Nothing = Nothing
 
-    -- Unwrap nested applications to find the function name and all arguments
-    unwrapApp :: NExprLoc -> [NExprLoc] -> Maybe (Text, [NExprLoc])
-    unwrapApp (Fix (Compose (AnnUnit _ e))) args = case e of
-        NApp func arg -> unwrapApp func (arg : args)
-        NSym name -> Just (varNameText name, args)
-        NSelect _ _ (attr :| rest) ->
-            Just (keyText (last (attr : rest)), args)
-        _ -> Nothing
-
-    keyText (StaticKey k) = varNameText k
-    keyText (DynamicKey _) = ""
-
-    -- Check if a function takes positional args: writeShellScript "name" ''body''
-    isPositionalShellFunc :: Text -> Bool
-    isPositionalShellFunc name =
-        name == "writeShellScript"
-            || name == "writeShellScriptBin"
-            || name == "writeScript"
-            || name == "writeScriptBin"
-
-    -- Check if a function takes a record arg: writeShellApplication { ... }
-    isRecordShellFunc :: Text -> Bool
-    isRecordShellFunc name = name == "writeShellApplication"
-
-    -- Extract name and text from a record: { name = "foo"; text = ''body''; }
-    extractFromRecord :: NExprLoc -> Maybe (Text, NExprLoc)
-    extractFromRecord (Fix (Compose (AnnUnit _ e))) = case e of
-        NSet _ bindings ->
-            let nameVal = findBinding "name" bindings >>= extractStringLit
-                textVal = findBinding "text" bindings
-             in case (nameVal, textVal) of
-                    (Just n, Just t) -> Just (n, t)
-                    _ -> Nothing
-        _ -> Nothing
-
-    -- Find a binding by name in a binding list
-    findBinding :: Text -> [Binding NExprLoc] -> Maybe NExprLoc
-    findBinding name = foldr check Nothing
-      where
-        check (NamedVar (StaticKey k :| []) expr _) acc
-            | varNameText k == name = Just expr
-            | otherwise = acc
-        check _ acc = acc
-
-    -- Extract a string literal from an expression
-    extractStringLit :: NExprLoc -> Maybe Text
-    extractStringLit (Fix (Compose (AnnUnit _ e))) = case e of
-        NStr (DoubleQuoted [Plain t]) -> Just t
-        NStr (Indented _ [Plain t]) -> Just t
-        _ -> Nothing
-
-    -- Recurse into sub-expressions
-    recurse :: NExprF NExprLoc -> [ShellScriptCall]
-    recurse e = case e of
-        NConstant _ -> []
-        NStr _ -> []
-        NSym _ -> []
-        NList xs -> concatMap go xs
-        NSet _ bindings -> concatMap goBinding bindings
-        NLiteralPath _ -> []
-        NEnvPath _ -> []
-        NLet bindings body -> concatMap goBinding bindings ++ go body
-        NIf cond t f -> go cond ++ go t ++ go f
-        NWith scope body -> go scope ++ go body
-        NAssert cond body -> go cond ++ go body
-        NAbs _ body -> go body
-        NApp f x -> go f ++ go x
-        NSelect alt base _ -> go base ++ maybe [] go alt
-        NHasAttr base _ -> go base
-        NUnary _ x -> go x
-        NBinary _ x y -> go x ++ go y
-        NSynHole _ -> []
-
-    goBinding :: Binding NExprLoc -> [ShellScriptCall]
-    goBinding = \case
-        NamedVar _ expr _ -> go expr
-        Inherit _ _ _ -> []
+    positionalFuncs =
+        [ "writeShellScript"
+        , "writeShellScriptBin"
+        , "writeScript"
+        , "writeScriptBin"
+        ]
