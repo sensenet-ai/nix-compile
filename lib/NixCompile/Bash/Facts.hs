@@ -212,7 +212,12 @@ configArrayFacts sourceSpan configPath valueToken =
         quoted = isQuotedToken valueToken
      in case extractVarRef valueText of
             Just variable -> [ConfigAssign configPath variable quoted sourceSpan]
-            Nothing -> [ConfigLit configPath (parseLiteral valueText) sourceSpan]
+            Nothing
+                | "${" `T.isInfixOf` valueText ->
+                    case parseConfigTemplate valueText of
+                        Just parts -> [ConfigTemplate configPath parts quoted sourceSpan]
+                        Nothing -> [ConfigLit configPath (parseLiteral valueText) sourceSpan]
+                | otherwise -> [ConfigLit configPath (parseLiteral valueText) sourceSpan]
 
 -- ── quoting detection ────────────────────────────────────────────
 
