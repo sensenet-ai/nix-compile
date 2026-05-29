@@ -1,12 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : EmitConfigSpec
-Description : Tests for emit-config generation
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // tests // emit // config
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "She unfolded the paper and found herself holding a new Braun
+--    holoprojector and a flat envelope of clear plastic. The envelope
+--    contained seven numbered tabs of holofiche. The box she'd seen in
+--    Virek's simulation of the Güell Park blossomed above the Braun, glowing
+--    with the crystal resolution of the finest museum-grade holograms. Bone
+--    and circuit-gold, dead lace, and a dull white marble rolled from clay.
+--    Marly shook her head. How could anyone have arranged these bits, this
+--    garbage, in such a way that it caught at the heart, snagged in the soul
+--    like a fishhook?"
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // emit // config // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-These tests verify that the Haskell emit-config generator produces
-correct bash commands that output valid JSON/YAML/TOML.
--}
 module Main (main) where
 
 import qualified Data.Map.Strict as Map

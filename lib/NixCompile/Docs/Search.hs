@@ -1,3 +1,14 @@
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // NixCompile.Docs.Search // search
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Find the maker of the box."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                             // Docs // full-text documentation search
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {-# LANGUAGE OverloadedStrings #-}
 
 module NixCompile.Docs.Search (
@@ -9,7 +20,6 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Docs.Types
 
--- | Simple localized search
 search :: Text -> [DocItem] -> [DocItem]
 search query items = filter (matches (T.toLower query)) items
 

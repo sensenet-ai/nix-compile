@@ -1,5 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // nix // compile // log
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Doors opened, closed behind him. Wheels left ferroconcrete, drinks
+--    arrived, dinner was served."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // core // logging
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module NixCompile.Log (
     AppM,
     runLog,
@@ -8,10 +21,11 @@ module NixCompile.Log (
 )
 where
 
+import System.IO (stderr)
+
 import Data.Text (Text)
 import Katip hiding (logStr)
 import Katip qualified
-import System.IO (stderr)
 
 type AppM = KatipContextT IO
 

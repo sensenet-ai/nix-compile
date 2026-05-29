@@ -2,6 +2,24 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-missing-signatures #-}
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                       // lsp // handlers
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "As the night came on, Turner found the edge again. It seemed like a
+--    long time since he'd been there, but when it clicked in, it was like
+--    he'd never left. It was that superhuman synchromesh flow that stimulants
+--    only approximated. He could only score for it on the site of a major
+--    defection, one where he was in command, and then only in the final hours
+--    before the actual move."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // lsp // request // handlers
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.LSP.Handlers (
     handlers,
@@ -35,81 +53,110 @@ import NixCompile.Nix.Types qualified as NT
 import NixCompile.Nix.Utils (srcSpanToSpan)
 import NixCompile.Types (Loc (..), Span (..))
 
+-- ── LSP handler registry ──────────────────────────────────────────
 handlers :: Handlers (LspM ())
 handlers =
     mconcat
-        [ notificationHandler SMethod_Initialized $ \_not ->
-            sendNotification SMethod_WindowLogMessage $
-                LogMessageParams MessageType_Info "nix-compile LSP ready"
-        , notificationHandler SMethod_TextDocumentDidOpen $ \(notif :: TNotificationMessage 'Method_TextDocumentDidOpen) -> do
-            let TNotificationMessage _ _ (DidOpenTextDocumentParams (TextDocumentItem uri _ _ txt)) = notif
-            let diags = lintFile txt
-            sendNotification SMethod_TextDocumentPublishDiagnostics $
-                PublishDiagnosticsParams uri Nothing diags
-        , notificationHandler SMethod_TextDocumentDidChange $ \(notif :: TNotificationMessage 'Method_TextDocumentDidChange) -> do
-            let TNotificationMessage _ _ params = notif
-            let DidChangeTextDocumentParams
-                    { _textDocument = VersionedTextDocumentIdentifier{_uri = uri}
-                    , _contentChanges = cs
-                    } = params
-            let txt = case cs of
-                    (c : _) -> case c of
-                        TextDocumentContentChangeEvent (InL (TextDocumentContentChangePartial _r _l t)) -> t
-                        TextDocumentContentChangeEvent (InR (TextDocumentContentChangeWholeDocument t)) -> t
-                    _ -> ""
-            let diags = lintFile txt
-            sendNotification SMethod_TextDocumentPublishDiagnostics $
-                PublishDiagnosticsParams uri Nothing diags
-        , notificationHandler SMethod_TextDocumentDidSave $ \(notif :: TNotificationMessage 'Method_TextDocumentDidSave) -> do
-            let TNotificationMessage _ _ (DidSaveTextDocumentParams (TextDocumentIdentifier uri) txt) = notif
-            case txt of
-                Just t -> do
-                    let diags = lintFile t
-                    sendNotification SMethod_TextDocumentPublishDiagnostics $
-                        PublishDiagnosticsParams uri Nothing diags
-                Nothing -> return ()
-        , requestHandler SMethod_TextDocumentHover $ \req responder -> do
-            let TRequestMessage _ _ _ params = req
-            let HoverParams textDoc pos _workDone = params
-            let TextDocumentIdentifier uri = textDoc
-            let Position l c = pos
-            mvf <- getVirtualFile (toNormalizedUri uri)
-            case mvf of
-                Nothing -> responder $ Right $ InL $ Hover{_contents = InL noFile, _range = Nothing}
-                Just vf -> do
-                    let txt = virtualFileText vf
-                    case parseNixTextLoc txt of
-                        Left _ -> responder $ Right $ InL $ Hover{_contents = InL parseErr, _range = Nothing}
-                        Right expr ->
-                            let contents = case inferExprAt expr (fromIntegral l) (fromIntegral c) of
-                                    Nothing -> MarkupContent MarkupKind_Markdown "`no expression at cursor`"
-                                    Just t -> MarkupContent MarkupKind_Markdown ("`: " <> t <> "`")
-                             in responder $ Right $ InL $ Hover{_contents = InL contents, _range = Nothing}
-        , requestHandler SMethod_TextDocumentDefinition $ \req responder -> do
-            let TRequestMessage _ _ _ params = req
-            let DefinitionParams textDoc pos _workDone _partialResult = params
-            let TextDocumentIdentifier uri = textDoc
-            let Position l c = pos
-            mvf <- getVirtualFile (toNormalizedUri uri)
-            case mvf of
-                Nothing -> responder $ Right $ InR $ InR Null
-                Just vf -> do
-                    let txt = virtualFileText vf
-                    case parseNixTextLoc txt of
-                        Left _ -> responder $ Right $ InR $ InR Null
-                        Right expr ->
-                            let sg = Scope.fromNixExpr Nothing expr
-                                cursorLine = fromIntegral l + 1
-                                cursorCol = fromIntegral c + 1
-                             in case findRef (cursorLine, cursorCol) sg of
-                                    Nothing -> responder $ Right $ InR $ InR Null
-                                    Just ref -> case Scope.resolve sg ref of
-                                        Left _ -> responder $ Right $ InR $ InR Null
-                                        Right decl ->
-                                            let loc = toLspLocation uri (Scope.declSpan decl)
-                                             in responder $ Right $ InL (Definition (InL loc))
+        [ notificationHandler SMethod_Initialized initializedHandler
+        , notificationHandler SMethod_TextDocumentDidOpen documentOpenHandler
+        , notificationHandler SMethod_TextDocumentDidChange documentChangeHandler
+        , notificationHandler SMethod_TextDocumentDidSave documentSaveHandler
+        , requestHandler SMethod_TextDocumentHover hoverHandler
+        , requestHandler SMethod_TextDocumentDefinition definitionHandler
         , requestHandler SMethod_TextDocumentRename renameHandler
         ]
+
+-- ── document lifecycle ────────────────────────────────────────────
+-- these fire on every open/change/save and must be fast
+
+initializedHandler :: TNotificationMessage 'Method_Initialized -> LspM () ()
+-- n.b. single ack message, no virtual file access needed
+initializedHandler _not =
+    sendNotification SMethod_WindowLogMessage $
+        LogMessageParams MessageType_Info "nix-compile LSP ready"
+
+documentOpenHandler :: TNotificationMessage 'Method_TextDocumentDidOpen -> LspM () ()
+-- full re-lint on open; the file text comes directly in the notification
+documentOpenHandler notif = do
+    let TNotificationMessage _ _ (DidOpenTextDocumentParams (TextDocumentItem uri _ _ txt)) = notif
+    let diags = lintFile txt
+    sendNotification SMethod_TextDocumentPublishDiagnostics $
+        PublishDiagnosticsParams uri Nothing diags
+
+documentChangeHandler :: TNotificationMessage 'Method_TextDocumentDidChange -> LspM () ()
+-- incremental or full changes; we grab the last (or only) content change
+documentChangeHandler notif = do
+    let TNotificationMessage _ _ params = notif
+    let DidChangeTextDocumentParams
+            { _textDocument = VersionedTextDocumentIdentifier{_uri = uri}
+            , _contentChanges = cs
+            } = params
+    let txt = case cs of
+            (c : _) -> case c of
+                TextDocumentContentChangeEvent (InL (TextDocumentContentChangePartial _r _l t)) -> t
+                TextDocumentContentChangeEvent (InR (TextDocumentContentChangeWholeDocument t)) -> t
+            _ -> ""
+    let diags = lintFile txt
+    sendNotification SMethod_TextDocumentPublishDiagnostics $
+        PublishDiagnosticsParams uri Nothing diags
+
+documentSaveHandler :: TNotificationMessage 'Method_TextDocumentDidSave -> LspM () ()
+-- n.b. the save notification may omit the text payload; re-lint only when present
+documentSaveHandler notif = do
+    let TNotificationMessage _ _ (DidSaveTextDocumentParams (TextDocumentIdentifier uri) txt) = notif
+    case txt of
+        Just t -> do
+            let diags = lintFile t
+            sendNotification SMethod_TextDocumentPublishDiagnostics $
+                PublishDiagnosticsParams uri Nothing diags
+        Nothing -> return ()
+
+-- ── workspace queries ─────────────────────────────────────────────
+-- these are user-initiated and can afford to be slower
+
+hoverHandler req responder = do
+    let TRequestMessage _ _ _ params = req
+    let HoverParams textDoc pos _workDone = params
+    let TextDocumentIdentifier uri = textDoc
+    let Position l c = pos
+    mvf <- getVirtualFile (toNormalizedUri uri)
+    case mvf of
+        Nothing -> responder $ Right $ InL $ Hover{_contents = InL noFile, _range = Nothing}
+        Just vf -> do
+            let txt = virtualFileText vf
+            case parseNixTextLoc txt of
+                Left _ -> responder $ Right $ InL $ Hover{_contents = InL parseErr, _range = Nothing}
+                Right expr ->
+                    let contents = case inferExprAt expr (fromIntegral l) (fromIntegral c) of
+                            Nothing -> MarkupContent MarkupKind_Markdown "`no expression at cursor`"
+                            Just t -> MarkupContent MarkupKind_Markdown ("`: " <> t <> "`")
+                     in responder $ Right $ InL $ Hover{_contents = InL contents, _range = Nothing}
+
+definitionHandler req responder = do
+    let TRequestMessage _ _ _ params = req
+    let DefinitionParams textDoc pos _workDone _partialResult = params
+    let TextDocumentIdentifier uri = textDoc
+    let Position l c = pos
+    mvf <- getVirtualFile (toNormalizedUri uri)
+    case mvf of
+        Nothing -> responder $ Right $ InR $ InR Null
+        Just vf -> do
+            let txt = virtualFileText vf
+            case parseNixTextLoc txt of
+                Left _ -> responder $ Right $ InR $ InR Null
+                Right expr ->
+                    let sg = Scope.fromNixExpr Nothing expr
+                        cursorLine = fromIntegral l + 1
+                        cursorCol = fromIntegral c + 1
+                     in case findRef (cursorLine, cursorCol) sg of
+                            Nothing -> responder $ Right $ InR $ InR Null
+                            Just ref -> case Scope.resolve sg ref of
+                                Left _ -> responder $ Right $ InR $ InR Null
+                                Right decl ->
+                                    let loc = toLspLocation uri (Scope.declSpan decl)
+                                     in responder $ Right $ InL (Definition (InL loc))
+
+-- ── reference helpers ─────────────────────────────────────────────
 
 findRef :: (Int, Int) -> Scope.ScopeGraph -> Maybe Scope.Reference
 findRef (l, c) sg =
@@ -148,6 +195,8 @@ toLspPos sp =
         (fromIntegral (Scope.posLine sp - 1))
         (fromIntegral (Scope.posCol sp - 1))
 
+-- ── rename handler ────────────────────────────────────────────────
+-- n.b. this resolves all references to a declaration and builds a WorkspaceEdit
 renameHandler ::
     TRequestMessage 'Method_TextDocumentRename ->
     (Either (TResponseError 'Method_TextDocumentRename) (WorkspaceEdit |? Null) -> LspT () IO ()) ->
@@ -192,11 +241,15 @@ renameHandler req responder = do
                                                 }
                                      in responder $ Right $ InL wsEdit
 
+-- ── hover display constants ───────────────────────────────────────
+
 noFile :: MarkupContent
 noFile = MarkupContent MarkupKind_Markdown "`no file`"
 
 parseErr :: MarkupContent
 parseErr = MarkupContent MarkupKind_Markdown "`parse error`"
+
+-- ── expression tree traversal ─────────────────────────────────────
 
 findExprAt :: Int -> Int -> NExprLoc -> Maybe NExprLoc
 findExprAt l c root = go root
@@ -243,13 +296,17 @@ findExprAt l c root = go root
     bindingExprs (Inherit mScope _ _) = maybeToList mScope
 
 inferExprAt :: NExprLoc -> Int -> Int -> Maybe T.Text
+-- n.b. wraps Infer.inferExpr to produce a display-friendly type string (or "TYPE_ERROR")
 inferExprAt expr l c = do
     target <- findExprAt l c expr
     case Infer.inferExpr target of
         Right (t, _) -> Just (NT.prettyType t)
         Left _ -> Just "TYPE_ERROR"
 
+-- ── diagnostics ───────────────────────────────────────────────────
+
 lintFile :: T.Text -> [Diagnostic]
+-- parse-and-lint; returns empty on parse failure since we can't lint garbage
 lintFile txt =
     case parseNixTextLoc txt of
         Left _ -> []

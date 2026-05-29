@@ -1,5 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                  // tests // more // fixtures
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "'Is that Wig got a damn good price on them, somewhere in New York.
+--    Money, I mean. But sometimes other things as well, things that came back
+--    up...'
+--
+--    'What sort of things?'
+--
+--    'Software, I guess it was. He's a secretive old fuck when it comes to
+--    what he thinks his voices are telling him to do... Once, it was
+--    something he swore was biosoft, that new stuff...'"
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                // additional // fixture // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module Main (main) where
 
 import Data.Text qualified as T

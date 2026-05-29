@@ -1,20 +1,22 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile
-Description : Top-level API for nix-compile
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                  // nix // compile // api
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "As her fingers closed around the cool brass knob, it seemed to squirm,
+--    sliding along a touch spectrum of texture and temperature in the first
+--    second of contact. Then it became metal again, green-painted iron,
+--    sweeping out and down, along a line of perspective, an old railing she
+--    grasped now in wonder. A few drops of rain blew into her face."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                        // top-level // api
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Shell scripts as data structures.
-
-@
-import NixCompile
-
-main = do
-  script <- parseScript "PORT=\"\${PORT:-8080}\"\nconfig.server.port=\$PORT"
-  print (scriptSchema script)
-@
--}
 module NixCompile (
     -- * Parsing
     parseScript,

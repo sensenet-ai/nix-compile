@@ -1,15 +1,22 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile.Infer.Unify
-Description : Hindley-Milner unification for bash types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                    // infer // unification
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "His tan was dark and even. The angular patchwork left by the Dutchman's
+--    grafts was gone, and she had taught him the unity of his body. Mornings,
+--    when he met the green eyes in the bathroom mirror, they were his own,
+--    and the Dutchman no longer troubled his dreams with bad jokes and a dry
+--    cough."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                       // bash // unify
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Standard unification algorithm. Nothing fancy.
-
-The key insight: we don't need polymorphism. Bash variables are monomorphic.
-So this is just first-order unification, which is simple and decidable.
--}
 module NixCompile.Infer.Unify (
     unify,
     unifyAll,
@@ -22,53 +29,43 @@ import NixCompile.Types
 
 -- | Unify two types, producing a substitution
 unify :: Type -> Type -> Either TypeError Subst
-unify t1 t2 = case (t1, t2) of
-    -- Same concrete types
+unify type1 type2 = case (type1, type2) of
     (TInt, TInt) -> Right emptySubst
     (TString, TString) -> Right emptySubst
     (TBool, TBool) -> Right emptySubst
     (TPath, TPath) -> Right emptySubst
-    -- TNumeric unifies with Int or Bool
     (TNumeric, TInt) -> Right emptySubst
     (TInt, TNumeric) -> Right emptySubst
     (TNumeric, TBool) -> Right emptySubst
     (TBool, TNumeric) -> Right emptySubst
     (TNumeric, TNumeric) -> Right emptySubst
-    -- Type variable on left: bind it
-    (TVar v, t) -> bindVar v t
-    -- Type variable on right: bind it
-    (t, TVar v) -> bindVar v t
-    -- Mismatch
-    _ -> Left (Mismatch t1 t2 emptySpan)
+    (TVar typeVariable, typeValue) -> bindVar typeVariable typeValue
+    (typeValue, TVar typeVariable) -> bindVar typeVariable typeValue
+    _ -> Left (Mismatch type1 type2 emptySpan)
   where
     emptySpan = Span (Loc 0 0) (Loc 0 0) Nothing
 
--- | Bind a type variable, checking for occurs
 bindVar :: TypeVar -> Type -> Either TypeError Subst
-bindVar v t
-    | t == TVar v = Right emptySubst -- v ~ v is trivial
-    | occursIn v t = Left (OccursCheck v t emptySpan)
-    | otherwise = Right (singleSubst v t)
+bindVar typeVariable typeValue
+    | typeValue == TVar typeVariable = Right emptySubst
+    | occursIn typeVariable typeValue = Left (OccursCheck typeVariable typeValue emptySpan)
+    | otherwise = Right (singleSubst typeVariable typeValue)
   where
     emptySpan = Span (Loc 0 0) (Loc 0 0) Nothing
 
-{- | Does a type variable occur in a type?
-For our simple type language, this only matters for TVar
--}
 occursIn :: TypeVar -> Type -> Bool
-occursIn v = \case
-    TVar v' -> v == v'
+occursIn typeVariable = \case
+    TVar typeVariable' -> typeVariable == typeVariable'
     _ -> False
 
--- | Unify a list of constraints, accumulating substitutions
 unifyAll :: [Constraint] -> Either TypeError Subst
-unifyAll = foldM go emptySubst
+unifyAll = foldM unifyConstraint emptySubst
   where
-    go s (t1 :~: t2) = do
-        let t1' = applySubst s t1
-            t2' = applySubst s t2
-        s' <- unify t1' t2'
-        Right (composeSubst s' s)
+    unifyConstraint substitution (constraintType1 :~: constraintType2) = do
+        let type1' = applySubst substitution constraintType1
+            type2' = applySubst substitution constraintType2
+        substitution' <- unify type1' type2'
+        Right (composeSubst substitution' substitution)
 
 {- | Solve constraints and return final substitution
 This is the main entry point

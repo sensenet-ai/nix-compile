@@ -1,22 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- |
-Module      : NixCompile.Bash.Builtins
-Description : Command argument type schemas
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                               // bash // builtins
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "He was like a kid who'd grown up beside an ocean, taking it as much
+--    for granted as he took the sky, but knowing nothing of currents,
+--    shipping routes, or the ins and outs of weather."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                     // commands // database
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Database of common command flags and their expected types.
-This enables type inference from command usage:
-
-@
-curl --connect-timeout "$TIMEOUT"
-@
-
-becomes: TIMEOUT :: TInt
-
-The database is intentionally conservative - we only include
-flags where the type is unambiguous.
--}
 module NixCompile.Bash.Builtins (
     -- * Lookup
     lookupArgType,
@@ -36,7 +34,6 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import NixCompile.Types (Type (..))
 
--- | Specification for a command argument
 data ArgSpec = ArgSpec
     { argType :: !Type
     , argRequired :: !Bool
@@ -44,33 +41,26 @@ data ArgSpec = ArgSpec
     }
     deriving (Eq, Show)
 
--- | Schema for a command
 data CommandSchema = CommandSchema
-    { cmdArgs :: !(Map Text ArgSpec) -- flag name -> spec
-    , cmdPositional :: ![ArgSpec] -- positional args
+    { cmdArgs :: !(Map Text ArgSpec)
+    , cmdPositional :: ![ArgSpec]
     , cmdDescription :: !Text
     }
     deriving (Eq, Show)
 
-{- | Look up the expected type for a command argument
-Returns Nothing if unknown (conservative: don't guess)
--}
 lookupArgType :: Text -> Text -> Maybe Type
 lookupArgType cmd flag = do
     schema <- Map.lookup cmd builtins
     spec <- Map.lookup flag (cmdArgs schema)
     Just (argType spec)
 
--- | Look up a command schema
 lookupCommand :: Text -> Maybe CommandSchema
 lookupCommand = flip Map.lookup builtins
 
--- | Database of command schemas
 builtins :: Map Text CommandSchema
 builtins =
     Map.fromList
-        [ -- curl: HTTP client
-
+        [
             ( "curl"
             , CommandSchema
                 { cmdDescription = "HTTP client"
@@ -96,8 +86,7 @@ builtins =
                         ]
                 }
             )
-        , -- jq: JSON processor
-
+        ,
             ( "jq"
             , CommandSchema
                 { cmdDescription = "JSON processor"
@@ -113,8 +102,7 @@ builtins =
                         ]
                 }
             )
-        , -- grep: pattern search
-
+        ,
             ( "grep"
             , CommandSchema
                 { cmdDescription = "Pattern search"
@@ -131,8 +119,7 @@ builtins =
                         ]
                 }
             )
-        , -- sleep: delay
-
+        ,
             ( "sleep"
             , CommandSchema
                 { cmdDescription = "Delay execution"
@@ -140,8 +127,7 @@ builtins =
                 , cmdArgs = Map.empty
                 }
             )
-        , -- timeout: run with timeout
-
+        ,
             ( "timeout"
             , CommandSchema
                 { cmdDescription = "Run with timeout"
@@ -154,8 +140,7 @@ builtins =
                         ]
                 }
             )
-        , -- head/tail: file viewing
-
+        ,
             ( "head"
             , CommandSchema
                 { cmdDescription = "Show first lines"
@@ -183,8 +168,7 @@ builtins =
                         ]
                 }
             )
-        , -- split: split files
-
+        ,
             ( "split"
             , CommandSchema
                 { cmdDescription = "Split files"
@@ -199,8 +183,7 @@ builtins =
                         ]
                 }
             )
-        , -- dd: disk/data duplicator
-
+        ,
             ( "dd"
             , CommandSchema
                 { cmdDescription = "Convert and copy"
@@ -216,8 +199,7 @@ builtins =
                         ]
                 }
             )
-        , -- mkdir: create directories
-
+        ,
             ( "mkdir"
             , CommandSchema
                 { cmdDescription = "Create directories"
@@ -229,8 +211,7 @@ builtins =
                         ]
                 }
             )
-        , -- chmod: change mode
-
+        ,
             ( "chmod"
             , CommandSchema
                 { cmdDescription = "Change file mode"
@@ -241,8 +222,7 @@ builtins =
                 , cmdArgs = Map.empty
                 }
             )
-        , -- chown: change owner
-
+        ,
             ( "chown"
             , CommandSchema
                 { cmdDescription = "Change file owner"
@@ -253,8 +233,7 @@ builtins =
                 , cmdArgs = Map.empty
                 }
             )
-        , -- xargs: build command lines
-
+        ,
             ( "xargs"
             , CommandSchema
                 { cmdDescription = "Build command lines"
@@ -270,8 +249,7 @@ builtins =
                         ]
                 }
             )
-        , -- nc/netcat: network swiss army knife
-
+        ,
             ( "nc"
             , CommandSchema
                 { cmdDescription = "Network utility"
@@ -286,8 +264,7 @@ builtins =
                         ]
                 }
             )
-        , -- wget: HTTP download
-
+        ,
             ( "wget"
             , CommandSchema
                 { cmdDescription = "HTTP download"
@@ -304,8 +281,7 @@ builtins =
                         ]
                 }
             )
-        , -- rsync: remote sync
-
+        ,
             ( "rsync"
             , CommandSchema
                 { cmdDescription = "Remote sync"
@@ -323,8 +299,7 @@ builtins =
                         ]
                 }
             )
-        , -- ssh: secure shell
-
+        ,
             ( "ssh"
             , CommandSchema
                 { cmdDescription = "Secure shell"
@@ -339,8 +314,7 @@ builtins =
                         ]
                 }
             )
-        , -- scp: secure copy
-
+        ,
             ( "scp"
             , CommandSchema
                 { cmdDescription = "Secure copy"
@@ -357,8 +331,7 @@ builtins =
                         ]
                 }
             )
-        , -- find: find files
-
+        ,
             ( "find"
             , CommandSchema
                 { cmdDescription = "Find files"
@@ -375,8 +348,7 @@ builtins =
                         ]
                 }
             )
-        , -- parallel: GNU parallel
-
+        ,
             ( "parallel"
             , CommandSchema
                 { cmdDescription = "Run commands in parallel"
@@ -391,8 +363,7 @@ builtins =
                         ]
                 }
             )
-        , -- nix: Nix commands
-
+        ,
             ( "nix"
             , CommandSchema
                 { cmdDescription = "Nix package manager"

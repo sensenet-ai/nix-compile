@@ -4,26 +4,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-{- |
-Module      : Props
-Description : Property tests for nix-compile
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                      // tests // props
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "Heavy icebreakers are kind of funny to deal in, even for the big boys.
+--    You know why? Because ice, all the really hard stuff, the walls around
+--    every major store of data in the matrix, is always the produce of an AI,
+--    an artificial intelligence. Nothing else is fast enough to weave good
+--    ice and constantly alter and upgrade it. So when a really powerful
+--    icebreaker shows up on the black market, there are already a couple of
+--    very dicey factors in play."
+--
+--                                                                 — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                    // property // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Brutalize the type inference system with QuickCheck.
-
-Properties tested:
-  1. Parser totality: valid bash never crashes the parser
-  2. Unification algebra: reflexive, symmetric, transitive, idempotent
-  3. Constraint determinism: same facts -> same constraints
-  4. Schema consistency: inferred types match literal evidence
-  5. Substitution composition: (s1 . s2) t == s1 (s2 t)
-  6. Fact extraction determinism: same AST -> same facts
-  7. Config tree construction: paths preserved, no data loss
-  8. Emit roundtrip: generated config is valid bash
-
-Run with:
-  nix shell .#legacyPackages.x86_64-linux.aleph.script.ghc-with-tests -c \
-    runghc -inix/nix-compile/lib -inix/nix-compile/test nix/nix-compile/test/Props.hs
--}
 module Main (main) where
 
 import Control.Exception (IOException, SomeException, catch, try)
