@@ -33,6 +33,7 @@ module NixCompile.Nix.Module (
     topologicalOrder,
     hasViolations,
     totalViolationCount,
+    moduleTypes,
 
     -- * Import extraction
     findImports,
@@ -56,7 +57,7 @@ import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as NixPath
-import NixCompile.Nix.Infer (inferExpr)
+import NixCompile.Nix.Infer (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
 import NixCompile.Nix.Layout (LayoutViolation, findLayoutViolations)
 import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types
@@ -109,6 +110,7 @@ data ModuleGraph = ModuleGraph
     , mgFailures :: ![ParseFailure]
     , mgLintFailures :: ![LintFailure]
     , mgLayoutFailures :: ![LayoutFailure]
+    , mgModuleTypes :: !(Map FilePath NixType)
     }
     deriving (Show)
 
@@ -126,7 +128,8 @@ data BuildState = BuildState
 -- ── entry points ─────────────────────────────────────────────────
 
 {- | build a complete module graph starting from a root nix file
-resolves imports transitively, computes topological order, collects failures
+resolves imports transitively, computes topological order, collects failures,
+then infers types in topological order with cross-module type propagation
 -}
 buildModuleGraph :: FilePath -> IO (Either Text ModuleGraph)
 buildModuleGraph rootPath = do
@@ -134,8 +137,7 @@ buildModuleGraph rootPath = do
     let rootDir = takeDirectory canonRoot
     finalState <- buildModules rootDir canonRoot Set.empty (BuildState Map.empty [] [] [])
     let order = computeOrder canonRoot (bsModules finalState)
-    pure $
-        Right $
+    let moduleGraph =
             ModuleGraph
                 { mgModules = bsModules finalState
                 , mgRoot = canonRoot
@@ -143,7 +145,11 @@ buildModuleGraph rootPath = do
                 , mgFailures = reverse (bsFailures finalState)
                 , mgLintFailures = reverse (bsLintFailures finalState)
                 , mgLayoutFailures = reverse (bsLayoutFailures finalState)
+                , mgModuleTypes = Map.empty
                 }
+    -- run topological type inference to fill in mgModuleTypes
+    finalGraph <- inferModuleTypes moduleGraph
+    pure $ Right finalGraph
 
 -- | build module graph starting from flake.nix in the given directory
 buildModuleGraphFromFlake :: FilePath -> IO (Either Text ModuleGraph)
@@ -381,6 +387,10 @@ moduleDependents mg path =
 topologicalOrder :: ModuleGraph -> [FilePath]
 topologicalOrder = mgOrder
 
+-- | look up the inferred type for a module
+moduleTypes :: ModuleGraph -> Map FilePath NixType
+moduleTypes = mgModuleTypes
+
 -- | does this graph have any failures at all (parse, lint, or layout)?
 hasViolations :: ModuleGraph -> Bool
 hasViolations mg =
@@ -394,6 +404,56 @@ totalViolationCount mg =
     length (mgFailures mg)
         + sum (map (length . lfViolations) (mgLintFailures mg))
         + sum (map (length . layViolations) (mgLayoutFailures mg))
+
+-- ── topological type inference ───────────────────────────────────
+
+{- | infer types for all modules in topological order, propagating types through imports
+dependencies are inferred first, their types are fed into importers via TypeEnv
+-}
+inferModuleTypes :: ModuleGraph -> IO ModuleGraph
+inferModuleTypes mg = do
+    let order = mgOrder mg
+    (finalTypes, _) <- foldM inferOneModule (Map.empty, Map.empty) order
+    -- update each module's modType with the cross-module inferred type
+    let updatedModules = Map.mapWithKey (\p m -> case Map.lookup p finalTypes of
+                            Just t -> m{modType = t}
+                            Nothing -> m
+                        ) (mgModules mg)
+    pure mg{mgModuleTypes = finalTypes, mgModules = updatedModules}
+  where
+    inferOneModule :: (Map FilePath NixType, Map FilePath [FilePath]) -> FilePath -> IO (Map FilePath NixType, Map FilePath [FilePath])
+    inferOneModule (types, pendingDeps) path = do
+        let imports = case Map.lookup path (mgModules mg) of
+                Nothing -> []
+                Just m -> modImports m
+        -- insert types for both raw import paths (as written in the code) and resolved paths
+        canonicImports <- mapM (\i -> canonicalizePath (impPath i)) imports
+        let rawPaths = map (T.unpack . impRawPath) imports
+        let resolvedPaths = map impPath imports
+        -- n.b. look up in `types` by resolved path, then insert for both raw and resolved keys
+        let env =
+                foldr
+                    (\p e -> case Map.lookup p types of
+                        Just t -> extendImport p t e
+                        Nothing -> e
+                    )
+                    builtinEnv
+                    (resolvedPaths ++ canonicImports)
+        let finalEnv =
+                foldr
+                    (\(raw, resolved) e -> case Map.lookup resolved types of
+                        Just t -> extendImport raw t e
+                        Nothing -> e
+                    )
+                    env
+                    (zip rawPaths resolvedPaths)
+        case Map.lookup path (mgModules mg) of
+            Nothing -> pure (types, pendingDeps)
+            Just m -> do
+                let result = inferExprWithEnv finalEnv (modExpr m)
+                case result of
+                    Left _ -> pure (types, pendingDeps)
+                    Right (t, _) -> pure (Map.insert path t types, pendingDeps)
 
 {- | compute a DFS-based topological order starting from the root module
 n.b. result is reversed so root appears first

@@ -34,6 +34,8 @@ module NixCompile.LSP.Handlers (
 )
 where
 
+import Control.Monad.IO.Class (MonadIO (..))
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Fix (Fix (..))
 import Data.Functor.Compose (Compose (..))
 import Data.Map.Strict qualified as Map
@@ -43,15 +45,19 @@ import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
 import Language.LSP.Server
 import Language.LSP.VFS (virtualFileText)
-import Nix.Expr.Types (Binding (..), NExprF (..), Params (..))
+import Nix.Expr.Types (Binding (..), NExprF (..), Params (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Nix.Infer qualified as Infer
+import NixCompile.Nix.Infer (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Nix.Lint (NixViolation (..), ViolationType (..), findNixViolations)
+import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
-import NixCompile.Nix.Utils (srcSpanToSpan)
+import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
 import NixCompile.Types (Loc (..), Span (..))
+import System.Directory (canonicalizePath, doesFileExist)
+import System.FilePath (takeDirectory, (</>))
 
 -- ── LSP handler registry ──────────────────────────────────────────
 handlers :: Handlers (LspM ())
@@ -73,7 +79,7 @@ initializedHandler :: TNotificationMessage 'Method_Initialized -> LspM () ()
 -- n.b. single ack message, no virtual file access needed
 initializedHandler _not =
     sendNotification SMethod_WindowLogMessage $
-        LogMessageParams MessageType_Info "nix-compile LSP ready"
+        LogMessageParams MessageType_Info "nix-compile LSP ready — panopticon online"
 
 documentOpenHandler :: TNotificationMessage 'Method_TextDocumentDidOpen -> LspM () ()
 -- full re-lint on open; the file text comes directly in the notification
@@ -126,11 +132,12 @@ hoverHandler req responder = do
             let txt = virtualFileText vf
             case parseNixTextLoc txt of
                 Left _ -> responder $ Right $ InL $ Hover{_contents = InL parseErr, _range = Nothing}
-                Right expr ->
-                    let contents = case inferExprAt expr (fromIntegral l) (fromIntegral c) of
+                Right expr -> do
+                    env <- liftIO $ buildCrossEnv uri
+                    let contents = case inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c) of
                             Nothing -> MarkupContent MarkupKind_Markdown "`no expression at cursor`"
                             Just t -> MarkupContent MarkupKind_Markdown ("`: " <> t <> "`")
-                     in responder $ Right $ InL $ Hover{_contents = InL contents, _range = Nothing}
+                    responder $ Right $ InL $ Hover{_contents = InL contents, _range = Nothing}
 
 definitionHandler req responder = do
     let TRequestMessage _ _ _ params = req
@@ -144,11 +151,11 @@ definitionHandler req responder = do
             let txt = virtualFileText vf
             case parseNixTextLoc txt of
                 Left _ -> responder $ Right $ InR $ InR Null
-                Right expr ->
-                    let sg = Scope.fromNixExpr Nothing expr
-                        cursorLine = fromIntegral l + 1
-                        cursorCol = fromIntegral c + 1
-                     in case findRef (cursorLine, cursorCol) sg of
+                Right _expr -> do
+                    sg <- liftIO $ buildCrossScopeGraph uri
+                    let cursorLine = fromIntegral l + 1
+                    let cursorCol = fromIntegral c + 1
+                    case findRef (cursorLine, cursorCol) sg of
                             Nothing -> responder $ Right $ InR $ InR Null
                             Just ref -> case Scope.resolve sg ref of
                                 Left _ -> responder $ Right $ InR $ InR Null
@@ -303,12 +310,111 @@ findExprAt l c root = go root
     bindingExprs (Inherit mScope _ _) = maybeToList mScope
 
 inferExprAt :: NExprLoc -> Int -> Int -> Maybe T.Text
--- n.b. wraps Infer.inferExpr to produce a display-friendly type string (or "TYPE_ERROR")
-inferExprAt expr l c = do
+inferExprAt expr l c = inferExprAtWithEnv builtinEnv expr l c
+
+inferExprAtWithEnv :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe T.Text
+inferExprAtWithEnv env expr l c = do
     target <- findExprAt l c expr
-    case Infer.inferExpr target of
+    let targetName = exprName target
+    case inferExprWithEnv env expr of
+        Right (_, bindings) ->
+            case targetName of
+                Just name ->
+                    case filter (\(Infer.Binding n _ _) -> n == name) bindings of
+                        (Infer.Binding _ t _sp : _) -> Just (NT.prettyType t)
+                        [] -> inferTarget' target
+                Nothing -> inferTarget' target
+        Left _ -> inferTarget' target
+  where
+    inferTarget' targetExpr = case inferExprWithEnv builtinEnv targetExpr of
         Right (t, _) -> Just (NT.prettyType t)
         Left _ -> Just "TYPE_ERROR"
+
+-- | extract the symbol name if the expression is a simple symbol reference
+exprName :: NExprLoc -> Maybe T.Text
+exprName (Fix (Compose (AnnUnit _ e))) = case e of
+    NSym name -> Just $ varNameText name
+    NSelect _ _ (StaticKey k :| _) -> Just $ varNameText k
+    _ -> Nothing
+
+-- ── cross-module helpers ──────────────────────────────────────────
+
+-- | walk up from a file URI to find the project root (flake.nix or .nix-compile.dhall)
+findProjectRoot :: Uri -> IO (Maybe FilePath)
+findProjectRoot uri = do
+    let filePath = uriToFilePath uri
+    case filePath of
+        Nothing -> pure Nothing
+        Just fp -> do
+            canon <- canonicalizePath fp
+            let dir = takeDirectory canon
+            findRoot dir (10 :: Int)
+  where
+    findRoot _ 0 = pure Nothing
+    findRoot dir n = do
+        let flakePath = dir </> "flake.nix"
+        let configPath = dir </> ".nix-compile.dhall"
+        hasFlake <- doesFileExist flakePath
+        hasConfig <- doesFileExist configPath
+        if hasFlake || hasConfig
+            then pure (Just dir)
+            else let parent = takeDirectory dir
+                  in if parent == dir then pure Nothing
+                     else findRoot parent (n - 1)
+
+-- | build a cross-module TypeEnv for the project containing the given file
+buildCrossEnv :: Uri -> IO TypeEnv
+buildCrossEnv uri = do
+    mRoot <- findProjectRoot uri
+    case mRoot of
+        Nothing -> pure builtinEnv
+        Just root -> do
+            let flakePath = root </> "flake.nix"
+            hasFlake <- doesFileExist flakePath
+            if hasFlake
+                then do
+                    result <- Mod.buildModuleGraph flakePath
+                    case result of
+                        Left _ -> pure builtinEnv
+                        Right mg -> do
+                            let canonicalTypes = Mod.mgModuleTypes mg
+                            let baseEnv = builtinEnv{envImportTypes = canonicalTypes}
+                            let finalEnv =
+                                    foldr
+                                        (\(_mpath, m) acc ->
+                                            foldr
+                                                (\imp acc' ->
+                                                    let raw = T.unpack (Mod.impRawPath imp)
+                                                     in case Map.lookup (Mod.impPath imp) canonicalTypes of
+                                                            Just t -> extendImport raw t acc'
+                                                            Nothing -> acc'
+                                                )
+                                                acc
+                                                (Mod.modImports m)
+                                        )
+                                        baseEnv
+                                        (Map.toList (Mod.mgModules mg))
+                            pure finalEnv
+                else pure builtinEnv
+
+-- | build a cross-file scope graph for the project containing the given file
+buildCrossScopeGraph :: Uri -> IO Scope.ScopeGraph
+buildCrossScopeGraph uri = do
+    mRoot <- findProjectRoot uri
+    case mRoot of
+        Nothing -> pure Scope.empty
+        Just root -> do
+            let flakePath = root </> "flake.nix"
+            hasFlake <- doesFileExist flakePath
+            if hasFlake
+                then do
+                    result <- Mod.buildModuleGraph flakePath
+                    case result of
+                        Left _ -> pure Scope.empty
+                        Right mg ->
+                            let exprs = Map.map Mod.modExpr (Mod.mgModules mg)
+                             in pure $ Scope.fromModuleGraph exprs
+                else pure Scope.empty
 
 -- ── diagnostics ───────────────────────────────────────────────────
 
