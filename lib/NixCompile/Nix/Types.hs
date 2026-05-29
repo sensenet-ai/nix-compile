@@ -121,7 +121,9 @@ applySubst :: Subst -> NixType -> NixType
 applySubst s = go
   where
     go = \case
-        TVar v -> Map.findWithDefault (TVar v) v s
+        TVar v -> case Map.lookup v s of
+            Just t -> go t
+            Nothing -> TVar v
         TList t -> TList (go t)
         TAttrs m -> TAttrs (Map.map (\(t, o) -> (go t, o)) m)
         TAttrsOpen m -> TAttrsOpen (Map.map (\(t, o) -> (go t, o)) m)

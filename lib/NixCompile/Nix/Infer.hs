@@ -249,7 +249,7 @@ unifyFunctor funT attrsT = case attrsT of
   where
     lookupFunctor ft m = case Map.lookup "__functor" m of
         Just (TFun _ innerT, _) -> unify innerT ft
-        Just _ -> pure ()
+        Just (ftFunctor, _) -> throwTypeError $ "__functor must be a function, got " <> prettyType ftFunctor
         Nothing -> typeMismatch ft attrsT
 
 -- | apply current subst, then unify the normalised forms

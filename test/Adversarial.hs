@@ -46,10 +46,12 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Nix.Lint (NixViolation (..), ViolationType (..), findNixViolations, formatNixViolations)
 import NixCompile.Nix.LintDerivation qualified as DerivLint
 import NixCompile.Nix.LintPackages qualified as PackageLint
 import NixCompile.Nix.LintPatterns qualified as PatternLint
+import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
 import System.Timeout (timeout)
 import Test.QuickCheck
@@ -623,3 +625,70 @@ prop_literal_type_preserved lit =
     renderLiteral (LitBool False) = "false"
     renderLiteral (LitString s) = s
     renderLiteral (LitPath (StorePath p)) = p
+
+-- ============================================================================
+-- SUBSTITUTION — CHAIN RESOLUTION
+-- ============================================================================
+
+-- | applySubst must follow chains to terminal types.
+--   e.g. {PORT → TVar HOST, HOST → TInt} must resolve PORT to TInt.
+prop_subst_chain_bash :: Property
+prop_subst_chain_bash =
+    forAll genValidVarName $ \v1 -> forAll genValidVarName $ \v2 ->
+    let subst = Map.fromList
+            [ (TypeVar v1, TVar (TypeVar v2))
+            , (TypeVar v2, TInt)
+            ]
+        resolved = applySubst subst (TVar (TypeVar v1))
+     in resolved === TInt
+
+-- | Nix substitution must also follow chains.
+prop_subst_chain_nix :: Bool
+prop_subst_chain_nix =
+    let s = Map.fromList
+            [ (NT.TypeVar 0, NT.TVar (NT.TypeVar 1))
+            , (NT.TypeVar 1, NT.TInt)
+            ]
+     in NT.applySubst s (NT.TVar (NT.TypeVar 0)) == NT.TInt
+
+-- ============================================================================
+-- EVAL DETECTION — adversarial patterns
+-- ============================================================================
+
+-- | prefixed eval (nice eval, sudo eval, time eval) must be caught
+prop_bash_lint_eval_prefixed :: Bool
+prop_bash_lint_eval_prefixed =
+    let checks =
+            [ isEvalDetected "nice eval echo hello"
+            , isEvalDetected "sudo eval echo hello"
+            , isEvalDetected "time eval echo hello"
+            , not (isEvalDetected "echo eval") -- argument, not invocation
+            , isEvalDetected "builtin eval echo hello"
+            , isEvalDetected "command eval echo hello"
+            ]
+     in and checks
+  where
+    isEvalDetected src = case parseBash (T.pack src) of
+        Right ast -> any (\v -> vType v == VEval) (findViolations ast)
+        Left _ -> False
+
+-- | store-path eval (/nix/store/.../bin/eval) must be caught
+prop_bash_lint_eval_store_path :: Bool
+prop_bash_lint_eval_store_path =
+    isEvalDetected "/nix/store/abc123coreutils-9.0/bin/eval \"echo hello\""
+  where
+    isEvalDetected src = case parseBash (T.pack src) of
+        Right ast -> any (\v -> vType v == VEval) (findViolations ast)
+        Left _ -> False
+
+-- ============================================================================
+-- CONFIG ARRAY — template facts
+-- ============================================================================
+
+-- | config[server]="${HOST:-localhost}:${PORT:-8080}" must emit ConfigTemplate
+prop_config_array_template :: Bool
+prop_config_array_template = case parseBash "config[server]=\"${HOST:-localhost}:${PORT:-8080}\"" of
+    Right ast ->
+        let facts = extractFacts ast
+         in any (\case ConfigTemplate _ parts _ _ -> not (null parts); _ -> False) facts
+    Left _ -> False

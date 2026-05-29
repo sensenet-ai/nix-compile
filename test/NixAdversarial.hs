@@ -33,6 +33,7 @@ import Nix.Parser (parseNixTextLoc)
 
 -- nix-compile Nix inference
 import NixCompile.Nix.Infer qualified as Infer (inferExpr, runInfer, unify)
+import NixCompile.Nix.LintDerivation qualified as DerivLint
 import NixCompile.Nix.Types qualified as NT
 import Test.QuickCheck
 import Test.QuickCheck.Monadic (assert, monadicIO, run)
@@ -459,3 +460,53 @@ prop_nix_nested_application =
         Right e -> case Infer.inferExpr e of
             Right (NT.TInt, _) -> True
             _ -> False
+
+-- ============================================================================
+-- NIX TYPE INFERENCE — __FUNCTOR PROTOCOL
+-- ============================================================================
+
+-- | Non-function __functor must be rejected.
+--   { __functor = 42; } 1 should not type-check.
+prop_nix_functor_non_func :: Bool
+prop_nix_functor_non_func =
+    case parseNixTextLoc "let f = { __functor = 42; }; in f 1" of
+        Left _ -> False
+        Right expr -> case Infer.inferExpr expr of
+            Left _ -> True  -- must be a type error
+            Right _ -> False
+
+-- | Function __functor must be accepted.
+--   { __functor = self: x: x + 1; } 2 should type-check.
+prop_nix_functor_valid :: Bool
+prop_nix_functor_valid =
+    case parseNixTextLoc "let f = { __functor = self: x: x + 1; }; in f 2" of
+        Left _ -> False
+        Right expr -> case Infer.inferExpr expr of
+            Right (NT.TInt, _) -> True
+            _ -> False
+
+-- ============================================================================
+-- DEEP SELECT — DERIVATION LINT
+-- ============================================================================
+
+-- | Deep select chains (pkgs.llvmPackages.stdenv.mkDerivation) must be detected
+prop_deriv_deep_select :: Bool
+prop_deriv_deep_select =
+    case parseNixTextLoc "let pkgs = {}; in pkgs.llvmPackages.stdenv.mkDerivation { name = \"test\"; }" of
+        Left _ -> False
+        Right expr ->
+            not (null (DerivLint.findDerivViolations "test.nix" expr))
+
+-- ============================================================================
+-- SUBSTITUTION — CHAIN RESOLUTION
+-- ============================================================================
+
+-- | Nix substitution must fully resolve chains: {0→1, 1→Int} should resolve 0 to Int
+prop_nix_subst_chain :: Bool
+prop_nix_subst_chain =
+    let s = Map.fromList
+            [ (NT.TypeVar 0, NT.TVar (NT.TypeVar 1))
+            , (NT.TypeVar 1, NT.TInt)
+            ]
+        result = NT.applySubst s (NT.TVar (NT.TypeVar 0))
+     in result == NT.TInt

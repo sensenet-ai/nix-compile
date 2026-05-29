@@ -88,11 +88,11 @@ checkForEval tokenId commandWords
 
 isEvalInvocation :: [SA.Token] -> Bool
 isEvalInvocation tokens =
-    case map tokenToText tokens of
-        ("eval" : _) -> True
-        ("builtin" : "eval" : _) -> True
-        ("command" : "eval" : _) -> True
-        _ -> False
+    any isEvalToken (map tokenToText tokens)
+
+isEvalToken :: Text -> Bool
+isEvalToken text =
+    text == "eval" || "/eval" `T.isSuffixOf` text
 
 tokenToText :: SA.Token -> Text
 tokenToText (SA.OuterToken _ inner) = case inner of

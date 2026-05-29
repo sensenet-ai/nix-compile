@@ -127,9 +127,13 @@ composeSubst substitution1 substitution2 =
     Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
 
 applySubst :: Subst -> Type -> Type
-applySubst substitution = \case
-    TVar variable -> Map.findWithDefault (TVar variable) variable substitution
-    typ -> typ
+applySubst substitution = go
+  where
+    go = \case
+        TVar variable -> case Map.lookup variable substitution of
+            Just t -> go t
+            Nothing -> TVar variable
+        typ -> typ
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Source Locations
