@@ -37,6 +37,8 @@ module NixCompile.Nix.Parse (
     -- * Low-level
     findShellScriptCalls,
     ShellScriptCall (..),
+    extractString,
+    extractPartsWithInterps,
 )
 where
 

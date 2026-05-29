@@ -18,6 +18,7 @@ module Main (main) where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
+import GHC.Conc (getNumCapabilities)
 import Control.Exception (IOException, SomeException, bracket_, try)
 import Control.Monad (foldM, forM_, unless, when)
 import Control.Monad.IO.Class (MonadIO (..))
@@ -218,7 +219,8 @@ runTypeCheckPhase config dir = do
     loggingCtx <- getKatipContext
     loggingNamespace <- getKatipNamespace
 
-    let maxConcurrency = 16 :: Int
+    numCapabilities <- liftIO getNumCapabilities
+    let maxConcurrency = numCapabilities
     concurrencySemaphore <- liftIO $ newQSemN maxConcurrency
     results <- liftIO $ forConcurrently files $ \file ->
         bracket_ (waitQSemN concurrencySemaphore 1) (signalQSemN concurrencySemaphore 1) $
@@ -723,7 +725,8 @@ cmdTypeCheck config path = do
     loggingCtx <- getKatipContext
     loggingNamespace <- getKatipNamespace
 
-    let maxConcurrency = 16 :: Int
+    numCapabilities <- liftIO getNumCapabilities
+    let maxConcurrency = numCapabilities
     concurrencySemaphore <- liftIO $ newQSemN maxConcurrency
     results <- liftIO $ forConcurrently files $ \file ->
         bracket_ (waitQSemN concurrencySemaphore 1) (signalQSemN concurrencySemaphore 1) $
