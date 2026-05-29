@@ -119,6 +119,8 @@ dispatchCommand _ ["flake", dir] = cmdFlake dir
 dispatchCommand _ ["scope", file] = cmdScope file
 dispatchCommand _ ["scope", "--json", file] = cmdScopeJSON file
 dispatchCommand _ ["scope", "--dhall", file] = cmdScopeDhall file
+dispatchCommand config ["ci"] = cmdCI config "."
+dispatchCommand config ["ci", dir] = cmdCI config dir
 dispatchCommand _ ["--help"] = liftIO usage
 dispatchCommand _ ["-h"] = liftIO usage
 dispatchCommand _ [] = liftIO usage
@@ -138,21 +140,214 @@ parseGraphArgs ["--dot"] = (".", True)
 parseGraphArgs [dir] = (dir, False)
 parseGraphArgs _ = (".", False)
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- CI: unified pass/fail across all checks
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+data CICounts = CICounts
+    { ciFilesScanned :: !Int
+    , ciTypePass :: !Int
+    , ciTypeFail :: !Int
+    , ciTypeSkip :: !Int
+    , ciLintViolations :: !Int
+    , ciPackageViolations :: !Int
+    , ciBashViolations :: !Int
+    , ciGraphFailures :: !Int
+    }
+
+emptyCICounts :: CICounts
+emptyCICounts = CICounts 0 0 0 0 0 0 0 0
+
+cmdCI :: Config.Config -> FilePath -> AppM ()
+cmdCI config dir = do
+    $(logTM) InfoS $ logStr "\n═══════════════════════════════════════════════════════════════════════════════"
+    $(logTM) InfoS $ logStr "  nix-compile ci"
+    $(logTM) InfoS $ logStr $ "  " <> T.pack dir
+    $(logTM) InfoS $ logStr "═══════════════════════════════════════════════════════════════════════════════"
+
+    counts <- runCIPhases config dir
+    reportCISummary counts
+
+runCIPhases :: Config.Config -> FilePath -> AppM CICounts
+runCIPhases config dir = do
+    let flakePath = dir </> "flake.nix"
+    hasFlake <- liftIO $ doesFileExist flakePath
+
+    -- phase 1: typecheck all nix files (already parallelised)
+    typeCounts <- runTypeCheckPhase config dir
+
+    -- phase 2: module graph + lint violations
+    graphCounts <- if hasFlake
+        then runGraphPhase config flakePath
+        else pure emptyCICounts
+
+    -- phase 3: embedded bash analysis
+    bashCounts <- if hasFlake
+        then runNixPhase config flakePath
+        else pure emptyCICounts
+
+    -- phase 4: package directory checks
+    files <- liftIO $ collectFiles config dir
+    pkgCounts <- runPackagePhase config files
+
+    pure $
+        CICounts
+            { ciFilesScanned = ciFilesScanned typeCounts
+            , ciTypePass = ciTypePass typeCounts
+            , ciTypeFail = ciTypeFail typeCounts
+            , ciTypeSkip = ciTypeSkip typeCounts
+            , ciLintViolations = ciLintViolations graphCounts
+            , ciPackageViolations = pkgCounts
+            , ciBashViolations = ciBashViolations bashCounts
+            , ciGraphFailures = ciGraphFailures graphCounts
+            }
+
+runTypeCheckPhase :: Config.Config -> FilePath -> AppM CICounts
+runTypeCheckPhase config dir = do
+    files <- liftIO $ collectFiles config dir
+    printTypeCheckHeader files
+
+    loggingEnv <- getLogEnv
+    loggingCtx <- getKatipContext
+    loggingNamespace <- getKatipNamespace
+
+    let maxConcurrency = 16 :: Int
+    concurrencySemaphore <- liftIO $ newQSemN maxConcurrency
+    results <- liftIO $ forConcurrently files $ \file ->
+        bracket_ (waitQSemN concurrencySemaphore 1) (signalQSemN concurrencySemaphore 1) $
+            wrapCheckFile config (loggingEnv, loggingCtx, loggingNamespace) file
+
+    let okCount = length [() | result <- results, result == TCOk]
+    let skipCount = length [() | result <- results, result == TCSkip]
+    let failCount = length [() | result <- results, result == TCFail]
+
+    pure $
+        CICounts
+            { ciFilesScanned = length files
+            , ciTypePass = okCount
+            , ciTypeFail = failCount
+            , ciTypeSkip = skipCount
+            , ciLintViolations = 0
+            , ciPackageViolations = 0
+            , ciBashViolations = 0
+            , ciGraphFailures = 0
+            }
+
+runGraphPhase :: Config.Config -> FilePath -> AppM CICounts
+runGraphPhase _config flakePath = do
+    graphResult <- liftIO $ Mod.buildModuleGraphFromFlake (takeDirectory flakePath)
+    case graphResult of
+        Left err -> do
+            $(logTM) ErrorS $ logStr $ "Graph error: " <> err
+            pure $ emptyCICounts{ciGraphFailures = 1}
+        Right graph ->
+            let lintCount = sum (map (length . Mod.lfViolations) (Mod.mgLintFailures graph))
+                layoutCount = sum (map (length . Mod.layViolations) (Mod.mgLayoutFailures graph))
+             in if Mod.hasViolations graph
+                    then do
+                        $(logTM) ErrorS $
+                            logStr $
+                                "\nGraph violations: "
+                                    <> T.pack (show lintCount)
+                                    <> " lint, "
+                                    <> T.pack (show layoutCount)
+                                    <> " layout"
+                                    <> " across "
+                                    <> T.pack (show (length (Mod.mgLintFailures graph)))
+                                    <> " files"
+                        mapM_ reportGraphFailure (Mod.mgLintFailures graph)
+                        pure $
+                            emptyCICounts
+                                { ciLintViolations = lintCount + layoutCount
+                                , ciGraphFailures = length (Mod.mgFailures graph)
+                                }
+                    else pure emptyCICounts
+  where
+    reportGraphFailure lf = do
+        $(logTM) ErrorS $ logStr $ "  " <> T.pack (Mod.lfPath lf) <> ": " <> T.pack (show (length (Mod.lfViolations lf))) <> " violations"
+        $(logTM) ErrorS $ logStr $ Lint.formatNixViolations (Mod.lfViolations lf)
+
+runNixPhase :: Config.Config -> FilePath -> AppM CICounts
+runNixPhase config flakePath = do
+    scripts <- parseNixFiles flakePath
+    totalErrors <- sum <$> mapM (checkScript config flakePath) scripts
+    pure $
+        emptyCICounts
+            { ciBashViolations = totalErrors
+            }
+
+runPackagePhase :: Config.Config -> [FilePath] -> AppM Int
+runPackagePhase config files = do
+    packageViolations <- liftIO $ LintPackages.checkPackageDirs files
+    let (_, active) = partitionPackageViolations config packageViolations
+    unless (null active) $ do
+        $(logTM) ErrorS $
+            logStr $
+                T.unlines
+                    [ ""
+                    , "Package directory violations:"
+                    ]
+        $(logTM) ErrorS $ logStr $ formatPackageViolations active
+    pure $ length active
+
+reportCISummary :: CICounts -> AppM ()
+reportCISummary counts = do
+    let totalFailures =
+            ciTypeFail counts
+                + ciLintViolations counts
+                + ciPackageViolations counts
+                + ciBashViolations counts
+                + ciGraphFailures counts
+    $(logTM) InfoS $ logStr ""
+    $(logTM) InfoS $
+        logStr $
+            T.unlines
+                [ "═══════════════════════════════════════════════════════════════════════════════"
+                , "  CI Summary"
+                , "  " <> T.pack (show (ciFilesScanned counts)) <> " files scanned"
+                , "  "
+                    <> T.pack (show (ciTypePass counts))
+                    <> " passed"
+                    <> (if ciTypeSkip counts > 0 then ", " <> T.pack (show (ciTypeSkip counts)) <> " skipped" else "")
+                    <> (if ciTypeFail counts > 0 then ", " <> T.pack (show (ciTypeFail counts)) <> " failed" else "")
+                , if ciLintViolations counts > 0
+                    then "  " <> T.pack (show (ciLintViolations counts)) <> " lint violations"
+                    else ""
+                , if ciPackageViolations counts > 0
+                    then "  " <> T.pack (show (ciPackageViolations counts)) <> " package violations"
+                    else ""
+                , if ciBashViolations counts > 0
+                    then "  " <> T.pack (show (ciBashViolations counts)) <> " bash violations"
+                    else ""
+                , if ciGraphFailures counts > 0
+                    then "  " <> T.pack (show (ciGraphFailures counts)) <> " graph failures"
+                    else ""
+                , "═══════════════════════════════════════════════════════════════════════════════"
+                ]
+    if totalFailures == 0
+        then do
+            $(logTM) InfoS $ logStr "\n  ALL GREEN"
+            liftIO exitSuccess
+        else do
+            $(logTM) ErrorS $ logStr $ "\n  " <> T.pack (show totalFailures) <> " total issue(s)"
+            liftIO exitFailure
+
 usage :: IO ()
 usage = do
     putStrLn "nix-compile - compile-time type checker for Nix expressions"
     putStrLn ""
     putStrLn "Usage:"
+    putStrLn "  nix-compile ci [dir]            Run all checks: typecheck + graph + lint + bash + packages"
+    putStrLn "  nix-compile typecheck <path>    Recursively infer and check types for all Nix files"
+    putStrLn "  nix-compile graph [--dot] [dir] Show module dependency graph (exits 1 on violations)"
+    putStrLn "  nix-compile flake [dir]         Analyze a flake"
+    putStrLn "  nix-compile nix <file.nix>      Check embedded bash in Nix files"
     putStrLn "  nix-compile lint <script.sh>    Check for forbidden constructs (heredocs, eval, etc)"
     putStrLn "  nix-compile check <script.sh>   Full check (lint + policy + types)"
     putStrLn "  nix-compile infer <script.sh>   Infer types and show schema (JSON)"
     putStrLn "  nix-compile parse <script.sh>   Parse and show extracted facts"
     putStrLn "  nix-compile emit <script.sh>    Generate emit-config bash function (use: emit-config <json|yaml|toml>)"
-    putStrLn "  nix-compile nix <file.nix>      Check embedded bash in Nix files"
     putStrLn "  nix-compile fmt <file.nix>      Add type annotations to Nix file"
-    putStrLn "  nix-compile typecheck <path>    Recursively infer and check types for all Nix files"
-    putStrLn "  nix-compile flake [dir]         Analyze a flake"
-    putStrLn "  nix-compile graph [--dot] [dir] Show module dependency graph (exits 1 on violations)"
     putStrLn "  nix-compile scope <file.nix>    Show scope graph (declarations, references, edges)"
     putStrLn "  nix-compile scope --json <file> Emit scope graph as JSON (for zeitschrift)"
     putStrLn "  nix-compile scope --dhall <file> Emit scope graph as Dhall (for zeitschrift)"
