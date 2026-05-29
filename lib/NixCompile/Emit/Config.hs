@@ -215,14 +215,7 @@ renderRuntimeGuards schema =
     env = schemaEnv schema
 
     renderGuards ConfigSpec{cfgFrom = Just var, cfgType = ty, cfgQuoted = quoted}
-        | isRequiredEnv env var =
-            if quoted == Just Quoted
-                then [presenceGuard var]
-                else case ty of
-                    TInt -> [intGuard var]
-                    TNumeric -> [intGuard var]
-                    TBool -> [boolGuard var]
-                    _ -> [presenceGuard var]
+        | isRequiredEnv env var = requiredGuard env var ty quoted
         | otherwise = []
     renderGuards ConfigSpec{cfgTemplate = Just parts} =
         [presenceGuard var | var <- requiredTemplateVars parts, isRequiredEnv env var]
@@ -231,6 +224,13 @@ renderRuntimeGuards schema =
     presenceGuard var = "  : \"${" <> var <> ":?" <> var <> " is required}\""
     intGuard var = "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
     boolGuard var = "  __nix_compile_require_bool \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+
+    requiredGuard _ var _ (Just Quoted) = [presenceGuard var]
+    requiredGuard _ var ty _quoted
+        | TInt <- ty = [intGuard var]
+        | TNumeric <- ty = [intGuard var]
+        | TBool <- ty = [boolGuard var]
+        | otherwise = [presenceGuard var]
 
     requiredTemplateVars = concatMap $ \case
         ConfigVar var -> [var]

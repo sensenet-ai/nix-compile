@@ -92,9 +92,9 @@ documentChangeHandler notif = do
             , _contentChanges = cs
             } = params
     let txt = case cs of
-            (c : _) -> case c of
-                TextDocumentContentChangeEvent (InL (TextDocumentContentChangePartial _r _l t)) -> t
-                TextDocumentContentChangeEvent (InR (TextDocumentContentChangeWholeDocument t)) -> t
+            (TextDocumentContentChangeEvent change : _)
+                | InL (TextDocumentContentChangePartial _ _ t) <- change -> t
+                | InR (TextDocumentContentChangeWholeDocument t) <- change -> t
             _ -> ""
     let diags = lintFile txt
     sendNotification SMethod_TextDocumentPublishDiagnostics $
@@ -207,39 +207,46 @@ renameHandler req responder = do
     let TextDocumentIdentifier uri = textDoc
     let Position l c = pos
     mvf <- getVirtualFile (toNormalizedUri uri)
-    case mvf of
-        Nothing -> responder $ Right $ InR Null
-        Just vf -> do
-            let txt = virtualFileText vf
-            case parseNixTextLoc txt of
-                Left _ -> responder $ Right $ InR Null
-                Right expr ->
-                    let sg = Scope.fromNixExpr Nothing expr
-                        cursorLine = fromIntegral l + 1
-                        cursorCol = fromIntegral c + 1
-                     in case findRef (cursorLine, cursorCol) sg of
-                            Nothing -> responder $ Right $ InR Null
-                            Just ref -> case Scope.resolve sg ref of
-                                Left _ -> responder $ Right $ InR Null
-                                Right decl ->
-                                    let allRefs = Scope.findReferences sg decl
-                                        declEdit =
-                                            TextEdit
-                                                (Range (toLspPos (Scope.spanStart (Scope.declSpan decl))) (toLspPos (Scope.spanEnd (Scope.declSpan decl))))
-                                                newName
-                                        refEdits =
-                                            [ TextEdit
-                                                (Range (toLspPos (Scope.spanStart (Scope.refSpan r))) (toLspPos (Scope.spanEnd (Scope.refSpan r))))
-                                                newName
-                                            | r <- allRefs
-                                            ]
-                                        wsEdit =
-                                            WorkspaceEdit
-                                                { _changes = Just (Map.singleton uri (declEdit : refEdits))
-                                                , _documentChanges = Nothing
-                                                , _changeAnnotations = Nothing
-                                                }
-                                     in responder $ Right $ InL wsEdit
+    renameWithVF mvf l c newName uri
+  where
+    renameWithVF Nothing _ _ _ _ = responder $ Right $ InR Null
+    renameWithVF (Just vf) l_ c_ newName_ uri_ = renameInFile vf l_ c_ newName_ uri_
+
+    renameInFile vf l_ c_ newName_ uri_
+        | Right expr <- parseNixTextLoc (virtualFileText vf) = renameInExpr expr l_ c_ newName_ uri_
+        | otherwise = responder $ Right $ InR Null
+
+    renameInExpr expr l_ c_ newName_ uri_
+        | Just ref <- findRef (cursorLine, cursorCol) sg = resolveAndRename sg ref newName_ uri_
+        | otherwise = responder $ Right $ InR Null
+      where
+        sg = Scope.fromNixExpr Nothing expr
+        cursorLine = fromIntegral l_ + 1
+        cursorCol = fromIntegral c_ + 1
+
+    resolveAndRename sg ref newName_ uri_
+        | Right decl <- Scope.resolve sg ref = doRename sg decl newName_ uri_
+        | otherwise = responder $ Right $ InR Null
+
+    doRename sg decl newName_ uri_ =
+        let allRefs = Scope.findReferences sg decl
+            declEdit =
+                TextEdit
+                    (Range (toLspPos (Scope.spanStart (Scope.declSpan decl))) (toLspPos (Scope.spanEnd (Scope.declSpan decl))))
+                    newName_
+            refEdits =
+                [ TextEdit
+                    (Range (toLspPos (Scope.spanStart (Scope.refSpan r))) (toLspPos (Scope.spanEnd (Scope.refSpan r))))
+                    newName_
+                | r <- allRefs
+                ]
+            wsEdit =
+                WorkspaceEdit
+                    { _changes = Just (Map.singleton uri_ (declEdit : refEdits))
+                    , _documentChanges = Nothing
+                    , _changeAnnotations = Nothing
+                    }
+         in responder $ Right $ InL wsEdit
 
 -- ── hover display constants ───────────────────────────────────────
 

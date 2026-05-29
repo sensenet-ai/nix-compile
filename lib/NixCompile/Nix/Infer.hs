@@ -359,11 +359,12 @@ unifyUnion ts t = case ts of
     _ -> do
         t' <- applyCurrentSubst t
         ts' <- mapM applyCurrentSubst ts
-        case t' of
-            TVar _ -> pure ()
-            _
-                | t' `elem` ts' -> pure ()
-                | otherwise -> throwTypeError $ "type mismatch: expected one of " <> T.intercalate " | " (map prettyType ts) <> ", got " <> prettyType t'
+        checkUnionMembership t' ts'
+  where
+    checkUnionMembership t' ts'
+        | TVar _ <- t' = pure ()
+        | t' `elem` ts' = pure ()
+        | otherwise = throwTypeError $ "type mismatch: expected one of " <> T.intercalate " | " (map prettyType ts) <> ", got " <> prettyType t'
 
 -- ── type merging (for branches / polymorphic result combination) ──
 
@@ -413,17 +414,17 @@ mergeAttrs m1 m2 = do
 used by `with` scope resolution
 -}
 fieldConstraint :: Text -> NixType -> NixType -> Infer ()
-fieldConstraint name scopeT valueT = case scopeT of
-    TAttrs m -> case Map.lookup name m of
-        Just (ft, _) -> unify valueT ft
-        Nothing -> pure ()
-    TAttrsOpen m -> case Map.lookup name m of
-        Just (ft, _) -> unify valueT ft
-        Nothing -> pure ()
-    TVar _ -> do
+fieldConstraint name scopeT valueT
+    | TAttrs m <- scopeT = lookupAndUnify name valueT m
+    | TAttrsOpen m <- scopeT = lookupAndUnify name valueT m
+    | TVar _ <- scopeT = do
         let fieldType = TAttrsOpen (Map.singleton name (valueT, False))
         unify scopeT fieldType
-    _ -> pure ()
+    | otherwise = pure ()
+  where
+    lookupAndUnify k v m = case Map.lookup k m of
+        Just (ft, _) -> unify v ft
+        Nothing -> pure ()
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- instantiation
@@ -519,15 +520,13 @@ inferSelect environment base attr = do
             StaticKey k -> Just (varNameText k)
             DynamicKey _ -> Nothing
     case (t', key) of
-        (TAttrs fields, Just k) ->
-            case Map.lookup k fields of
-                Just (t, _) -> pure t
-                Nothing -> freshVar
-        (TAttrsOpen fields, Just k) ->
-            case Map.lookup k fields of
-                Just (t, _) -> pure t
-                Nothing -> freshVar
+        (TAttrs fields, Just k) -> lookupField k fields
+        (TAttrsOpen fields, Just k) -> lookupField k fields
         _ -> freshVar
+  where
+    lookupField k fields = case Map.lookup k fields of
+        Just (t, _) -> pure t
+        Nothing -> freshVar
 
 -- | hasAttr: always returns Bool (we don't track presence at the type level)
 inferHasAttr :: TypeEnv -> NExprLoc -> NAttrPath NExprLoc -> Infer NixType
@@ -719,17 +718,19 @@ inferRecBinding _ (Nix.NamedVar (StaticKey _ :| []) _ _) [] = pure []
 inferRecBinding extendedEnv (Nix.Inherit maybeScope keys _) typeVarList = do
     sequence
         [ do
-            t <- case maybeScope of
-                Just scope -> infer extendedEnv (Fix (Compose (AnnUnit nullSpan (NSelect Nothing scope (StaticKey key :| [])))))
-                Nothing -> case lookupEnv keyName extendedEnv of
-                    Just scheme -> instantiate scheme
-                    Nothing -> freshVar
+            t <- resolveInheritType extendedEnv maybeScope k
             unify typeVar t
             checkInfinite keyName typeVar
             pure (keyName, t)
-        | (key, typeVar) <- zip keys typeVarList
-        , let keyName = varNameText key
+        | (k, typeVar) <- zip keys typeVarList
+        , let keyName = varNameText k
         ]
+  where
+    resolveInheritType env (Just scope) k =
+        infer env (Fix (Compose (AnnUnit nullSpan (NSelect Nothing scope (StaticKey k :| [])))))
+    resolveInheritType env Nothing k = case lookupEnv (varNameText k) env of
+        Just scheme -> instantiate scheme
+        Nothing -> freshVar
 inferRecBinding _ _ _ = pure []
 
 -- | infer all bindings in a recursive set: pre-allocate vars, then unify each
@@ -855,15 +856,8 @@ collectFreeVars (Fix (Compose (AnnUnit _ expr))) = case expr of
     NWith s b -> collectFreeVars s ++ collectFreeVars b
     NAssert c b -> collectFreeVars c ++ collectFreeVars b
     NAbs params b ->
-        let bound = case params of
-                Param name -> [varNameText name]
-                ParamSet mName _ formals ->
-                    let formalNames = map (varNameText . fst) formals
-                     in formalNames ++ maybe [] (pure . varNameText) mName
-            paramFreeVars = case params of
-                Param _ -> []
-                ParamSet _ _ formals ->
-                    concat [collectFreeVars e | (_, Just e) <- formals]
+        let bound = paramNames params
+            paramFreeVars = paramDefaults params
          in paramFreeVars ++ filter (`notElem` bound) (collectFreeVars b)
     NApp f a -> collectFreeVars f ++ collectFreeVars a
     NSelect _ b _ -> collectFreeVars b
@@ -876,6 +870,23 @@ collectFreeVars (Fix (Compose (AnnUnit _ expr))) = case expr of
 collectFreeVarsBinding :: Nix.Binding NExprLoc -> [Text]
 collectFreeVarsBinding (Nix.NamedVar _ expr _) = collectFreeVars expr
 collectFreeVarsBinding _ = []
+
+{- | extract the names bound by a function parameter pattern
+n.b. this is used by collectFreeVars to scope variables (not type inference)
+-}
+paramNames :: Params NExprLoc -> [Text]
+paramNames (Param name) = [varNameText name]
+paramNames (ParamSet mName _ formals) =
+    let formalNames = map (varNameText . fst) formals
+     in formalNames ++ maybe [] (pure . varNameText) mName
+
+{- | collect free vars from default expressions in a parameter pattern
+the actual value of defaults may reference outer variables
+-}
+paramDefaults :: Params NExprLoc -> [Text]
+paramDefaults (Param _) = []
+paramDefaults (ParamSet _ _ formals) =
+    concat [collectFreeVars e | (_, Just e) <- formals]
 
 {- | generalize (close over) free type vars not free in the environment
 this implements HM let-polymorphism: only quantify vars the env doesn't mention

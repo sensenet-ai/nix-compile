@@ -521,25 +521,28 @@ extractVarRef text
 tries dynamic (var-containing) parsing first, then falls back to parseConfigAssignment
 -}
 configFacts :: Span -> Text -> [Fact]
-configFacts sourceSpan text =
-    let dynamicFallback =
-            let (leftHandSide, rightHandSide0) = T.breakOn "=" text
-             in case (T.stripPrefix "config." leftHandSide, T.stripPrefix "=" rightHandSide0) of
-                    (Just pathText, Just rightHandSide)
-                        | "$" `T.isInfixOf` rightHandSide
-                        , let pathParts = T.splitOn "." pathText
-                        , validConfigPath pathParts
-                        , Just parsed <- parseConfigValueDynamic rightHandSide Unquoted ->
-                            [configValueFact pathParts Unquoted sourceSpan parsed]
-                    _ -> []
-     in case dynamicFallback of
-            facts@(_ : _) -> facts
-            [] -> case parseConfigAssignment text of
-                Just ConfigAssignment{..} ->
-                    case configValue of
-                        Left variable -> [ConfigAssign configPath variable configQuoted sourceSpan]
-                        Right literal -> [ConfigLit configPath literal sourceSpan]
-                Nothing -> []
+configFacts sourceSpan text
+    | facts@(_ : _) <- dynamicFallback = facts
+    | otherwise = fallbackConfigFacts sourceSpan text
+  where
+    dynamicFallback =
+        let (leftHandSide, rightHandSide0) = T.breakOn "=" text
+         in case (T.stripPrefix "config." leftHandSide, T.stripPrefix "=" rightHandSide0) of
+                (Just pathText, Just rightHandSide)
+                    | "$" `T.isInfixOf` rightHandSide
+                    , let pathParts = T.splitOn "." pathText
+                    , validConfigPath pathParts
+                    , Just parsed <- parseConfigValueDynamic rightHandSide Unquoted ->
+                        [configValueFact pathParts Unquoted sourceSpan parsed]
+                _ -> []
+
+    fallbackConfigFacts sp text_ =
+        case parseConfigAssignment text_ of
+            Just ConfigAssignment{..} ->
+                case configValue of
+                    Left variable -> [ConfigAssign configPath variable configQuoted sp]
+                    Right literal -> [ConfigLit configPath literal sp]
+            Nothing -> []
 
 -- ── shell builtin classification ─────────────────────────────────
 
