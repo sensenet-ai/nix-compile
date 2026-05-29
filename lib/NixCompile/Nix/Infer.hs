@@ -17,6 +17,7 @@
 module NixCompile.Nix.Infer (
     -- * Inference
     inferExpr,
+    inferExprWithEnv,
     inferFile,
     runInfer,
     unify,
@@ -25,6 +26,11 @@ module NixCompile.Nix.Infer (
     TypeEnv (..),
     emptyEnv,
     builtinEnv,
+    extendEnv,
+    extendImport,
+    extendImports,
+    lookupEnv,
+    lookupImport,
 
     -- * Results
     InferResult (..),
@@ -64,11 +70,12 @@ import NixCompile.Types (Loc (..), Span (..))
 data TypeEnv = TypeEnv
     { envBindings :: Map Text Scheme
     , envWith :: Maybe NixType
+    , envImportTypes :: Map FilePath NixType
     }
     deriving (Eq, Show)
 
 emptyEnv :: TypeEnv
-emptyEnv = TypeEnv Map.empty Nothing
+emptyEnv = TypeEnv Map.empty Nothing Map.empty
 
 {- | extend the env with one name → scheme binding
 n.b. this shadows — if a name already exists the new scheme wins
@@ -80,11 +87,24 @@ extendEnv name scheme environment = environment{envBindings = Map.insert name sc
 lookupEnv :: Text -> TypeEnv -> Maybe Scheme
 lookupEnv name environment = Map.lookup name (envBindings environment)
 
+-- | register the exported type of an imported file
+extendImport :: FilePath -> NixType -> TypeEnv -> TypeEnv
+extendImport path t env = env{envImportTypes = Map.insert path t (envImportTypes env)}
+
+-- | extend env with multiple imported modules at once
+extendImports :: Map FilePath NixType -> TypeEnv -> TypeEnv
+extendImports imports env = env{envImportTypes = Map.union imports (envImportTypes env)}
+
+-- | look up a previously imported module's type
+lookupImport :: FilePath -> TypeEnv -> Maybe NixType
+lookupImport path env = Map.lookup path (envImportTypes env)
+
 builtinEnv :: TypeEnv
 builtinEnv =
     TypeEnv
         { envBindings = builtinBindings
         , envWith = Nothing
+        , envImportTypes = Map.empty
         }
   where
     -- ── core type scheme helpers ──────────────────────────────────
@@ -501,6 +521,27 @@ inferAssert environment cond body = do
     infer environment body
 
 -- | function application: unify func type as TFun arg result, return result
+-- n.b. intercepts import ./path to use cross-module type info
+inferAppWithImport :: TypeEnv -> NExprLoc -> NExprLoc -> Infer NixType
+inferAppWithImport environment func arg =
+    case extractImportPathLiteral arg of
+        Just importPath -> case lookupImport importPath environment of
+            Just importedType -> do
+                _ <- infer environment func
+                _ <- infer environment arg
+                applyCurrentSubst importedType
+            Nothing -> inferApp environment func arg
+        Nothing -> inferApp environment func arg
+
+-- | extract a literal file path from an expression (for import resolution)
+extractImportPathLiteral :: NExprLoc -> Maybe FilePath
+extractImportPathLiteral (Fix (Compose (AnnUnit _ e))) = case e of
+    NLiteralPath (Nix.Path p) -> Just p
+    NStr (DoubleQuoted [Plain t]) -> Just (T.unpack t)
+    NStr (Indented _ [Plain t]) -> Just (T.unpack t)
+    _ -> Nothing
+
+-- | function application: unify func type as TFun arg result, return result
 inferApp :: TypeEnv -> NExprLoc -> NExprLoc -> Infer NixType
 inferApp environment func arg = do
     funcT <- infer environment func
@@ -661,7 +702,7 @@ infer environment (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp
     NWith scope body -> inferWith environment scope body
     NAssert cond body -> inferAssert environment cond body
     NAbs params body -> inferLambda environment params body
-    NApp func arg -> inferApp environment func arg
+    NApp func arg -> inferAppWithImport environment func arg
     NSelect _ base (attr :| _) -> inferSelect environment base attr
     NHasAttr base attr -> inferHasAttr environment base attr
     NUnary op e -> inferUnary environment op e
@@ -940,9 +981,13 @@ data InferResult = InferResult
 
 -- | infer a single expression in the builtin environment
 inferExpr :: NExprLoc -> Either Text (NixType, [Binding])
-inferExpr expr =
+inferExpr expr = inferExprWithEnv builtinEnv expr
+
+-- | infer an expression with a specific type environment (for cross-module inference)
+inferExprWithEnv :: TypeEnv -> NExprLoc -> Either Text (NixType, [Binding])
+inferExprWithEnv env expr =
     runInfer $ do
-        t <- infer builtinEnv expr
+        t <- infer env expr
         applyCurrentSubst t
 
 -- | convert Nix source position to our Span type

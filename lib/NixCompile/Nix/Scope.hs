@@ -69,6 +69,7 @@ import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -429,6 +430,17 @@ buildWithExpr _srcSpan withExpr body = do
     addEdge (Edge bodyScopeId withExprScope With)
     withScope bodyScopeId $ buildExpr body
 
+-- ── string part extraction ──────────────────────────────────────
+
+-- | extract all Nix expressions embedded within string antiquotations
+exprsFromString :: NString NExprLoc -> [NExprLoc]
+exprsFromString (DoubleQuoted parts) = mapMaybe extractExpr parts
+exprsFromString (Indented _ parts) = mapMaybe extractExpr parts
+
+extractExpr :: Antiquoted Text NExprLoc -> Maybe NExprLoc
+extractExpr (Antiquoted e) = Just e
+extractExpr _ = Nothing
+
 -- ── walk an expression, building scope graph nodes ─────────────────
 
 {- | dispatch on AST node to create scopes, declarations, and references
@@ -487,6 +499,15 @@ buildExpr (Fix (Compose (AnnUnit srcSpan e))) = case e of
         buildExpr body
     -- ── list: every element ──
     NList elements -> mapM_ buildExpr elements
+    -- ── string: traverse antiquoted expressions (e.g. ${srv.host}) ──
+    NStr strParts -> mapM_ buildExpr (exprsFromString strParts)
+    -- ── path: walk any embedded expressions ──
+    NLiteralPath _ -> pure ()
+    NEnvPath _ -> pure ()
+    -- ── has-attr: walk base expression ──
+    NHasAttr base _pat -> buildExpr base
+    -- ── synonym hole (editor placeholder) ──
+    NSynHole _ -> pure ()
     _ -> pure ()
 
 addBindingDecl :: ScopeId -> Nix.Binding NExprLoc -> Build ()
