@@ -314,25 +314,31 @@ extractScriptCall expr@(Fix (Compose (AnnUnit srcSpan e))) = case e of
   where
     processApp (Just (name, args))
         | not (isShellScriptFunction name) = Nothing
-        | otherwise = case args of
-            [nameArg, bodyArg]
-                | name `elem` positionalFuncs ->
-                    fmap
-                        (\n -> ShellScriptCall name n bodyArg (toSpan srcSpan Nothing))
-                        (extractStringLit nameArg)
-            [recordArg] | name == "writeShellApplication" ->
-                case extractFromRecord recordArg of
-                    Just (n, body) ->
-                        Just
-                            ShellScriptCall
-                                { sscFunction = name
-                                , sscName = n
-                                , sscBody = body
-                                , sscSpan = toSpan srcSpan Nothing
-                                }
-                    Nothing -> Nothing
-            _ -> Nothing
+        | name `elem` positionalFuncs = extractPositional name args
+        | name == "writeShellApplication" = extractShellApp name args
+        | otherwise = Nothing
     processApp Nothing = Nothing
+
+    extractPositional name args
+        | [nameArg, bodyArg] <- args =
+            fmap
+                (\n -> ShellScriptCall name n bodyArg (toSpan srcSpan Nothing))
+                (extractStringLit nameArg)
+        | otherwise = Nothing
+
+    extractShellApp name args
+        | [recordArg] <- args =
+            case extractFromRecord recordArg of
+                Just (n, body) ->
+                    Just
+                        ShellScriptCall
+                            { sscFunction = name
+                            , sscName = n
+                            , sscBody = body
+                            , sscSpan = toSpan srcSpan Nothing
+                            }
+                Nothing -> Nothing
+        | otherwise = Nothing
 
     positionalFuncs =
         [ "writeShellScript"

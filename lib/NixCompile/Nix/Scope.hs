@@ -538,21 +538,7 @@ addParamDecls scope = \case
                 }
     -- set pattern: { name ? default, ... } @ self ->
     ParamSet mname _variadic pset -> do
-        -- @-binding: the whole attrset is also in scope
-        case mname of
-            Just pname ->
-                addDecl $
-                    Declaration
-                        { declName = coerce pname
-                        , declSpan = emptySpan
-                        , declScope = scope
-                        , declAssocScope = Nothing
-                        , declType = Nothing
-                        , declDoc = Nothing
-                        }
-            Nothing -> pure ()
-
-        -- each named field in the pattern
+        addParamSetAtName scope mname
         forM_ pset $ \(pname, mdefault) -> do
             addDecl $
                 Declaration
@@ -563,10 +549,19 @@ addParamDecls scope = \case
                     , declType = Nothing
                     , declDoc = Nothing
                     }
-            -- default expressions are traversed for references
-            case mdefault of
-                Just expr -> buildExpr expr
-                Nothing -> pure ()
+            mapM_ buildExpr mdefault
+    where
+    addParamSetAtName sc (Just pname) =
+        addDecl $
+            Declaration
+                { declName = coerce pname
+                , declSpan = emptySpan
+                , declScope = sc
+                , declAssocScope = Nothing
+                , declType = Nothing
+                , declDoc = Nothing
+                }
+    addParamSetAtName _ Nothing = pure ()
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                                // resolution
