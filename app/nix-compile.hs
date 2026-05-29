@@ -57,6 +57,7 @@ import NixCompile.Nix.Format qualified as NixFmt
 import NixCompile.Nix.Infer qualified
 import NixCompile.Nix.Layout qualified as Layout
 import NixCompile.Nix.Lint qualified as Lint
+import NixCompile.Nix.LintCombined qualified as Combined
 import NixCompile.Nix.LintDerivation qualified as Derivation
 import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.LintPatterns qualified as LintPatterns
@@ -818,12 +819,10 @@ checkFile config file = do
 
 checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> AppM TCResult
 checkWithViolations config file expression = do
-    let nixViolations = Lint.findNixViolations expression
-    let (_, activeNixViolations) = partitionNixViolations config nixViolations
-    let derivViolations = Derivation.findDerivViolations file expression
-    let (_, activeDerivViolations) = partitionDerivViolations config derivViolations
-    let patternViolations = LintPatterns.findPatternViolations expression
-    let (_, activePatternViolations) = partitionPatternViolations config patternViolations
+    let bundle = Combined.combinedLint file expression
+    let (_, activeNixViolations) = partitionNixViolations config (Combined.lbNix bundle)
+    let (_, activeDerivViolations) = partitionDerivViolations config (Combined.lbDeriv bundle)
+    let (_, activePatternViolations) = partitionPatternViolations config (Combined.lbPattern bundle)
 
     reportNixLintViolations file activeNixViolations
     reportDerivViolations file activeDerivViolations
