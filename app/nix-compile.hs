@@ -50,6 +50,7 @@ import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
 import NixCompile.Lint.Forbidden (Violation (..), findViolations, formatViolationsAt)
 import NixCompile.Log
+import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Nix.Flake qualified as Flake
 import NixCompile.Nix.Format qualified as NixFmt
 import NixCompile.Nix.Infer qualified
@@ -116,6 +117,7 @@ dispatchCommand _ ["fmt", file] = cmdFmt file
 dispatchCommand config ["typecheck", path] = cmdTypeCheck config path
 dispatchCommand _ ["flake"] = cmdFlake "."
 dispatchCommand _ ["flake", dir] = cmdFlake dir
+dispatchCommand _ ["lsp"] = cmdLSP
 dispatchCommand _ ["scope", file] = cmdScope file
 dispatchCommand _ ["scope", "--json", file] = cmdScopeJSON file
 dispatchCommand _ ["scope", "--dhall", file] = cmdScopeDhall file
@@ -139,6 +141,11 @@ parseGraphArgs [dir, "--dot"] = (dir, True)
 parseGraphArgs ["--dot"] = (".", True)
 parseGraphArgs [dir] = (dir, False)
 parseGraphArgs _ = (".", False)
+
+-- ── LSP server ────────────────────────────────────────────────────
+
+cmdLSP :: AppM ()
+cmdLSP = liftIO LSP.run >> liftIO exitSuccess
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- CI: unified pass/fail across all checks
@@ -351,6 +358,7 @@ usage = do
     putStrLn "  nix-compile scope <file.nix>    Show scope graph (declarations, references, edges)"
     putStrLn "  nix-compile scope --json <file> Emit scope graph as JSON (for zeitschrift)"
     putStrLn "  nix-compile scope --dhall <file> Emit scope graph as Dhall (for zeitschrift)"
+    putStrLn "  nix-compile lsp                Start LSP server (for editor integration)"
     putStrLn ""
     putStrLn "Bash policy checks (enforced by `check` and `nix`; no escape hatch):"
     putStrLn "  - heredocs (<<, <<-)"
