@@ -106,9 +106,9 @@ printNString = \case
 
 printStringPart :: Antiquoted Text NExprLoc -> Doc ann
 printStringPart = \case
-    Plain t -> pretty t
+    Plain t -> pretty (escapeString t)
     Antiquoted e -> "${" <> printExpr e <> "}"
-    EscapedNewline -> "\\" <> line
+    EscapedNewline -> mempty
 
 printIndentedPart :: Antiquoted Text NExprLoc -> Doc ann
 printIndentedPart = \case
@@ -116,9 +116,12 @@ printIndentedPart = \case
     Antiquoted e -> "${" <> printExpr e <> "}"
     EscapedNewline -> "\\" <> line
 
--- ═════════════════════════════════════════════════════════════════════════════
--- paths
--- ═════════════════════════════════════════════════════════════════════════════
+escapeString :: Text -> Text
+escapeString = T.concatMap $ \c -> case c of
+    '"' -> "\\\""
+    '\\' -> "\\\\"
+    '$' -> "\\$"
+    ch -> T.singleton ch
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- paths
@@ -250,6 +253,9 @@ printArg (Fix (Compose (AnnUnit _ e))) = case e of
     NLet _ _ -> parens (printNExprF e)
     NWith _ _ -> parens (printNExprF e)
     NAssert _ _ -> parens (printNExprF e)
+    NBinary _ _ _ -> parens (printNExprF e)
+    NUnary _ _ -> parens (printNExprF e)
+    NSelect (Just _) _ _ -> parens (printNExprF e)
     _ -> printNExprF e
 
 -- ═════════════════════════════════════════════════════════════════════════════
