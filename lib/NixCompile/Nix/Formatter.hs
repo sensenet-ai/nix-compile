@@ -75,7 +75,8 @@ printNExprF = \case
     NApp fun arg -> printApp fun arg
     NSelect alt base path -> printSelect alt base path
     NHasAttr base path -> printHasAttr base path
-    NUnary op arg -> pretty (unaryOpText op) <+> printExpr arg
+    NUnary NNeg _arg -> "-" <> printExpr _arg
+    NUnary NNot _arg -> "!" <> printExpr _arg
     NBinary op left right -> printBinary op left right
     NEnvPath path -> printPath path
     NLiteralPath path -> printPath path
@@ -101,19 +102,23 @@ printNAtom = \case
 printNString :: NString NExprLoc -> Doc ann
 printNString = \case
     DoubleQuoted parts -> dquotes (hcat (map printStringPart parts))
-    Indented _ parts -> "''" <> line <> indent 2 (vsep (map printIndentedPart parts)) <> line <> "''"
+    Indented _ parts -> "''" <> line <> hcat (map printIndentedPart parts) <> "''"
 
 printStringPart :: Antiquoted Text NExprLoc -> Doc ann
 printStringPart = \case
     Plain t -> pretty t
     Antiquoted e -> "${" <> printExpr e <> "}"
-    EscapedNewline -> mempty
+    EscapedNewline -> "\\" <> line
 
 printIndentedPart :: Antiquoted Text NExprLoc -> Doc ann
 printIndentedPart = \case
     Plain t -> pretty t
     Antiquoted e -> "${" <> printExpr e <> "}"
-    EscapedNewline -> mempty
+    EscapedNewline -> "\\" <> line
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- paths
+-- ═════════════════════════════════════════════════════════════════════════════
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- paths
@@ -133,11 +138,20 @@ printPath (Path p) =
 printList :: [NExprLoc] -> Doc ann
 printList [] = "[]"
 printList elements =
-    let rendered = map printExpr elements
-        singleLine = brackets (hsep (punctuate "," rendered))
+    let rendered = map printListElem elements
+        singleLine = brackets (hsep rendered)
      in if any isMultiline rendered || (T.length (render singleLine) > 80)
-            then brackets (line <> indent 2 (vsep (map (<> line) rendered)) <> line)
+            then brackets (line <> indent 2 (vsep rendered) <> line)
             else singleLine
+
+printListElem :: NExprLoc -> Doc ann
+printListElem (Fix (Compose (AnnUnit _ e))) = case e of
+    NAbs _ _ -> parens (printNExprF e)
+    NLet _ _ -> parens (printNExprF e)
+    NIf _ _ _ -> parens (printNExprF e)
+    NWith _ _ -> parens (printNExprF e)
+    NAssert _ _ -> parens (printNExprF e)
+    _ -> printNExprF e
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- attribute sets
@@ -216,16 +230,26 @@ printAbs params body = case params of
 printApp :: NExprLoc -> NExprLoc -> Doc ann
 printApp fun arg =
     let funDoc = printAppFun fun
-        argDoc = printExpr arg
+        argDoc = printArg arg
      in funDoc <+> argDoc
 
 printAppFun :: NExprLoc -> Doc ann
 printAppFun (Fix (Compose (AnnUnit _ e))) = case e of
-    NApp _ _ -> parens (printNExprF e)
     NAbs _ _ -> parens (printNExprF e)
     NIf _ _ _ -> parens (printNExprF e)
     NLet _ _ -> parens (printNExprF e)
     NWith _ _ -> parens (printNExprF e)
+    NAssert _ _ -> parens (printNExprF e)
+    _ -> printNExprF e
+
+printArg :: NExprLoc -> Doc ann
+printArg (Fix (Compose (AnnUnit _ e))) = case e of
+    NAbs _ _ -> parens (printNExprF e)
+    NApp _ _ -> parens (printNExprF e)
+    NIf _ _ _ -> parens (printNExprF e)
+    NLet _ _ -> parens (printNExprF e)
+    NWith _ _ -> parens (printNExprF e)
+    NAssert _ _ -> parens (printNExprF e)
     _ -> printNExprF e
 
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -264,10 +288,6 @@ binaryOpText = \case
     NConcat -> "++"; NPlus -> "+"; NMinus -> "-"; NMult -> "*"
     NDiv -> "/"
 
-unaryOpText :: NUnaryOp -> Text
-unaryOpText = \case
-    NNeg -> "-"; NNot -> "!"
-
 -- ═════════════════════════════════════════════════════════════════════════════
 -- key names and paths
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -279,6 +299,6 @@ printKeyName :: NKeyName NExprLoc -> Doc ann
 printKeyName = \case
     StaticKey name -> pretty (varNameText name)
     DynamicKey mk -> case mk of
-        Plain str -> dquotes (printNString str)
+        Plain str -> printNString str
         EscapedNewline -> mempty
         Antiquoted e -> "${" <> printExpr e <> "}"
