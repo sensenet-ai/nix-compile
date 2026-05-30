@@ -53,6 +53,7 @@ import NixCompile.Lint.Forbidden (Violation (..), findViolations, formatViolatio
 import NixCompile.Log
 import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Nix.Format qualified as NixFmt
+import NixCompile.Nix.Formatter qualified as Formatter
 import NixCompile.Nix.Infer qualified
 import NixCompile.Nix.Lint qualified as Lint
 import NixCompile.Nix.LintCombined qualified as Combined
@@ -417,9 +418,14 @@ safeReadFile path = do
         Right sourceText -> pure (Right sourceText)
 
 cmdFmt :: FilePath -> AppM ()
-cmdFmt _file = do
-    $(logTM) InfoS $ logStr "fmt: not yet implemented (formatter planned)"
-    liftIO exitSuccess
+cmdFmt file = do
+    parseResult <- liftIO $ Nix.parseNixFile file
+    case parseResult of
+        Left err -> do
+            $(logTM) ErrorS $ logStr $ "Parse error: " <> err
+            liftIO exitFailure
+        Right expr -> do
+            liftIO $ TIO.putStr $ Formatter.formatNixFile file expr
 
 reportBareCommands :: FilePath -> [(T.Text, Span)] -> AppM ()
 reportBareCommands file bareFacts
