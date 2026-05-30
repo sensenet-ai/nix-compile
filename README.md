@@ -29,18 +29,21 @@ Or read the source markdown directly:
 ## // quick start //
 
 ```bash
-# Check a bash script
-nix run github:sensenet-ai/nix-compile -- check ./deploy.sh
+# Run all checks on a project (auto-detects .sh, .nix, or directory)
+nix run github:sensenet-ai/nix-compile -- check ./
 
-# Check embedded bash in Nix files
-nix run github:sensenet-ai/nix-compile -- nix ./default.nix
+# Check a single file
+nix run github:sensenet-ai/nix-compile -- check ./default.nix
 
-# Recursively type-check a project
-nix run github:sensenet-ai/nix-compile -- typecheck ./my-project
-
-# Infer types and add annotations
-nix run github:sensenet-ai/nix-compile -- fmt ./default.nix
+# Infer types and add annotation comments
+nix run github:sensenet-ai/nix-compile -- infer ./default.nix
 
 # Generate typed config emitter
 nix run github:sensenet-ai/nix-compile -- emit ./configure.sh
+
+# Show scope graph
+nix run github:sensenet-ai/nix-compile -- scope ./default.nix
+
+# Start LSP server
+nix run github:sensenet-ai/nix-compile -- lsp
 ```
