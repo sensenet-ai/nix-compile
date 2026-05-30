@@ -425,7 +425,13 @@ cmdFmt file = do
             $(logTM) ErrorS $ logStr $ "Parse error: " <> err
             liftIO exitFailure
         Right expr -> do
-            liftIO $ TIO.putStr $ Formatter.formatNixFile file expr
+            srcResult <- liftIO $ safeReadFile file
+            case srcResult of
+                Left err -> do
+                    $(logTM) ErrorS $ logStr $ "I/O error: " <> err
+                    liftIO exitFailure
+                Right src -> do
+                    liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr
 
 reportBareCommands :: FilePath -> [(T.Text, Span)] -> AppM ()
 reportBareCommands file bareFacts
@@ -704,12 +710,15 @@ checkFile config file = do
         Right expression ->
             case detectUnsupportedConstruct expression of
                 Just reason -> do
-                    $(logTM) InfoS $ logStr $ skipMarker <> " " <> T.pack file <> " (unsupported: " <> reason <> ")"
-                    return TCSkip
-                Nothing -> checkWithViolations config file expression
+                    $(logTM) InfoS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
+                    checkWithViolations config file expression True
+                Nothing -> checkWithViolations config file expression False
 
-checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> AppM TCResult
-checkWithViolations config file expression = do
+unsupMarker :: Text
+unsupMarker = "[UNC]"
+
+checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
+checkWithViolations config file expression skipTypeCheck = do
     let bundle = Combined.combinedLint file expression
     let (_, activeNixViolations) = partitionNixViolations config (Combined.lbNix bundle)
     let (_, activeDerivViolations) = partitionDerivViolations config (Combined.lbDeriv bundle)
@@ -719,7 +728,7 @@ checkWithViolations config file expression = do
     reportDerivViolations file activeDerivViolations
     reportPatternViolations file activePatternViolations
 
-    typeCheckResult <- performTypeCheck expression
+    typeCheckResult <- performTypeCheck config expression skipTypeCheck
     case typeCheckResult of
         TCFail -> return TCFail
         TCOk | null activeNixViolations && null activeDerivViolations && null activePatternViolations -> do
@@ -734,9 +743,6 @@ okMarker = "[OK]"
 
 crossMarker :: Text
 crossMarker = "[XX]"
-
-skipMarker :: Text
-skipMarker = "[SKIP]"
 
 reportNixLintViolations :: FilePath -> [Lint.NixViolation] -> AppM ()
 reportNixLintViolations file violations
@@ -783,8 +789,10 @@ reportPatternViolations file violations
                     ]
         $(logTM) WarningS $ logStr $ LintPatterns.formatPatternViolations violations
 
-performTypeCheck :: NExprLoc -> AppM TCResult
-performTypeCheck expression = do
+performTypeCheck :: Config.Config -> NExprLoc -> Bool -> AppM TCResult
+performTypeCheck config expression skipTypeCheck
+    | skipTypeCheck = return TCOk
+    | otherwise = do
     result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expression of
         Left typeError -> return $ Left typeError
         Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
@@ -799,22 +807,34 @@ performTypeCheck expression = do
                         , T.unlines $ map ("     " <>) $ T.lines $ T.pack $ show exception
                         ]
             return TCFail
-        Right (Left typeError) -> do
-            $(logTM) ErrorS $
-                logStr $
-                    T.unlines
-                        [ ""
-                        , formatTypeError typeError
-                        , ""
-                        ]
-            return TCFail
+        Right (Left typeError) ->
+            case Config.effectiveSeverity config Config.typeCheckRuleId of
+                Just Config.SevOff -> return TCOk
+                Just Config.SevWarning -> do
+                    $(logTM) WarningS $
+                        logStr $
+                            T.unlines
+                                [ ""
+                                , formatTypeError typeError
+                                , ""
+                                ]
+                    return TCOk
+                _ -> do
+                    $(logTM) ErrorS $
+                        logStr $
+                            T.unlines
+                                [ ""
+                                , formatTypeError typeError
+                                , ""
+                                ]
+                    return TCFail
         Right (Right _) -> return TCOk
 
 formatTypeError :: Text -> Text
 formatTypeError errorText =
     case T.lines errorText of
-        (firstLine : remainingLines) -> T.unlines $ ("  ERROR: " <> firstLine) : map ("         " <>) remainingLines
-        [] -> "  ERROR: unknown error"
+        (firstLine : remainingLines) -> T.unlines $ ("  TYPE WARNING: " <> firstLine) : map ("         " <>) remainingLines
+        [] -> "  TYPE WARNING: unknown error"
 
 detectUnsupportedConstruct :: NExprLoc -> Maybe Text
 detectUnsupportedConstruct (Fix (Compose (AnnUnit _ expression))) = case expression of

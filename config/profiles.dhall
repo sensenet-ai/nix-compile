@@ -229,10 +229,32 @@ let nixpkgs
       , description = "nixpkgs contribution guidelines"
       , parent = Some "standard"
       , rules =
-        [ -- rec is used in nixpkgs
-          { id = R.rec-anywhere
+        [ -- nixpkgs uses with and rec pervasively
+          { id = R.with-lib
+          , severity = Severity.Off
+          , reason = Some "nixpkgs uses with pervasively as the primary scope mechanism"
+          }
+        , { id = R.rec-anywhere
           , severity = Severity.Off
           , reason = Some "nixpkgs uses rec in several legitimate patterns"
+          }
+        , -- nixpkgs-standard derivation patterns are expected
+          { id = R.prefer-write-shell-application
+          , severity = Severity.Off
+          , reason = Some "both patterns are legitimate in nixpkgs"
+          }
+        , { id = R.or-null-fallback
+          , severity = Severity.Off
+          , reason = Some "or-null is a standard nixpkgs pattern"
+          }
+        , { id = R.long-inline-string
+          , severity = Severity.Off
+          , reason = Some "cosmetic; nixpkgs has its own formatting rules"
+          }
+        , -- Type inference is not precise enough for nixpkgs
+          { id = R.type-check-failure
+          , severity = Severity.Warning
+          , reason = Some "type inference has false positives on complex nixpkgs code"
           }
         , -- Strong enforcement on derivation quality
           { id = R.missing-meta

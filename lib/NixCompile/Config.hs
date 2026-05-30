@@ -15,7 +15,7 @@
 --                                                     // config // dhall
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Config (
+    module NixCompile.Config (
     Severity (..),
     RuleOverride (..),
     Config (..),
@@ -30,6 +30,7 @@ module NixCompile.Config (
     derivRuleId,
     packageRuleId,
     patternRuleId,
+    typeCheckRuleId,
 )
 where
 
@@ -175,6 +176,9 @@ patternRuleId :: LintPatterns.PatternViolationType -> Text
 patternRuleId = \case
     LintPatterns.VOrNullFallback -> "or-null-fallback"
     LintPatterns.VAttrTranslation -> "no-translate-attrs-outside-prelude"
+
+typeCheckRuleId :: Text
+typeCheckRuleId = "type-check-failure"
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- Internal: glob matching

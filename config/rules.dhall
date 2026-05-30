@@ -126,6 +126,12 @@ let nix-rules =
         , description = "Package dir without default.nix"
         , rationale = "Consistent directory structure"
         }
+      , { id = "type-check-failure"
+        , language = Language.Nix
+        , default-severity = Severity.Error
+        , description = "Type inference failure treated as error"
+        , rationale = "Type errors can indicate real bugs"
+        }
       ]
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -186,6 +192,7 @@ let rule-ids =
       , -- nix naming
         non-lisp-case = "non-lisp-case"
       , default-nix-in-packages = "default-nix-in-packages"
+      , type-check-failure = "type-check-failure"
       , -- cpp
         cpp-using-namespace-header = "cpp-using-namespace-header"
       , cpp-ban-cuda-identifier = "cpp-ban-cuda-identifier"
