@@ -196,6 +196,7 @@ isStorePathExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
             || T.isPrefixOf "lib" name
             || T.isSuffixOf "Pkg" name
             || T.isSuffixOf "Package" name
+            || name == "nix-compile"
 
 -- | Get a simple text representation of an expression
 prettyExpr :: NExprLoc -> Text
