@@ -44,13 +44,14 @@ import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
 import NixCompile.CLI.Bash (safeReadFile)
-import NixCompile.CLI.Check (detectUnsupportedConstruct, formatTypeError)
+import NixCompile.CLI.Check (checkWithViolations, detectUnsupportedConstruct, formatTypeError)
 import NixCompile.CLI.Report (formatBareCommand, formatDynamicCommand, formatPackageViolations, indentBlock, partitionViolations)
 import NixCompile.CLI.Types (CICounts (..), TCResult (..), crossMarker, emptyCICounts, okMarker, unsupMarker)
 import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.Log (Severity (ErrorS), runLog)
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Nix.Effect
@@ -4007,6 +4008,46 @@ prop_bash_safe_read_nonexistent = QCM.monadicIO $
         Right _ -> QCM.assert False
 
 -- ============================================================================
+-- Properties: CLI Check -- exit code regression
+-- ============================================================================
+
+-- | REGRESSION: checkWithViolations with skipTypeCheck=True and no lint
+-- violations must return TCFail (not TCOk). When a file has an unsupported
+-- construct (rec, dynamic attr access), we cannot fully verify it.
+-- Returning TCOk here means the process exits 0, masking the gap.
+prop_cli_skip_checked_returns_fail :: Property
+prop_cli_skip_checked_returns_fail = QCM.monadicIO $ do
+    let src = "let x = 1; in x" -- clean Nix, no lint violations
+    case parseNixTextLoc src of
+        Left _ -> QCM.assert True -- parse failure is fine
+        Right expr -> do
+            result <- QCM.run $ runLog ErrorS $
+                checkWithViolations defaultConfig "test.nix" expr True
+            QCM.assert (result == TCFail)
+
+-- | checkWithViolations with skipTypeCheck=False and clean file returns TCOk
+prop_cli_normal_check_passes :: Property
+prop_cli_normal_check_passes = QCM.monadicIO $ do
+    let src = "let x = 1; in x"
+    case parseNixTextLoc src of
+        Left _ -> QCM.assert True
+        Right expr -> do
+            result <- QCM.run $ runLog ErrorS $
+                checkWithViolations defaultConfig "test.nix" expr False
+            QCM.assert (result == TCOk)
+
+-- | checkWithViolations with skipTypeCheck=False and lint violation returns TCFail
+prop_cli_lint_check_fails :: Property
+prop_cli_lint_check_fails = QCM.monadicIO $ do
+    let src = "with builtins; true" -- triggers VWith lint violation
+    case parseNixTextLoc src of
+        Left _ -> QCM.assert True
+        Right expr -> do
+            result <- QCM.run $ runLog ErrorS $
+                checkWithViolations defaultConfig "test.nix" expr False
+            QCM.assert (result == TCFail)
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -4403,6 +4444,10 @@ main = do
             , -- CLI Bash
               run "cli_bash_safe_read_existing" prop_bash_safe_read_existing
             , run "cli_bash_safe_read_nonexistent" prop_bash_safe_read_nonexistent
+            , -- CLI Check exit code regression
+              run "cli_skip_checked_returns_fail" prop_cli_skip_checked_returns_fail
+            , run "cli_normal_check_passes" prop_cli_normal_check_passes
+            , run "cli_lint_check_fails" prop_cli_lint_check_fails
             ]
 
     putStrLn ""

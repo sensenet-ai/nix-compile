@@ -68,9 +68,13 @@ checkWithViolations config file expression skipTypeCheck = do
     typeCheckResult <- performTypeCheck config expression skipTypeCheck
     case typeCheckResult of
         TCFail -> return TCFail
-        TCOk | null activeNixViolations && null activeDerivViolations && null activePatternViolations -> do
-            $(logTM) InfoS $ logStr $ okMarker <> " " <> T.pack file
-            return TCOk
+        TCOk
+            | skipTypeCheck -> do
+                $(logTM) InfoS $ logStr $ crossMarker <> " " <> T.pack file <> " (unsupported construct — type check skipped)"
+                return TCFail
+            | null activeNixViolations && null activeDerivViolations && null activePatternViolations -> do
+                $(logTM) InfoS $ logStr $ okMarker <> " " <> T.pack file
+                return TCOk
         _ -> do
             $(logTM) InfoS $ logStr $ crossMarker <> " " <> T.pack file <> " (lint violations)"
             return TCFail
