@@ -53,17 +53,25 @@ runCIPhases config dir = do
     let flakePath = dir </> "flake.nix"
     hasFlake <- liftIO $ doesFileExist flakePath
 
+    $(logTM) DebugS $ logStr "Phase 1/4: type-check"
+
     typeCounts <- runTypeCheckPhase config dir
+
+    $(logTM) DebugS $ logStr $ "Phase 2/4: graph  (hasFlake=" <> T.pack (show hasFlake) <> ")"
 
     graphCounts <-
         if hasFlake
             then runGraphPhase config flakePath
             else pure emptyCICounts
 
+    $(logTM) DebugS $ logStr "Phase 3/4: bash"
+
     bashCounts <-
         if hasFlake
             then runNixPhase config flakePath
             else pure emptyCICounts
+
+    $(logTM) DebugS $ logStr "Phase 4/4: packages"
 
     files <- liftIO $ collectFiles config dir
     pkgCounts <- runPackagePhase config files
@@ -115,7 +123,9 @@ runTypeCheckPhase config dir = do
 runGraphPhase :: Config.Config -> FilePath -> AppM CICounts
 runGraphPhase config flakePath = do
     let conv = Config.effectiveLayout config
+    $(logTM) DebugS $ logStr $ "  building module graph from " <> T.pack flakePath
     graphResult <- liftIO $ Mod.buildModuleGraphFromFlake conv (takeDirectory flakePath)
+    $(logTM) DebugS $ logStr "  graph build complete"
     case graphResult of
         Left err -> do
             $(logTM) ErrorS $ logStr $ "Graph error: " <> err
