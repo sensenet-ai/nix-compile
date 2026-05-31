@@ -22,7 +22,7 @@
         "nix-compile:ci" = builtins.derivation {
           name = "nix-compile-ci";
           builder = "${pkgs.bash}/bin/bash";
-          system = builtins.currentSystem;
+          system = system;
           args = [
             "-euc"
             ''
@@ -40,7 +40,7 @@
         "nix-compile:lint-flake" = builtins.derivation {
           name = "nix-compile-lint-flake";
           builder = "${pkgs.bash}/bin/bash";
-          system = builtins.currentSystem;
+          system = system;
           args = [
             "-euc"
             ''
@@ -60,7 +60,7 @@
         builtins.derivation {
           name = "nix-compile-fmt";
           builder = "${pkgs.bash}/bin/bash";
-          system = builtins.currentSystem;
+          system = system;
           args = [
             "-euc"
             ''
