@@ -61,16 +61,22 @@ emptyBundle = LintBundle [] [] []
 -- Replaces three separate traversals.
 
 combinedLint :: FilePath -> NExprLoc -> LintBundle
-combinedLint filePath = walkExpr
+combinedLint filePath = walkExpr (0 :: Int)
   where
-    walkExpr (Fix (Compose (AnnUnit srcSpan expression))) =
-        let local = localViolations filePath srcSpan expression
-            rest = concatBundle (map walkExpr (childExprs expression))
-         in combineBundle local (combineBundle (concatBundle (map walkBinding (bindingsOf expression))) rest)
+    maxDepth :: Int
+    maxDepth = 200
 
-    walkBinding = \case
-        NamedVar _ expr _ -> walkExpr expr
-        Inherit (Just scope) _ _ -> walkExpr scope
+    walkExpr depth (Fix (Compose (AnnUnit srcSpan expression)))
+        | depth > maxDepth = emptyBundle
+        | otherwise =
+            let d = depth + 1
+                local = localViolations filePath srcSpan expression
+                rest = concatBundle (map (walkExpr d) (childExprs expression))
+             in combineBundle local (combineBundle (concatBundle (map (walkBinding d) (bindingsOf expression))) rest)
+
+    walkBinding depth = \case
+        NamedVar _ expr _ -> walkExpr depth expr
+        Inherit (Just scope) _ _ -> walkExpr depth scope
         Inherit Nothing _ _ -> emptyBundle
 
 -- ── per-node violation checks ──────────────────────────────────────
