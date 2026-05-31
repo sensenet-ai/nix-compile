@@ -43,6 +43,10 @@ import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
+import NixCompile.CLI.Bash (safeReadFile)
+import NixCompile.CLI.Check (detectUnsupportedConstruct, formatTypeError)
+import NixCompile.CLI.Report (formatBareCommand, formatDynamicCommand, formatPackageViolations, indentBlock, partitionViolations)
+import NixCompile.CLI.Types (CICounts (..), TCResult (..), crossMarker, emptyCICounts, okMarker, unsupMarker)
 import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
@@ -3794,6 +3798,215 @@ prop_completion_func =
      in "x" `elem` labels && "y" `elem` labels
 
 -- ============================================================================
+-- Properties: CLI Types
+-- ============================================================================
+
+-- | emptyCICounts has all fields zero
+prop_cli_empty_cicounts_all_zero :: Bool
+prop_cli_empty_cicounts_all_zero =
+    let c = emptyCICounts
+     in ciFilesScanned c == 0
+            && ciTypePass c == 0
+            && ciTypeFail c == 0
+            && ciTypeSkip c == 0
+            && ciLintViolations c == 0
+            && ciPackageViolations c == 0
+            && ciBashViolations c == 0
+            && ciGraphFailures c == 0
+
+-- | Status markers are distinct and non-empty
+prop_cli_markers_distinct :: Bool
+prop_cli_markers_distinct =
+    okMarker /= crossMarker
+        && okMarker /= unsupMarker
+        && crossMarker /= unsupMarker
+        && not (any T.null [okMarker, crossMarker, unsupMarker])
+
+-- | TCResult equality is reflexive
+prop_cli_tcresult_reflexive :: Bool
+prop_cli_tcresult_reflexive =
+    TCOk == TCOk && TCFail == TCFail && TCSkip == TCSkip
+
+-- | CICounts field-wise addition is correct
+prop_cli_cicounts_merge :: Bool
+prop_cli_cicounts_merge =
+    let a = CICounts 1 2 3 4 5 6 7 8
+        b = CICounts 9 10 11 12 13 14 15 16
+        c = CICounts
+                (ciFilesScanned a + ciFilesScanned b)
+                (ciTypePass a + ciTypePass b)
+                (ciTypeFail a + ciTypeFail b)
+                (ciTypeSkip a + ciTypeSkip b)
+                (ciLintViolations a + ciLintViolations b)
+                (ciPackageViolations a + ciPackageViolations b)
+                (ciBashViolations a + ciBashViolations b)
+                (ciGraphFailures a + ciGraphFailures b)
+     in ciFilesScanned c == 10
+            && ciTypePass c == 12
+            && ciTypeFail c == 14
+            && ciTypeSkip c == 16
+            && ciLintViolations c == 18
+            && ciPackageViolations c == 20
+            && ciBashViolations c == 22
+            && ciGraphFailures c == 24
+
+-- ============================================================================
+-- Properties: CLI Report
+-- ============================================================================
+
+dummySpan :: Span
+dummySpan = Span (Loc 0 0) (Loc 0 0) Nothing
+
+dummyBashViolation :: Violation
+dummyBashViolation = Violation VHeredoc dummySpan "cat <<EOF"
+
+dummyPackageViolation :: PackageLint.PackageViolation
+dummyPackageViolation = PackageLint.PackageViolation PackageLint.P001 "pkg/" "missing default.nix"
+
+-- | partitionViolations on empty list produces two empty lists
+prop_report_partition_empty :: Bool
+prop_report_partition_empty =
+    let (sup, act) = partitionViolations defaultConfig []
+     in null sup && null act
+
+-- | partitionViolations: SevOff override suppresses matching violation
+prop_report_partition_suppress :: Bool
+prop_report_partition_suppress =
+    let cfg =
+            defaultConfig
+                { configOverrides =
+                    [ RuleOverride
+                        { overrideId = bashRuleId VHeredoc
+                        , overrideSeverity = Cfg.SevOff
+                        , overrideReason = Just "testing"
+                        }
+                    ]
+                }
+        (sup, act) = partitionViolations cfg [dummyBashViolation]
+     in length sup == 1 && null act
+
+-- | partitionViolations: non-matching override doesn't suppress
+prop_report_partition_no_suppress :: Bool
+prop_report_partition_no_suppress =
+    let cfg =
+            defaultConfig
+                { configOverrides =
+                    [ RuleOverride
+                        { overrideId = bashRuleId VEval
+                        , overrideSeverity = Cfg.SevOff
+                        , overrideReason = Just "testing"
+                        }
+                    ]
+                }
+        (sup, act) = partitionViolations cfg [dummyBashViolation]
+     in null sup && length act == 1
+
+-- | partitionViolations: suppressed + active equals total input
+prop_report_partition_complete :: Bool
+prop_report_partition_complete =
+    let violations = [dummyBashViolation, dummyBashViolation{vType = VEval}]
+        (sup, act) = partitionViolations defaultConfig violations
+     in length sup + length act == length violations
+
+-- | formatBareCommand produces output containing ALEPH-B005
+prop_report_format_bare :: Bool
+prop_report_format_bare =
+    let out = formatBareCommand "test.sh" ("curl", dummySpan)
+     in "ALEPH-B005" `T.isInfixOf` out && not (T.null out)
+
+-- | formatDynamicCommand produces output containing ALEPH-B006
+prop_report_format_dynamic :: Bool
+prop_report_format_dynamic =
+    let out = formatDynamicCommand "test.sh" ("cmd", dummySpan)
+     in "ALEPH-B006" `T.isInfixOf` out && not (T.null out)
+
+-- | indentBlock prefixes every non-empty line
+prop_report_indent_block :: Bool
+prop_report_indent_block =
+    let prefix = ">>> "
+        input = "line1\nline2\n\nline3"
+        result = indentBlock prefix input
+        lines' = T.lines result
+     in all (T.isPrefixOf prefix) (filter (not . T.null) lines')
+
+-- | formatPackageViolations empty list produces empty
+prop_report_package_empty :: Bool
+prop_report_package_empty =
+    T.null (formatPackageViolations [])
+
+-- | formatPackageViolations non-empty contains ALEPH-P001
+prop_report_package_nonempty :: Bool
+prop_report_package_nonempty =
+    let out = formatPackageViolations [dummyPackageViolation]
+     in "ALEPH-P001" `T.isInfixOf` out && not (T.null out)
+
+-- | formatBareCommand is deterministic
+prop_report_format_bare_deterministic :: Property
+prop_report_format_bare_deterministic =
+    forAll genStringLiteral $ \cmd ->
+        formatBareCommand "f" (cmd, dummySpan) == formatBareCommand "f" (cmd, dummySpan)
+
+-- ============================================================================
+-- Properties: CLI Check
+-- ============================================================================
+
+-- | detectUnsupportedConstruct detects rec attrsets
+prop_check_unsupported_rec :: Bool
+prop_check_unsupported_rec =
+    case parseNixTextLoc "rec { x = 1; }" of
+        Left _ -> False
+        Right expr -> detectUnsupportedConstruct expr == Just "rec attrset"
+
+-- | detectUnsupportedConstruct detects dynamic attribute access
+prop_check_unsupported_dynamic :: Bool
+prop_check_unsupported_dynamic =
+    case parseNixTextLoc "x.\"${key}\"" of
+        Left _ -> False
+        Right expr -> detectUnsupportedConstruct expr == Just "dynamic attribute access"
+
+-- | detectUnsupportedConstruct passes clean let
+prop_check_unsupported_clean :: Bool
+prop_check_unsupported_clean =
+    case parseNixTextLoc "let x = 1; in x" of
+        Left _ -> False
+        Right expr -> detectUnsupportedConstruct expr == Nothing
+
+-- | formatTypeError wraps first line and indents rest
+prop_check_format_type_error :: Bool
+prop_check_format_type_error =
+    let result = formatTypeError "first\nsecond\nthird"
+        lines' = T.lines result
+     in case lines' of
+            (first : rest) ->
+                "  TYPE WARNING: first" `T.isPrefixOf` first
+                    && all ("         " `T.isPrefixOf`) (filter (not . T.null) (take 1 rest))
+            _ -> False
+
+-- | formatTypeError handles empty input gracefully
+prop_check_format_type_error_empty :: Bool
+prop_check_format_type_error_empty =
+    let result = formatTypeError ""
+     in "TYPE WARNING" `T.isInfixOf` result
+
+-- ============================================================================
+-- Properties: CLI Bash
+-- ============================================================================
+
+-- | safeReadFile on existing file returns Right
+prop_bash_safe_read_existing :: Property
+prop_bash_safe_read_existing = QCM.monadicIO $
+    QCM.run (safeReadFile "test/fixtures/bash/check-by-name.sh") >>= \case
+        Right _ -> QCM.assert True
+        Left _ -> QCM.assert False
+
+-- | safeReadFile on nonexistent file returns Left
+prop_bash_safe_read_nonexistent :: Property
+prop_bash_safe_read_nonexistent = QCM.monadicIO $
+    QCM.run (safeReadFile "/nonexistent/dead-beef-file.sh") >>= \case
+        Left _ -> QCM.assert True
+        Right _ -> QCM.assert False
+
+-- ============================================================================
 -- Main
 -- ============================================================================
 
@@ -4165,6 +4378,31 @@ main = do
             , run "compl_empty" (property prop_completion_empty)
             , run "compl_attrset" (property prop_completion_attrset)
             , run "compl_func" (property prop_completion_func)
+            , -- CLI Types
+              run "cli_empty_cicounts" prop_cli_empty_cicounts_all_zero
+            , run "cli_markers_distinct" prop_cli_markers_distinct
+            , run "cli_tcresult_reflexive" prop_cli_tcresult_reflexive
+            , run "cli_cicounts_merge" prop_cli_cicounts_merge
+            , -- CLI Report
+              run "cli_report_partition_empty" prop_report_partition_empty
+            , run "cli_report_partition_suppress" prop_report_partition_suppress
+            , run "cli_report_partition_no_suppress" prop_report_partition_no_suppress
+            , run "cli_report_partition_complete" prop_report_partition_complete
+            , run "cli_report_format_bare" prop_report_format_bare
+            , run "cli_report_format_dynamic" prop_report_format_dynamic
+            , run "cli_report_indent_block" prop_report_indent_block
+            , run "cli_report_package_empty" prop_report_package_empty
+            , run "cli_report_package_nonempty" prop_report_package_nonempty
+            , run "cli_report_format_bare_det" prop_report_format_bare_deterministic
+            , -- CLI Check
+              run "cli_check_unsupported_rec" prop_check_unsupported_rec
+            , run "cli_check_unsupported_dynamic" prop_check_unsupported_dynamic
+            , run "cli_check_unsupported_clean" prop_check_unsupported_clean
+            , run "cli_check_format_type_error" prop_check_format_type_error
+            , run "cli_check_format_type_error_empty" prop_check_format_type_error_empty
+            , -- CLI Bash
+              run "cli_bash_safe_read_existing" prop_bash_safe_read_existing
+            , run "cli_bash_safe_read_nonexistent" prop_bash_safe_read_nonexistent
             ]
 
     putStrLn ""

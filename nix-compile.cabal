@@ -18,6 +18,12 @@ library
     exposed-modules:
         NixCompile
         NixCompile.Bash.Builtins
+        NixCompile.CLI.Bash
+        NixCompile.CLI.CI
+        NixCompile.CLI.Check
+        NixCompile.CLI.Dispatch
+        NixCompile.CLI.Report
+        NixCompile.CLI.Types
         NixCompile.Config
         NixCompile.Bash.Facts
         NixCompile.Bash.Parse
@@ -83,7 +89,7 @@ library
 
 executable nix-compile
     import:           warnings
-    main-is:          nix-compile.hs
+    main-is:          Main.hs
     build-depends:
         aeson >= 2.0 && < 2.3,
         async >= 2.2 && < 2.3,
