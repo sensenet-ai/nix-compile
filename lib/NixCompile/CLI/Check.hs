@@ -48,9 +48,13 @@ checkFile config file = do
             return TCFail
         Right expression ->
             case detectUnsupportedConstruct expression of
-                Just reason -> do
-                    $(logTM) InfoS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
-                    checkWithViolations config file expression True
+                Just reason
+                    | "deeply nested" `T.isPrefixOf` reason -> do
+                        $(logTM) ErrorS $ logStr $ crossMarker <> " " <> T.pack file <> " (depth limit exceeded: " <> reason <> ")"
+                        return TCFail
+                    | otherwise -> do
+                        $(logTM) InfoS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
+                        checkWithViolations config file expression True
                 Nothing -> checkWithViolations config file expression False
 
 checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
