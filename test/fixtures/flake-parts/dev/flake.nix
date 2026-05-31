@@ -1,9 +1,8 @@
 {
   description = "Dependencies for development purposes";
 
-  inputs =
-    {
-    
+  inputs = {
+
     nixpkgs.url = "github:NixOS/nixpkgs";
     pre-commit-hooks-nix.url = "github:cachix/pre-commit-hooks.nix";
     pre-commit-hooks-nix.inputs.nixpkgs.follows = "nixpkgs";

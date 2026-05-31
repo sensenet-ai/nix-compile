@@ -1,25 +1,38 @@
 {
   description = "Description for the project";
 
-  inputs =
-    {
+  inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
-    { flake-parts, ... } @ inputs:
-    flake-parts.lib.mkFlake {
-    inherit inputs;
-  } {
-    imports = [];
-    systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin"];
-    perSystem =
-      { config, self', inputs', pkgs, system, ... }:
+    { flake-parts, ... }@inputs:
+    flake-parts.lib.mkFlake
       {
-      # Equivalent to  inputs'.nixpkgs.legacyPackages.hello;
-      packages.default = pkgs.hello;
-    };
-    flake = { };
-  };
+        inherit inputs;
+      }
+      {
+        imports = [ ];
+        systems = [
+          "x86_64-linux"
+          "aarch64-linux"
+          "aarch64-darwin"
+          "x86_64-darwin"
+        ];
+        perSystem =
+          {
+            config,
+            self',
+            inputs',
+            pkgs,
+            system,
+            ...
+          }:
+          {
+            # Equivalent to  inputs'.nixpkgs.legacyPackages.hello;
+            packages.default = pkgs.hello;
+          };
+        flake = { };
+      };
 }

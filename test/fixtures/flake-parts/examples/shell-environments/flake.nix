@@ -1,33 +1,44 @@
 {
   description = "Description for the project";
 
-  inputs =
-    {
+  inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
-    { flake-parts, ... } @ inputs:
-    flake-parts.lib.mkFlake {
-    inherit inputs;
-  } {
-    systems = ["x86_64-linux" "aarch64-darwin" "x86_64-darwin"];
-    perSystem =
-      { config, self', inputs', pkgs, system, ... }:
+    { flake-parts, ... }@inputs:
+    flake-parts.lib.mkFlake
       {
-      devShells.default =
-        pkgs.mkShell {
-        nativeBuildInputs =
-          with pkgs;
-        [terraform wget bat nixpkgs-fmt];
-      };
+        inherit inputs;
+      }
+      {
+        systems = [
+          "x86_64-linux"
+          "aarch64-darwin"
+          "x86_64-darwin"
+        ];
+        perSystem =
+          {
+            config,
+            self',
+            inputs',
+            pkgs,
+            system,
+            ...
+          }:
+          {
+            devShells.default = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [
+                terraform
+                wget
+                bat
+                nixpkgs-fmt
+              ];
+            };
 
-      devShells.another_env =
-        pkgs.mkShell {
-        nativeBuildInputs =
-          with pkgs;
-        [curl];
+            devShells.another_env = pkgs.mkShell {
+              nativeBuildInputs = with pkgs; [ curl ];
+            };
+          };
       };
-    };
-  };
 }

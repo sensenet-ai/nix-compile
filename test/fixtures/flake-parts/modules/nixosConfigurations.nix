@@ -1,15 +1,13 @@
 { lib, ... }:
-  let
+let
   inherit (lib) mkOption types literalExpression;
-in {
-  options =
-    {
-    flake.nixosConfigurations =
-      mkOption {
+in
+{
+  options = {
+    flake.nixosConfigurations = mkOption {
       type = types.lazyAttrsOf types.raw;
       default = { };
-      description =
-        ''
+      description = ''
         Instantiated NixOS configurations. Used by `nixos-rebuild`.
 
         `nixosConfigurations` is for specific machines. If you want to expose
@@ -17,9 +15,9 @@ in {
         in the form of modules (no `lib.nixosSystem`), so that you can reference
         them in this or another flake's `nixosConfigurations`.
 
+
       '';
-      example =
-        literalExpression ''
+      example = literalExpression ''
         {
           my-machine = inputs.nixpkgs.lib.nixosSystem {
             # system is not needed with freshly generated hardware-configuration.nix
@@ -30,6 +28,7 @@ in {
             ];
           };
         }
+
 
       '';
     };

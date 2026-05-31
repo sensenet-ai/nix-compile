@@ -1,1 +1,1 @@
-{ ... } @ args: args
+{ ... }@args: args

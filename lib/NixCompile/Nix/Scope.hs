@@ -571,7 +571,7 @@ addParamDecls scope = \case
                     , declDoc = Nothing
                     }
             mapM_ buildExpr mdefault
-    where
+  where
     addParamSetAtName sc (Just pname) =
         addDecl $
             Declaration

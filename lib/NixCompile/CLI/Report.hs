@@ -34,7 +34,7 @@ import NixCompile.Nix.Lint qualified as Lint
 import NixCompile.Nix.LintDerivation qualified as Derivation
 import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.LintPatterns qualified as LintPatterns
-import NixCompile.Types (Span (..), Loc (..))
+import NixCompile.Types (Loc (..), Span (..))
 
 partitionViolations :: Config.Config -> [Violation] -> ([Violation], [Violation])
 partitionViolations config = foldr go ([], [])

@@ -12,15 +12,17 @@
 # spirit of Flakes.
 #
 {
-  config =
-    {
+  config = {
     perSystem =
       { inputs', lib, ... }:
       {
-      config =
-        {
-        _module.args.pkgs = lib.mkOptionDefault (builtins.seq (inputs'.nixpkgs or throw "flake-parts: The flake does not have a `nixpkgs` input. Please add it, or set `perSystem._module.args.pkgs` yourself.") inputs'.nixpkgs.legacyPackages);
+        config = {
+          _module.args.pkgs = lib.mkOptionDefault (
+            builtins.seq (inputs'.nixpkgs or throw
+              "flake-parts: The flake does not have a `nixpkgs` input. Please add it, or set `perSystem._module.args.pkgs` yourself."
+            ) inputs'.nixpkgs.legacyPackages
+          );
+        };
       };
-    };
   };
 }

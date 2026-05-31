@@ -23,14 +23,14 @@ import Data.Fix (Fix (..))
 import Data.List (intersperse)
 import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
 import NixCompile.Nix.Utils (varNameText)
 import Prettyprinter
-import qualified Prettyprinter.Render.Text as PR
+import Prettyprinter.Render.Text qualified as PR
 import Text.Megaparsec.Pos qualified as MP
 
 data Src = Src
@@ -123,8 +123,8 @@ printBindingVal src keyDoc val =
         single = keyDoc <+> valDoc
         flat = render (nest 0 single)
      in if "\n" `T.isInfixOf` flat
-        then keyDoc <> hardline <> "  " <> valDoc
-        else single
+            then keyDoc <> hardline <> "  " <> valDoc
+            else single
 
 precedingCommentsDoc :: Src -> NSourcePos -> Doc ann
 precedingCommentsDoc src spos =
@@ -266,14 +266,18 @@ printAbs src params body = case params of
             namesDoc = hsep (punctuate "," (map (pretty . varNameText) varNames))
             variadicDoc = case isVariadic of
                 Variadic ->
-                    if null paramSet then mempty <> "..."
-                    else if not (null paramSet) then "," <+> "..."
-                    else mempty
+                    if null paramSet
+                        then mempty <> "..."
+                        else
+                            if not (null paramSet)
+                                then "," <+> "..."
+                                else mempty
                 _ -> mempty
             atDoc = maybe mempty (\n -> mempty <+> "@" <+> pretty (varNameText n)) mName
             doc = namesDoc <> variadicDoc
             key = lbrace <> space <> doc <> space <> rbrace <> atDoc <> ":"
-         in printBindingVal src key body
+         in
+            printBindingVal src key body
 
 printApp :: Src -> NExprLoc -> NExprLoc -> Doc ann
 printApp src fun arg =
@@ -355,9 +359,20 @@ printBinaryArg src (Fix (Compose (AnnUnit _ e))) = case e of
 
 binaryOpText :: NBinaryOp -> Text
 binaryOpText = \case
-    NEq -> "=="; NNEq -> "!="; NLt -> "<"; NLte -> "<="; NGt -> ">"; NGte -> ">="
-    NAnd -> "&&"; NOr -> "||"; NImpl -> "->"; NUpdate -> "//"
-    NConcat -> "++"; NPlus -> "+"; NMinus -> "-"; NMult -> "*"
+    NEq -> "=="
+    NNEq -> "!="
+    NLt -> "<"
+    NLte -> "<="
+    NGt -> ">"
+    NGte -> ">="
+    NAnd -> "&&"
+    NOr -> "||"
+    NImpl -> "->"
+    NUpdate -> "//"
+    NConcat -> "++"
+    NPlus -> "+"
+    NMinus -> "-"
+    NMult -> "*"
     NDiv -> "/"
 
 printAttrPath :: Src -> NAttrPath NExprLoc -> Doc ann

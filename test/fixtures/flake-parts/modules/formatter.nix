@@ -12,9 +12,7 @@ let
     optionalAttrs
     types
     ;
-  inherit (flake-parts-lib)
-    mkPerSystemOption
-    ;
+  inherit (flake-parts-lib) mkPerSystemOption;
 in
 {
   options = {
@@ -23,6 +21,7 @@ in
       default = { };
       description = ''
         An attribute set of per system a package used by [`nix fmt`](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-fmt.html).
+
       '';
     };
 
@@ -34,6 +33,7 @@ in
           default = null;
           description = ''
             A package used by [`nix fmt`](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-fmt.html).
+
           '';
         };
       };
@@ -49,6 +49,5 @@ in
       optionalAttrs (flake ? formatter.${system}) {
         formatter = flake.formatter.${system};
       };
-
   };
 }

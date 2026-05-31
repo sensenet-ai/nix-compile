@@ -51,9 +51,9 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
-import NixCompile.Log (Severity (ErrorS), runLog)
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
+import NixCompile.Log (Severity (ErrorS), runLog)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Format (formatExpr)
 import NixCompile.Nix.Infer (Binding, inferExpr)
@@ -3833,7 +3833,8 @@ prop_cli_cicounts_merge :: Bool
 prop_cli_cicounts_merge =
     let a = CICounts 1 2 3 4 5 6 7 8
         b = CICounts 9 10 11 12 13 14 15 16
-        c = CICounts
+        c =
+            CICounts
                 (ciFilesScanned a + ciFilesScanned b)
                 (ciTypePass a + ciTypePass b)
                 (ciTypeFail a + ciTypeFail b)
@@ -3995,34 +3996,39 @@ prop_check_format_type_error_empty =
 
 -- | safeReadFile on existing file returns Right
 prop_bash_safe_read_existing :: Property
-prop_bash_safe_read_existing = QCM.monadicIO $
-    QCM.run (safeReadFile "test/fixtures/bash/check-by-name.sh") >>= \case
-        Right _ -> QCM.assert True
-        Left _ -> QCM.assert False
+prop_bash_safe_read_existing =
+    QCM.monadicIO $
+        QCM.run (safeReadFile "test/fixtures/bash/check-by-name.sh") >>= \case
+            Right _ -> QCM.assert True
+            Left _ -> QCM.assert False
 
 -- | safeReadFile on nonexistent file returns Left
 prop_bash_safe_read_nonexistent :: Property
-prop_bash_safe_read_nonexistent = QCM.monadicIO $
-    QCM.run (safeReadFile "/nonexistent/dead-beef-file.sh") >>= \case
-        Left _ -> QCM.assert True
-        Right _ -> QCM.assert False
+prop_bash_safe_read_nonexistent =
+    QCM.monadicIO $
+        QCM.run (safeReadFile "/nonexistent/dead-beef-file.sh") >>= \case
+            Left _ -> QCM.assert True
+            Right _ -> QCM.assert False
 
 -- ============================================================================
 -- Properties: CLI Check -- exit code regression
 -- ============================================================================
 
--- | REGRESSION: checkWithViolations with skipTypeCheck=True and no lint
--- violations must return TCFail (not TCOk). When a file has an unsupported
--- construct (rec, dynamic attr access), we cannot fully verify it.
--- Returning TCOk here means the process exits 0, masking the gap.
+{- | REGRESSION: checkWithViolations with skipTypeCheck=True and no lint
+violations must return TCFail (not TCOk). When a file has an unsupported
+construct (rec, dynamic attr access), we cannot fully verify it.
+Returning TCOk here means the process exits 0, masking the gap.
+-}
 prop_cli_skip_checked_returns_fail :: Property
 prop_cli_skip_checked_returns_fail = QCM.monadicIO $ do
     let src = "let x = 1; in x" -- clean Nix, no lint violations
     case parseNixTextLoc src of
         Left _ -> QCM.assert True -- parse failure is fine
         Right expr -> do
-            result <- QCM.run $ runLog ErrorS $
-                checkWithViolations defaultConfig "test.nix" expr True
+            result <-
+                QCM.run $
+                    runLog ErrorS $
+                        checkWithViolations defaultConfig "test.nix" expr True
             QCM.assert (result == TCFail)
 
 -- | checkWithViolations with skipTypeCheck=False and clean file returns TCOk
@@ -4032,8 +4038,10 @@ prop_cli_normal_check_passes = QCM.monadicIO $ do
     case parseNixTextLoc src of
         Left _ -> QCM.assert True
         Right expr -> do
-            result <- QCM.run $ runLog ErrorS $
-                checkWithViolations defaultConfig "test.nix" expr False
+            result <-
+                QCM.run $
+                    runLog ErrorS $
+                        checkWithViolations defaultConfig "test.nix" expr False
             QCM.assert (result == TCOk)
 
 -- | checkWithViolations with skipTypeCheck=False and lint violation returns TCFail
@@ -4043,8 +4051,10 @@ prop_cli_lint_check_fails = QCM.monadicIO $ do
     case parseNixTextLoc src of
         Left _ -> QCM.assert True
         Right expr -> do
-            result <- QCM.run $ runLog ErrorS $
-                checkWithViolations defaultConfig "test.nix" expr False
+            result <-
+                QCM.run $
+                    runLog ErrorS $
+                        checkWithViolations defaultConfig "test.nix" expr False
             QCM.assert (result == TCFail)
 
 -- ============================================================================

@@ -22,26 +22,26 @@ module NixCompile.Nix.LintCombined (
 where
 
 import Data.Coerce (coerce)
-import Data.List.NonEmpty qualified as NE
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Fix (Fix (..))
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
 import Data.Text qualified as T
+import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import Nix.Atoms (NAtom (..))
 import Nix.Utils (Path (..))
 import NixCompile.Nix.Lint (
     NixViolation (..),
-    ViolationType (VWith, VRec, VSubstituteAll, VRawMkDerivation, VRawRunCommand, VRawWriteShellApplication, VWriteShellScript, VLongInlineString),
+    ViolationType (VLongInlineString, VRawMkDerivation, VRawRunCommand, VRawWriteShellApplication, VRec, VSubstituteAll, VWith, VWriteShellScript),
  )
 import NixCompile.Nix.LintDerivation (
     DerivViolation (..),
-    DerivViolationType (VMissingMeta, VMissingDescription),
+    DerivViolationType (VMissingDescription, VMissingMeta),
  )
 import NixCompile.Nix.LintPatterns (
     PatternViolation (..),
-    PatternViolationType (VOrNullFallback, VAttrTranslation),
+    PatternViolationType (VAttrTranslation, VOrNullFallback),
  )
 import NixCompile.Nix.Utils (varNameText)
 import NixCompile.Types (Loc (..), Span (..))
@@ -96,8 +96,7 @@ nixViolations srcSpan = \case
          in if null banned then emptyBundle else LintBundle banned [] []
     NStr (DoubleQuoted parts) ->
         LintBundle (longString srcSpan parts) [] []
-    NStr (Indented _ parts) ->
-        LintBundle (longString srcSpan parts) [] []
+    NStr (Indented _ _) -> emptyBundle
     _ -> emptyBundle
   where
     nv typ ctx =
@@ -179,8 +178,9 @@ patternViolations srcSpan = \case
     NSelect (Just defaultExpr) _ _ -- NSelect alt base path
         | isNullExpr defaultExpr ->
             LintBundle [] [] [PatternViolation VOrNullFallback (toSpan srcSpan) "or null fallback"]
-    NApp func _ | isTranslateCall func ->
-        LintBundle [] [] [PatternViolation VAttrTranslation (toSpan srcSpan) "attribute translation call"]
+    NApp func _
+        | isTranslateCall func ->
+            LintBundle [] [] [PatternViolation VAttrTranslation (toSpan srcSpan) "attribute translation call"]
     _ -> emptyBundle
   where
     isNullExpr (Fix (Compose (AnnUnit _ (NConstant NNull)))) = True
@@ -199,15 +199,23 @@ patternViolations srcSpan = \case
 -- | Extract all immediate child expressions from a node (same pattern across all linters).
 childExprs :: NExprF NExprLoc -> [NExprLoc]
 childExprs = \case
-    NConstant _ -> []; NStr parts -> stringExprs parts; NLiteralPath _ -> []; NEnvPath _ -> []
-    NSym _ -> []; NList xs -> xs
+    NConstant _ -> []
+    NStr parts -> stringExprs parts
+    NLiteralPath _ -> []
+    NEnvPath _ -> []
+    NSym _ -> []
+    NList xs -> xs
     NSet _ bindings -> concatMap bindingExprs bindings
     NLet bindings body -> concatMap bindingExprs bindings ++ [body]
-    NIf c t f -> [c, t, f]; NWith scope body -> [scope, body]
-    NAssert c b -> [c, b]; NAbs _ b -> [b]; NApp f a -> [f, a]
+    NIf c t f -> [c, t, f]
+    NWith scope body -> [scope, body]
+    NAssert c b -> [c, b]
+    NAbs _ b -> [b]
+    NApp f a -> [f, a]
     NSelect alt b path -> b : maybe id (:) alt [] ++ pathExprs path
     NHasAttr b path -> b : pathExprs path
-    NUnary _ x -> [x]; NBinary _ x y -> [x, y]
+    NUnary _ x -> [x]
+    NBinary _ x y -> [x, y]
     NSynHole _ -> []
 
 bindingExprs :: Binding NExprLoc -> [NExprLoc]
@@ -238,7 +246,8 @@ leafName _ = Nothing
 -- | hnix SrcSpan -> our Span
 toSpan :: SrcSpan -> Span
 toSpan srcSpan =
-    let begin = getSpanBegin srcSpan; end = getSpanEnd srcSpan
+    let begin = getSpanBegin srcSpan
+        end = getSpanEnd srcSpan
         fileFromBegin = case begin of NSourcePos path _ _ -> Just (coerce path)
      in Span
             { spanStart = Loc (srcPosLine begin) (srcPosCol begin)

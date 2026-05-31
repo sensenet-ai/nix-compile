@@ -47,7 +47,7 @@ cmdCheck config path = do
         else do
             exists <- liftIO $ doesFileExist path
             if not exists
-                then do { $(logTM) ErrorS $ logStr $ T.pack path <> ": no such file or directory"; liftIO exitFailure }
+                then do $(logTM) ErrorS $ logStr $ T.pack path <> ": no such file or directory"; liftIO exitFailure
                 else case takeExtension path of
                     ".nix" -> checkNixFile config path
                     _ -> checkBashFile config path
@@ -56,11 +56,11 @@ cmdFmt :: FilePath -> AppM ()
 cmdFmt file = do
     parseResult <- liftIO $ Nix.parseNixFile file
     case parseResult of
-        Left err -> do { $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure }
+        Left err -> do $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure
         Right expr -> do
             srcResult <- liftIO $ safeReadFile file
             case srcResult of
-                Left err -> do { $(logTM) ErrorS $ logStr $ "I/O error: " <> err; liftIO exitFailure }
+                Left err -> do $(logTM) ErrorS $ logStr $ "I/O error: " <> err; liftIO exitFailure
                 Right src -> do
                     liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr
 
@@ -68,7 +68,7 @@ cmdInfer :: FilePath -> AppM ()
 cmdInfer file = do
     result <- liftIO $ NixFmt.formatFile file
     case result of
-        Left err -> do { $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure }
+        Left err -> do $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure
         Right formatted -> do
             liftIO $ TIO.putStr formatted
 
@@ -76,7 +76,7 @@ cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do
     result <- liftIO $ parseScriptFile file
     case result of
-        Left err -> do { $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure }
+        Left err -> do $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure
         Right script -> do
             liftIO $ TIO.putStr $ emitConfigFunction (scriptSchema script)
 
@@ -111,7 +111,7 @@ cmdScopeDhall file = do
             liftIO $ TIO.putStrLn $ Scope.toDhall scopeGraph
 
 failParse :: Text -> AppM a
-failParse err = do { $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure }
+failParse err = do $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure
 
 printScopeGraph :: Scope.ScopeGraph -> IO ()
 printScopeGraph scopeGraph = do

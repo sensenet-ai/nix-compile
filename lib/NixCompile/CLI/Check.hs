@@ -82,42 +82,42 @@ performTypeCheck :: Config.Config -> NExprLoc -> Bool -> AppM TCResult
 performTypeCheck config expression skipTypeCheck
     | skipTypeCheck = return TCOk
     | otherwise = do
-    result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expression of
-        Left typeError -> return $ Left typeError
-        Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
-    case result of
-        Left (exception :: SomeException) -> do
-            $(logTM) ErrorS $
-                logStr $
-                    T.unlines
-                        [ ""
-                        , "  INTERNAL ERROR (this is a bug in nix-compile):"
-                        , ""
-                        , T.unlines $ map ("     " <>) $ T.lines $ T.pack $ show exception
-                        ]
-            return TCFail
-        Right (Left typeError) ->
-            case Config.effectiveSeverity config Config.typeCheckRuleId of
-                Just Config.SevOff -> return TCOk
-                Just Config.SevWarning -> do
-                    $(logTM) WarningS $
-                        logStr $
-                            T.unlines
-                                [ ""
-                                , formatTypeError typeError
-                                , ""
-                                ]
-                    return TCOk
-                _ -> do
-                    $(logTM) ErrorS $
-                        logStr $
-                            T.unlines
-                                [ ""
-                                , formatTypeError typeError
-                                , ""
-                                ]
-                    return TCFail
-        Right (Right _) -> return TCOk
+        result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expression of
+            Left typeError -> return $ Left typeError
+            Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
+        case result of
+            Left (exception :: SomeException) -> do
+                $(logTM) ErrorS $
+                    logStr $
+                        T.unlines
+                            [ ""
+                            , "  INTERNAL ERROR (this is a bug in nix-compile):"
+                            , ""
+                            , T.unlines $ map ("     " <>) $ T.lines $ T.pack $ show exception
+                            ]
+                return TCFail
+            Right (Left typeError) ->
+                case Config.effectiveSeverity config Config.typeCheckRuleId of
+                    Just Config.SevOff -> return TCOk
+                    Just Config.SevWarning -> do
+                        $(logTM) WarningS $
+                            logStr $
+                                T.unlines
+                                    [ ""
+                                    , formatTypeError typeError
+                                    , ""
+                                    ]
+                        return TCOk
+                    _ -> do
+                        $(logTM) ErrorS $
+                            logStr $
+                                T.unlines
+                                    [ ""
+                                    , formatTypeError typeError
+                                    , ""
+                                    ]
+                        return TCFail
+            Right (Right _) -> return TCOk
 
 formatTypeError :: T.Text -> T.Text
 formatTypeError errorText =

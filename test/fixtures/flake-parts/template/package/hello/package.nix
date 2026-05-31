@@ -1,16 +1,18 @@
-{ stdenv, lib, runtimeShell }:
-  let
+{
+  stdenv,
+  lib,
+  runtimeShell,
+}:
+let
   inherit (lib.fileset) toSource unions;
-in stdenv.mkDerivation (finalAttrs:
-  {
+in
+stdenv.mkDerivation (finalAttrs: {
   name = "hello";
-  src =
-    toSource {
+  src = toSource {
     root = ./.;
-    fileset = unions [./hello.sh];
+    fileset = unions [ ./hello.sh ];
   };
-  buildPhase =
-    ''
+  buildPhase = ''
     # Note that Nixpkgs has builder functions for simple packages
     # like this, but this template avoids it to make for a more
     # complete example.
@@ -18,10 +20,11 @@ in stdenv.mkDerivation (finalAttrs:
     cat hello
     chmod a+x hello
 
+
   '';
-  installPhase =
-    ''
+  installPhase = ''
     install -D hello ''$out/bin/hello
+
 
   '';
 })

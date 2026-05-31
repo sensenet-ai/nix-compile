@@ -197,8 +197,6 @@ processParsedFile conv path visited state expr = do
     let lintViolations = findNixViolations expr
     let layoutViolations = validateFileFromExpr conv rootDir path expr
 
-    putStrLn $ "  " ++ path ++ " [" ++ show (length imports) ++ " imports, " ++ show (length lintViolations) ++ " lint, " ++ show (length layoutViolations) ++ " layout]"
-
     let moduleDefinition =
             Module
                 { modPath = path
@@ -279,9 +277,9 @@ handles: import ./path, builtins.import ./path, import ./path (arg)
 -}
 processApplication :: FilePath -> SrcSpan -> NExprLoc -> NExprLoc -> (NExprLoc -> [Import]) -> [Import]
 processApplication baseDir srcSpan func arg continue
-    | Just () <- checkImportBuiltin func = makeImport baseDir (extractImportPath arg) Nothing srcSpan
     | Just (rawPath, Nothing) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue arg
     | Just (rawPath, Just inner) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue inner ++ continue arg
+    | Just () <- checkImportBuiltin func = makeImport baseDir (extractImportPath arg) Nothing srcSpan
     | otherwise = continue func ++ continue arg
 
 -- | check if an expression is literally the `import` builtin (or builtins.import)
@@ -366,9 +364,8 @@ nixSourceCol (NSourcePos _ _ (NPos col)) = unPos col
 -- | resolve a relative or absolute import path against the base directory
 resolveImportPath :: FilePath -> FilePath -> FilePath
 resolveImportPath baseDir path = case path of
-    '.' : _ -> normalise (baseDir </> path)
     '/' : _ -> path
-    _ -> path
+    _ -> normalise (baseDir </> path)
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- queries
@@ -418,10 +415,13 @@ inferModuleTypes mg = do
     let order = mgOrder mg
     (finalTypes, _) <- foldM inferOneModule (Map.empty, Map.empty) order
     -- update each module's modType with the cross-module inferred type
-    let updatedModules = Map.mapWithKey (\p m -> case Map.lookup p finalTypes of
-                            Just t -> m{modType = t}
-                            Nothing -> m
-                        ) (mgModules mg)
+    let updatedModules =
+            Map.mapWithKey
+                ( \p m -> case Map.lookup p finalTypes of
+                    Just t -> m{modType = t}
+                    Nothing -> m
+                )
+                (mgModules mg)
     pure mg{mgModuleTypes = finalTypes, mgModules = updatedModules}
   where
     inferOneModule :: (Map FilePath NixType, Map FilePath [FilePath]) -> FilePath -> IO (Map FilePath NixType, Map FilePath [FilePath])
@@ -436,7 +436,7 @@ inferModuleTypes mg = do
         -- n.b. look up in `types` by resolved path, then insert for both raw and resolved keys
         let env =
                 foldr
-                    (\p e -> case Map.lookup p types of
+                    ( \p e -> case Map.lookup p types of
                         Just t -> extendImport p t e
                         Nothing -> e
                     )
@@ -444,7 +444,7 @@ inferModuleTypes mg = do
                     (resolvedPaths ++ canonicImports)
         let finalEnv =
                 foldr
-                    (\(raw, resolved) e -> case Map.lookup resolved types of
+                    ( \(raw, resolved) e -> case Map.lookup resolved types of
                         Just t -> extendImport raw t e
                         Nothing -> e
                     )

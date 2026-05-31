@@ -465,18 +465,20 @@ prop_nix_nested_application =
 -- NIX TYPE INFERENCE — __FUNCTOR PROTOCOL
 -- ============================================================================
 
--- | Non-function __functor must be rejected.
---   { __functor = 42; } 1 should not type-check.
+{- | Non-function __functor must be rejected.
+  { __functor = 42; } 1 should not type-check.
+-}
 prop_nix_functor_non_func :: Bool
 prop_nix_functor_non_func =
     case parseNixTextLoc "let f = { __functor = 42; }; in f 1" of
         Left _ -> False
         Right expr -> case Infer.inferExpr expr of
-            Left _ -> True  -- must be a type error
+            Left _ -> True -- must be a type error
             Right _ -> False
 
--- | Function __functor must be accepted.
---   { __functor = self: x: x + 1; } 2 should type-check.
+{- | Function __functor must be accepted.
+  { __functor = self: x: x + 1; } 2 should type-check.
+-}
 prop_nix_functor_valid :: Bool
 prop_nix_functor_valid =
     case parseNixTextLoc "let f = { __functor = self: x: x + 1; }; in f 2" of
@@ -504,9 +506,10 @@ prop_deriv_deep_select =
 -- | Nix substitution must fully resolve chains: {0→1, 1→Int} should resolve 0 to Int
 prop_nix_subst_chain :: Bool
 prop_nix_subst_chain =
-    let s = Map.fromList
-            [ (NT.TypeVar 0, NT.TVar (NT.TypeVar 1))
-            , (NT.TypeVar 1, NT.TInt)
-            ]
+    let s =
+            Map.fromList
+                [ (NT.TypeVar 0, NT.TVar (NT.TypeVar 1))
+                , (NT.TypeVar 1, NT.TInt)
+                ]
         result = NT.applySubst s (NT.TVar (NT.TypeVar 0))
      in result == NT.TInt
