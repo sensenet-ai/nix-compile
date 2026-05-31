@@ -147,7 +147,6 @@ buildModuleGraph conv rootPath = do
                 , mgLayoutFailures = reverse (bsLayoutFailures finalState)
                 , mgModuleTypes = Map.empty
                 }
-    -- run topological type inference to fill in mgModuleTypes
     finalGraph <- inferModuleTypes moduleGraph
     pure $ Right finalGraph
 

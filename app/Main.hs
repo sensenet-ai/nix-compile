@@ -17,11 +17,18 @@ import NixCompile.Config qualified as Config
 import NixCompile.Log
 
 main :: IO ()
-main = runLog InfoS $ do
-    commandArguments <- liftIO getArgs
-    let (maybeConfigPath, commandAndArgs) = parseConfigArg commandArguments
-    loadedConfig <- loadConfiguration maybeConfigPath
-    dispatchCommand loadedConfig commandAndArgs
+main = do
+    commandArguments <- getArgs
+    let (minSev, rest) = parseVerbose commandArguments
+        (maybeConfigPath, commandAndArgs) = parseConfigArg rest
+    runLog minSev $ do
+        loadedConfig <- loadConfiguration maybeConfigPath
+        dispatchCommand loadedConfig commandAndArgs
+
+parseVerbose :: [String] -> (Severity, [String])
+parseVerbose ("--verbose" : rest) = (DebugS, rest)
+parseVerbose ("-v" : rest) = (DebugS, rest)
+parseVerbose args = (InfoS, args)
 
 loadConfiguration :: Maybe FilePath -> AppM Config.Config
 loadConfiguration (Just configPath) = do
