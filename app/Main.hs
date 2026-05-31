@@ -8,9 +8,9 @@ module Main (main) where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Text qualified as T
-import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
+import System.Directory (doesFileExist)
 
 import NixCompile.CLI.Dispatch
 import NixCompile.Config qualified as Config
@@ -21,14 +21,6 @@ main = runLog InfoS $ do
     commandArguments <- liftIO getArgs
     let (maybeConfigPath, commandAndArgs) = parseConfigArg commandArguments
     loadedConfig <- loadConfiguration maybeConfigPath
-    $(logTM) InfoS $
-        logStr $
-            "Config: profile="
-                <> Config.configProfile loadedConfig
-                <> " overrides="
-                <> T.pack (show (length (Config.configOverrides loadedConfig)))
-                <> " ignores="
-                <> T.pack (show (length (Config.configExtraIgnores loadedConfig)))
     dispatchCommand loadedConfig commandAndArgs
 
 loadConfiguration :: Maybe FilePath -> AppM Config.Config
