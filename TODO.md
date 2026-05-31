@@ -21,5 +21,14 @@
 - `show` on internal types in user-facing errors (`Mismatch TInt TString ...`).
 - Double AST walk in `checkFile` (detectUnsupported → combinedLint do the same traversal).
 
+## style
+- Drifted from style guide — file header ornaments, camelCase conventions, pragma placement. Audit and normalize.
+
+## benchmarks
+- LSP is interactive — hover/definition/completion latency must be measured under scale. Criterion benchmarks for `inferExpr`, `combinedLint`, `buildModuleGraph`.
+
+## formatter
+- Collapses too much whitespace — consecutive blank lines in indented strings flattened, binding spacing inconsistent. Needs a pass.
+
 ## tests
 - Property tests for: mutual-rec fix, bare import path resolution, `isEvalInvocation`, multi-line semantic tokens.
