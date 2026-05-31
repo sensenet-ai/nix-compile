@@ -1,202 +1,241 @@
-# nix-compile Post-Patch Adversarial Review
+# Adversarial Review — nix-compile
 
-**Scope:** All 13 advised edits applied against v2 tarball.  
-**Method:** Line-by-line spec trace, edge case enumeration, test vector replay.  
-**Verdict:** 2 bugs found in patch (both fixed below), 5 pre-existing spec deviations, several items to watch for Lean 4 port.
+**Scope:** Full source audit of all Haskell modules, spec compliance trace, edge-case enumeration.  
+**Date:** 2026-05-31
 
 ---
 
-## BUGS INTRODUCED BY PATCH
+## CRITICAL
 
-### BUG-1: `extractSimpleVar` breaks on `${VAR}` input (CRITICAL)
+### CRITICAL-1: `checkInfinite` false-positive on mutual recursion
+**File:** `lib/NixCompile/Nix/Infer.hs:726-735`
 
-**File:** `lib/NixCompile/Bash/Facts.hs:181-192`
+`rec { x = y; y = x; }` is incorrectly rejected as "infinite type". Both bindings get fresh vars α, β. After unifying α~β (subst [β→α]), then α~α (trivial — no new subst), `checkInfinite` sees α is still exactly α and throws. The types are merely underconstrained — not infinite. Only `x = x` (occurs check) or `x = x x` should be rejected.
 
-The new guard ordering checks `$`-prefixed strings before `${`-prefixed:
+**Fix:** `checkInfinite` should check whether the type variable remains unconstrained *after all other bindings in the same SCC have been processed*, not check each binding in isolation. For mutually-recursive groups, if *any* binding introduces a concrete constraint, the group is well-typed.
+
+---
+
+### CRITICAL-2: `resolveImportPath` drops bare relative paths
+**File:** `lib/NixCompile/Nix/Module.hs:367-371`
 
 ```haskell
-extractSimpleVar t
-  | "$" `T.isPrefixOf` t
-      && not ("$(" `T.isPrefixOf` t) =
-      let v = T.drop 1 t
-       in if isVar v then Just v else Nothing   -- ← swallows ${VAR}
-  | "${" `T.isPrefixOf` t && "}" `T.isSuffixOf` t =
+resolveImportPath baseDir path = case path of
+    '.' : _ -> normalise (baseDir </> path)
+    '/' : _ -> path
+    _ -> path          -- BUG
 ```
 
-`"${VAR}"` starts with `$` and not `$(`, so the *first* guard fires. `T.drop 1 "${VAR}"` = `"{VAR}"`. `isVarChar '{'` = `False`. Returns `Nothing`. The second guard never executes.
+`import default.nix` (without `./`) is treated as-is rather than resolved against the base directory. Every bare relative import is silently misrouted.
 
-**Impact:** Config assignments like `config.server.host=${HOST}` will fail to recognize `HOST` as a variable and instead parse it as a literal string `"${HOST}"`.
+**Fix:** Treat all paths that do not start with `/` as relative to the base directory.
 
-**Fix:** Reorder guards to check `${` before `$`. **APPLIED.**
+---
 
-### BUG-2: `parseExpansionBody` loses `Nothing` semantics for empty operator arguments (MINOR)
+### CRITICAL-3: `processApplication` silently drops the second argument of `import ./path arg`
+**File:** `lib/NixCompile/Nix/Module.hs:280-285`
 
-**File:** `lib/NixCompile/Bash/Patterns.hs:82-89`
+When `import ./path arg` is encountered, `checkImportBuiltin` matches `import` as a bare NSym, then `makeImport baseDir (extractImportPath arg) Nothing srcSpan` captures only the first argument `./path`. The second argument `arg` (which Nix applies to the imported function) is silently discarded.
 
-The old code used `nonEmpty` to convert empty strings to `Nothing`. The new code uses `T.uncons` which produces `Just ""` for empty values:
+**Fix:** When `checkImportBuiltin` matches and the match is a bare `import`, the arg structure should be analyzed to separate the path from the additional argument.
+
+---
+
+### CRITICAL-4: `collectTokens` produces zero-length for multi-line semantic tokens
+**File:** `lib/LSP/Handlers.hs:514-516`
 
 ```haskell
-parseOpWithColon var rest = do
-  ...
-  Just ('?', msg) -> Just (ErrorIfUnset var (Just msg))
-  -- When rest after operator is "", msg = ""
+let len = if l == el then ec - c else 0
 ```
 
-So `${VAR:?}` → `ErrorIfUnset "VAR" (Just "")` instead of spec-required `ErrorIfUnset "VAR" Nothing`.
+Tokens spanning multiple lines get `rtLen = 0`, corrupting the delta-encoded semantic tokens stream. LSP clients mis-highlight or crash on multi-line expressions.
 
-**Impact:** Fails test vector `prop_expansion_test_vectors` line 484:
-```
-parseParamExpansion "${VAR:?}" === Just (ErrorIfUnset "VAR" Nothing)
-```
-
-Functionally benign since `envVarFacts` matches `Just (ErrorIfUnset _var _)` without inspecting the message. But test will fail.
-
-**Fix:** Wrap `?` and `+` operator arguments with `nonEmpty`, but NOT `-` and `=` (where empty string is a meaningful default per spec §8.1). **APPLIED.**
+**Fix:** Compute proper length from `spanEnd` position or use source text when available.
 
 ---
 
-## PRE-EXISTING SPEC DEVIATIONS (not introduced by patch)
+## SIGNIFICANT
 
-### SPECDEV-1: Error codes / policy error formatting
+### BUG-5: LSP rebuilds entire module graph on every request
+**File:** `lib/LSP/Handlers.hs:783-793`
 
-RESOLVED: `lint` reports `ALEPH-B001` through `ALEPH-B004`, and the CLI reports
-bare and dynamic commands using `ALEPH-B005` and `ALEPH-B006`.
+`buildCrossEnv` and `buildCrossScopeGraphWith` call `Mod.buildModuleGraph` which parses and typechecks every file in the project — on every hover, go-to-definition, completion, and signature-help request. No caching across LSP requests. A 100-module project has multi-second latency on every hover.
 
-### SPECDEV-2: Error reporting uses AST token IDs, not source locations
-
-**Spec §3.3** says errors MUST include "Source location (file, line, column) — NOT AST node IDs". The patch (edit #10) intentionally changed the wording to say "token N (ShellCheck AST id)" and the README note acknowledges this. But this is a *documented* spec violation, not a resolution. ShellCheck's AST IDs are **not** line numbers.
-
-The `mkSpan` function `Span (Loc n 0) (Loc n 0) Nothing` puts the token ID in the `locLine` field, which is semantically wrong — it's not a line number.
-
-### SPECDEV-3: JSON schema output includes `quoted` field
-
-RESOLVED: SPECIFICATION.md now documents the `quoted` field for config entries.
-
-### SPECDEV-4: `UseAlternate` produces no facts
-
-**Spec §2.1** says `${VAR:+alt}` and `${VAR+alt}` produce "(no type constraint)". The code doesn't generate *any* fact for these patterns — `envVarFacts` has no case for `UseAlternate`. This means the variable won't appear in the schema at all if its only usage is `${VAR:+...}`. This is technically correct per spec but may surprise users.
-
-### SPECDEV-5: `isStorePath` blocks `//` but spec doesn't require it
-
-**Types.hs:271:** `&& not ("//" `T.isInfixOf` t)`. The spec §2.2 only requires blocking `..`. The `//` check is extra-conservative, which is fine for security but not spec-required.
+**Fix:** Add an `MVar` or `IORef` cache keyed on `flake.nix` mtime. Invalidate when `didSave` fires on `flake.nix`.
 
 ---
 
-## CORRECTNESS AUDIT (PASSING)
+### BUG-6: `isEvalInvocation` matches any token containing "eval", not just the command word
+**File:** `lib/Lint/Forbidden.hs:89-95`
 
-### Unification (§1.1) ✓
-- `Unify.hs` correctly implements all rules including `TNumeric` compatibility
-- Occurs check present and correct
-- `composeSubst` implements `apply s1 (apply s2 t)` correctly
-
-### Literal Parsing (§2.2) ✓
-- Integer bounds checked against Int64 range
-- `-` alone correctly produces `LitString`
-- Store path traversal blocked
-- Empty string produces `LitString ""`
-
-### Config Assignment (§2.3) ✓
-- Both dot and array syntax supported
-- Quoting semantics preserved in `Quoted`/`Unquoted`
-- Path parsing via `T.splitOn "."` with explicit validation (empty segments rejected)
-
-### Command Analysis (§2.4) ✓
-- Store paths, dynamic commands, builtins, and bare commands correctly categorized
-- Builtin list is comprehensive
-
-### emit-config (§4.2) ✓
-- No heredocs used
-- `__nix_compile_escape_json` helper added for string escaping
-- `cfgQuoted == Just Quoted` forces string treatment (preserves quoting semantics)
-- Literal types preserved (ints as ints, bools as bools)
-
-### Security (§5) ✓
-- `isVarChar` restricts to `[A-Za-z0-9_]`
-- `isNumericLiteral` has length bounds and Int64 range check
-- `safeParseInt` uses `Integer` intermediary to avoid overflow
-- Store path traversal blocked
-- `jsonEscape` handles `"`, `\`, `\n`, `\r`, `\t`
-
-### Nix Infer safe head removal (edit #9) ✓
-- `head vars` → `case vars of (typeVar : _) -> ...; [] -> pure ()`
-- Correct — avoids partial function crash
-
-### Nix Parse interpolation placeholders (edit #8) ✓
-- Store-path interpolations → `/nix/store/__nix_compile_interp_N__`
-- Other interpolations → `@__nix_compile_interp_N__@`
-- Counter `n` correctly incremented only for `Antiquoted` parts
-- Prevents false bare-command detection from `${...}` → `$(INTERP)` confusion
-
-### TCResult in typecheck summary (edit #12) ✓
-- `TCOk | TCFail | TCSkip` correctly replaces `Bool`
-- Skipped files no longer inflate pass count
-- Exit code only fails on `TCFail`
-
----
-
-## ITEMS FOR LEAN 4 PORT
-
-### 1. Type System Representation
-The Haskell types use `Generic`-derived `FromJSON`/`ToJSON`. In Lean 4, use `Decidable` equality and `Repr` for the type language. The `Type` ADT maps directly to an inductive type. `TNumeric` subtyping should be encoded as a proposition, not a runtime check.
-
-### 2. Substitution as Verified Map
-`Subst = Map TypeVar Type` can become `Std.HashMap` or an `AList` with a well-formedness invariant. The `composeSubst` law (INV-4) should be a `theorem`, not just a QC property.
-
-### 3. `parseExpansionBody` as a Verified Parser
-The bash parameter expansion grammar (Appendix A ABNF) is regular. In Lean, express it as a decidable parser with totality proof. The `guard`+`Maybe` monad becomes `Option` with explicit pattern matching.
-
-### 4. Occurs Check Proof
-`occursIn` is trivial for the flat type language but becomes interesting if Lean 4 types get richer (functions, lists). Should carry a proof that `bindVar` only succeeds when the occurs check passes.
-
-### 5. `ConfigSpec` Field Explosion
-The `ConfigSpec` record now has 5 fields (`cfgType`, `cfgFrom`, `cfgQuoted`, `cfgLit`, `cfgSpan`). Some of these are mutually exclusive (var-sourced vs literal-sourced). In Lean, model as a sum type:
-```lean
-inductive ConfigSource where
-  | fromVar (var : String) (quoted : Quoted) (ty : BashType)
-  | fromLit (lit : Literal)
-```
-This makes invalid states unrepresentable.
-
-### 6. Escape Function Correctness
-`jsonEscape` should have a theorem that the output contains no unescaped `"` or `\` characters. Express as:
-```lean
-theorem jsonEscape_no_raw_quotes (s : String) :
-  ¬ hasUnescapedQuote (jsonEscape s) := by ...
+```haskell
+isEvalInvocation tokens = any isEvalToken (map tokenToText tokens)
+isEvalToken text = text == "eval" || "/eval" `T.isSuffixOf` text
 ```
 
-### 7. ShellCheck Dependency
-ShellCheck is Haskell-only. For Lean 4, you'll need either:
-- FFI to ShellCheck (complex, keeps Haskell dependency)
-- A Lean bash parser (significant work, but then it's verifiable)
-- An external tool that dumps ShellCheck AST as JSON (pragmatic)
+`echo "eval"` or `/nix/store/...-eval/bin/tool` are flagged as eval violations because every token is checked, not just the command word. The `/eval` suffix check is also overly broad.
 
-### 8. Property Tests → Lean Proofs
-The 14 spec properties (PROP-1 through PROP-14) should become:
-- PROP-1,2,3,4: `theorem`s about `unify` and `applySubst`
-- PROP-5: `theorem` about `solve`
-- PROP-7,8: `theorem`s about roundtrip (literal parse ∘ render = id)
-- PROP-9,10,11: totality and termination proofs
-- PROP-12,13,14: security `theorem`s
-
-### 9. No `unsafePerformIO`
-The test suite imports `System.IO.Unsafe`. Lean 4 separates pure and IO cleanly. All pure functions should live in `def` without `IO`.
-
-### 10. Error Reporting
-The `Span` type conflates ShellCheck token IDs with line numbers. For Lean, define a proper `SourcePos` with a `Fin` for the line and column, and keep AST node references separate.
+**Fix:** Check only the first token (the command word). Remove the `/eval` suffix check or restrict it to store-prefixed paths.
 
 ---
 
-## RECOMMENDED FIXES BEFORE LEAN PORT
+### BUG-7: `Forbidden.hs` `tokenToText` is incomplete vs `Facts.hs` version
+**File:** `lib/Lint/Forbidden.hs:97-101`
 
-**Priority 1 (blockers):**
-1. Fix `extractSimpleVar` guard ordering (BUG-1)
-2. Add `nonEmpty` wrapper in `parseExpansionBody` (BUG-2)
+Returns `""` for `DoubleQuoted`, `SingleQuoted`, multi-part `NormalWord` tokens. Misses eval calls when the command token is structured differently by ShellCheck.
 
-**Priority 2 (spec compliance):**
-3. Use `ALEPH-B00N` error codes per spec
-4. Map ShellCheck token IDs to actual line numbers (or accept the deviation formally)
+**Fix:** Reuse or replicate the full `tokenToText` dispatch from `Facts.hs`.
 
-**Priority 3 (cleanup):**
-5. Remove `.orig` files from tree
-6. Remove extra blank lines added by patch hunk in `Facts.hs:336-337`
-7. Model `ConfigSpec` as a sum type (var vs literal) to make invalid states unrepresentable
+---
+
+### BUG-8: `processParsedFile` writes to stdout unconditionally — spams LSP terminal
+**File:** `lib/NixCompile/Nix/Module.hs:200`
+
+```haskell
+putStrLn $ "  " ++ path ++ " [" ++ show (length imports) ++ " imports, ...]"
+```
+
+Direct `putStrLn` bypasses the katip logging system. When the LSP server calls `buildModuleGraph` to build cross-module env, per-file status lines are written to the terminal the LSP server was launched from.
+
+**Fix:** Remove the `putStrLn` or gate it behind a verbosity flag. LSP paths should emit nothing.
+
+---
+
+### BUG-9: ShellCheck span positions are zero-based but `mkSpan` doesn't adjust
+**File:** `lib/NixCompile/Bash/Facts.hs:662-674`
+
+ShellCheck's `Position` uses zero-based line and column indices (`posLine`, `posColumn`), but nix-compile's `Loc` treats these as-is. Nix spans from hnix use megaparsec's `Pos` which is 1-based. Bash diagnostics show line numbers off by one compared to Nix diagnostics in the same file.
+
+**Fix:** Add +1 when converting ShellCheck `posLine`/`posColumn` to `Loc`.
+
+---
+
+## DESIGN ISSUES
+
+### DESIGN-1: Double AST walk on every check
+**File:** `lib/NixCompile/CLI/Check.hs:50-54`
+
+`checkFile` calls `detectUnsupportedConstruct` (full tree walk), then `checkWithViolations` calls `Combined.combinedLint` (another full walk of identical structure). The first walk exists only to decide whether to skip type-checking. Two identical traversals.
+
+**Fix:** Integrate `detectUnsupportedConstruct` logic into the combined lint walk, returning a flag alongside violations.
+
+---
+
+### DESIGN-2: `mergeConfigSpec` silently loses data
+**File:** `lib/NixCompile/Types.hs:287-288`
+
+`mergeConfigSpec _ spec2 = spec2` — when two facts produce `ConfigSpec` for the same path, only the second survives with no warning. Used via `Map.fromListWith mergeConfigSpec`.
+
+**Fix:** At minimum, emit a warning when a config path is reassigned. Ideally, merge the type information rather than discarding.
+
+---
+
+### DESIGN-3: Two different `TypeVar` types at same module scope level
+**Files:** `NixCompile.Types` and `NixCompile.Nix.Types`
+
+`NixCompile.Types.TypeVar` (wraps `Text`, for bash) and `NixCompile.Nix.Types.TypeVar` (wraps `Int`, for Nix) share the same constructor name. Every module importing both must qualify one.
+
+**Fix:** Rename one or both, e.g. `BashTypeVar` and `NixTypeVar`.
+
+---
+
+### DESIGN-4: `emptySpan` sentinel proliferation — ambiguous (0,0) locations
+**Files:** `Nix/Infer/Unify.hs:46`, `Nix/Scope.hs:942-943`
+
+At least 3 different "empty span" sentinels cross the codebase. Errors with (0,0) locations are indistinguishable from "no location available". `bindVar`'s errors carry the sentinel span rather than the actual call-site span from `inferSpan`.
+
+**Fix:** Use `inferSpan` state in `bindVar` error paths. Replace sentinel spans with `Maybe Span`.
+
+---
+
+### DESIGN-5: `show` leaked to user-facing error messages
+**Files:** `CLI/Bash.hs:64`, `Infer/Unify.hs:102`
+
+`Type error: Mismatch TInt TString (Span (Loc 0 0) (Loc 0 0) Nothing)` is printed directly to users. Data constructor names are Haskell internals.
+
+**Fix:** Add a `prettyTypeError :: TypeError -> Text` function.
+
+---
+
+## PERFORMANCE
+
+### PERF-1: `concatMap` accumulation everywhere without strictness
+**Files:** Most lint and traversal modules.
+
+Every recursive tree walk uses `concatMap` or `++` which builds O(n²) thunk chains for deep expressions. `deepseq` is only a test dependency.
+
+**Fix:** Add `{-# LANGUAGE StrictData #-}` or use strict left folds.
+
+---
+
+### PERF-2: O(n) completion filtering per keystroke
+**File:** `lib/NixCompile/LSP/Handlers.hs:293`
+
+`Map.filterWithKey` scans all options linearly for prefix matching. No trie, no incremental matcher.
+
+**Fix:** Build a prefix trie from the option set at document open time.
+
+---
+
+## SECURITY
+
+### SEC-1: `isStorePathExpr` false-positives on variable name prefixes
+**File:** `lib/NixCompile/Nix/Parse.hs:194-198`
+
+```haskell
+isLikelyPackageVar name =
+    T.isPrefixOf "pkgs" name || T.isPrefixOf "lib" name || ...
+```
+
+Variables named `pkgsXml`, `libraryData`, `librettoPath` are misclassified as store-path interpolations and get `/nix/store/` placeholder prefixes. This corrupts the bash analysis — non-store-path variables are treated as store paths.
+
+**Fix:** Match exact equality or use `elem` against a known set rather than prefix matching.
+
+---
+
+### SEC-2: No input size limits before parsing
+**Files:** `Bash/Parse.hs`, `Nix/Parse.hs`
+
+Both `parseBash` and `parseNixFile` load entire files into memory via `TIO.readFile` before parsing. No size check, no streaming. A 1GB Nix file is fully loaded into a single `Text` value.
+
+**Fix:** Add a configurable maximum input size (e.g., 10 MB) checked before `readFile`.
+
+---
+
+### SEC-3: TOCTOU in `collectFiles` — symlink race between `canonicalizePath` and `listDirectory`
+**File:** `lib/NixCompile/CLI/CI.hs:242-245`
+
+```haskell
+canonical <- canonicalizePath directory
+if canonical `Set.member` visited || not (canonicalRoot `isPrefixOf` canonical)
+    then ... else do entries <- listDirectory directory
+```
+
+A symlink created between `canonicalizePath` and `listDirectory` could point outside the project root. Each entry should be canonicalized individually after listing.
+
+**Fix:** Canonicalize each entry after listing.
+
+---
+
+### SEC-4: Shell injection surface in `emitConfigFunction` — config paths become shell identifiers
+**File:** `lib/NixCompile/Emit/Config.hs`
+
+Config path segments become variable names in generated shell code. While `validConfigPath` constrains to `[a-zA-Z0-9_-]+`, a bug in that validation could produce injection-vulnerable output. The printf-based template approach is fragile.
+
+**Fix:** Add an integration test that fuzzes `emitConfigFunction` with arbitrary schemas and verifies output safety.
+
+---
+
+## TEST GAPS
+
+### TEST-1: No property test for `checkInfinite` mutual recursion false-positive
+`Nix/Infer.hs`'s `inferRecBinding` rejection of `rec { x = y; y = x; }` is untested. The existing `prop_nix_rec_infinite` only tests `rec { x = x; }`.
+
+### TEST-2: No test for `resolveImportPath` with bare relative paths
+Only `./`-prefixed paths are tested implicitly.
+
+### TEST-3: No test for `isEvalInvocation` false-positive
+No test verifies that `echo "eval"` does NOT trigger ALEPH-B003.
+
+### TEST-4: No test for multi-line semantic token encoding
+`collectTokens` multi-line bug is untested.

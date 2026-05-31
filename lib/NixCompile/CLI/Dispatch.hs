@@ -2,7 +2,6 @@
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wwarn=unused-imports #-}
 
 module NixCompile.CLI.Dispatch (
     cmdCheck,
@@ -31,7 +30,6 @@ import System.FilePath (takeExtension)
 import NixCompile (parseScriptFile, scriptSchema)
 import NixCompile.CLI.Bash
 import NixCompile.CLI.CI
-import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.LSP.Server qualified as LSP

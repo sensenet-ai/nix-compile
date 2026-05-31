@@ -1,67 +1,322 @@
 # CLI Reference
 
 ```
-nix-compile <command> [args]
+nix-compile [--config <file.dhall>] <command> [args...]
 ```
+
+## Options
+
+`--config <file.dhall>`
+: Path to a Dhall configuration file. If omitted, `nix-compile` looks for
+  `.nix-compile.dhall` in the current directory. If no file is found, the
+  built-in defaults are used.
+
+**Config schema** (`import`-safe Dhall):
+
+```dhall
+let Severity = < SevOff | SevInfo | SevWarning | SevError >
+
+in  { profile : Text
+    , overrides :
+          List { id : Text, severity : Severity, reason : Optional Text }
+    , extra-ignores : List Text
+    }
+```
+
+| Field            | Description                                                   |
+|------------------|---------------------------------------------------------------|
+| `profile`        | Profile name included in log output (default: `"standard"`).  |
+| `overrides`      | Per-rule severity overrides.  Use `SevOff` to silence a rule. |
+| `extra-ignores`  | Additional file-glob patterns to skip during recursive scans. |
+
+Common rule IDs available for `overrides`:
+
+| Rule ID                              | Target                                |
+|--------------------------------------|---------------------------------------|
+| `no-heredoc-in-inline-bash`          | Heredocs and here-strings in shell    |
+| `no-eval`                            | `eval` in shell scripts               |
+| `no-backtick`                        | Backtick command substitution         |
+| `with-lib`                           | `with` expressions                    |
+| `rec-anywhere`                       | Recursive attrset `rec { }`           |
+| `no-substitute-all`                  | `substituteAll`                       |
+| `no-raw-mkderivation`                | Bare `mkDerivation`                   |
+| `no-raw-runcommand`                  | Bare `runCommand`                     |
+| `no-raw-writeshellapplication`       | Bare `writeShellApplication`          |
+| `prefer-write-shell-application`     | `writeShellScript` instead of app form|
+| `long-inline-string`                 | Overly long inline strings            |
+| `or-null-fallback`                   | `or null` fallback pattern            |
+| `no-translate-attrs-outside-prelude` | Untracked attribute translations      |
+| `default-nix-in-packages`            | Missing `default.nix` in package dir  |
+| `type-check-failure`                 | Type-check failures                   |
+
+## Exit codes
+
+| Code | Meaning                             |
+|------|-------------------------------------|
+| 0    | All checks passed, no violations.   |
+| 1    | Errors or violations found.         |
+
+If the command argument is unrecognised or missing, the usage summary is
+printed and the process exits with code 1.
+
+---
 
 ## Commands
 
-### `lint <script.sh>`
+### `check <path>`
 
-Check a bash script for forbidden constructs only. Does not run type inference or policy checks.
+```
+nix-compile check ./default.nix
+nix-compile check ./deploy.sh
+nix-compile check .
+```
 
-Detects: heredocs, here-strings, `eval`, backticks.
+Full analysis pipeline.  Behaviour depends on the type of `<path>`:
 
-### `check <script.sh>`
+**Path is a directory** — CI mode.
 
-Full check: lint + type inference + policy enforcement. Exits non-zero on any violation.
+Recursively discovers every `.nix` file (skipping `.git`, `.direnv`,
+`node_modules`, `.cache`, `.lake`, `result`, `result-lib`, `target`, and
+any globs in `extra-ignores`).  For each file it runs:
+- Nix lint (for `with`, `rec`, raw derivations, etc.)
+- Derivation quality lint
+- Pattern lint (`or null` fallbacks, attr translations)
+- Hindley-Milner type inference (skipped for files using `with`, `rec`,
+  or dynamic attribute access—these files are reported as `[UNC]`)
 
-Detects everything `lint` detects, plus: bare commands (not store paths or builtins), dynamic commands (`$CMD`), type errors.
+Then, if `flake.nix` is present, additionally:
+- Builds the module dependency graph and reports lint/layout violations.
+- Extracts every embedded bash script (`writeShellScript`,
+  `writeShellScriptBin`, `writeShellApplication`) and runs the full
+  shell check pipeline on each.
 
-### `infer <script.sh>`
+Finally, runs a package-directory lint (`default.nix` presence check).
 
-Run type inference and output the schema as JSON. Includes environment variables (with types, defaults, required status), config structure, commands, and store paths.
+Prints a CI summary header and footer with pass / fail / skip /
+violation counts.  Exits 0 only when every phase is clean.
 
-### `parse <script.sh>`
+**Path is a `.nix` file** — single-file Nix check.
 
-Parse and display extracted facts. Useful for debugging -- shows the raw observations before constraint generation.
+Runs the same Nix lint + type inference pipeline as CI mode, then
+extracts and checks every embedded bash script found in the file.
 
-### `emit <script.sh>`
+**Path is any other file** (typically `.sh`) — shell script check.
 
-Generate an `emit-config` bash function from config assignments in the script. The generated function supports `emit-config json`, `emit-config yaml`, and `emit-config toml`.
+- **Forbidden-construct lint**: heredocs, here-strings, `eval`,
+  backticks.  (Violations can be suppressed per-rule via Dhall overrides.)
+- **Type inference**: builds constraints from variable assignments and
+  checks for unification errors.
+- **Config-path validation**: detects conflicting config key prefixes
+  (e.g. `config.server` vs `config.server.port`).
+- **Bare-command detection**: flags external commands that are not
+  referenced by store path (`error[ALEPH-B005]`).
+- **Dynamic-command detection**: flags `$VAR` command invocations that
+  cannot be statically analysed (`error[ALEPH-B006]`).
 
-### `nix <file.nix>`
+Reports a summary line and exits 0 only if there are zero errors.
 
-Check embedded bash scripts in a Nix file. Finds `writeShellScript`, `writeShellScriptBin`, and `writeShellApplication` calls, extracts bash content, and runs the full check pipeline on each.
+---
 
 ### `fmt <file.nix>`
 
-Run Hindley-Milner type inference on a Nix file and insert `# :: Type` annotations on bindings.
+```
+nix-compile fmt ./default.nix
+nix-compile fmt ./modules/server.nix > formatted.nix
+```
 
-### `typecheck <path>`
+Pretty-prints a Nix source file to stdout.  Preserves blank-line
+groupings, comment lines, and doc-comment blocks (`/** ... */`).
+Output is deterministic for a given input.
 
-Recursively type-check all `.nix` files in a directory (or a single file). Runs type inference on each file in parallel (bounded to 16 concurrent workers). Reports a summary with pass/skip/fail counts.
+Exits 1 on parse or I/O errors.
 
-Skips files using unsupported constructs (`with`, `rec`, dynamic attrs) and directories: `.git`, `.direnv`, `node_modules`, `.cache`, `.lake`, `result`, `result-lib`, `target`.
+---
 
-### `flake [dir]`
+### `infer <file.nix>`
 
-Analyze a Nix flake. Defaults to the current directory. Reports inputs, typed outputs, and any issues.
+```
+nix-compile infer ./default.nix
+```
 
-### `graph [--dot] [dir]`
+Runs Hindley-Milner type inference on the Nix file and emits the
+source with `# :: Type` annotations inserted on every binding.  If
+the expression is a pure lambda (`{lib, ...}: ...`), it will also
+annotate the `let`-bound identifiers in the body with their inferred
+result types.
 
-Show the module dependency graph for a Nix project. Follows `import` statements from `flake.nix`. Reports lint violations and layout issues. Exits non-zero if violations are found.
+Output is written to stdout.  Exits 1 on parse or inference errors.
 
-With `--dot`, outputs Graphviz DOT format for visualization.
+**Tip**: pipe the output into `nix-compile fmt` for a clean annotated
+source:
+
+```
+nix-compile infer ./default.nix | nix-compile fmt - > ./default.nix
+```
+
+(Note that `fmt` does not read stdin here—pipe through a temporary
+file or editor.)
+
+---
+
+### `emit <script.sh>`
+
+```
+nix-compile emit ./configure.sh
+nix-compile emit ./scripts/deploy.sh > /tmp/emitter.sh
+```
+
+Parses a bash script, extracts its configuration schema (environment
+variables, typed config assignments, store paths), and emits an
+`emit-config` bash function to stdout.
+
+The generated function is self-contained and supports three output
+formats:
+
+```
+emit-config json   # JSON
+emit-config yaml   # YAML
+emit-config toml   # TOML
+```
+
+Type guards are generated for `int` and `bool` typed variables.
+Required environment variables that are missing cause the function to
+fail with a descriptive error.
+
+Exits 1 on parse or inference errors.
+
+---
 
 ### `scope <file.nix>`
 
-Display the scope graph for a Nix file: declarations, references, and edges with their labels.
+```
+nix-compile scope ./default.nix
+nix-compile scope --json ./default.nix  > graph.json
+nix-compile scope --dhall ./default.nix > graph.dhall
+```
 
-### `scope --json <file.nix>`
+Builds a scope graph from a Nix file and prints it to stdout.
 
-Emit the scope graph as JSON (for integration with zeitschrift or other tooling).
+**Default (text) format** prints a human-readable tree with:
 
-### `scope --dhall <file.nix>`
+- Scope count and file name header.
+- Per-scope sections showing declarations (with types if available),
+  references (with ref kind), and outgoing edges (with edge labels).
+- A resolution summary: either a count of resolved references or a
+  list of unresolved / ambiguous names.
 
-Emit the scope graph as a Dhall expression (for integration with zeitschrift).
+Scope kinds: `FileScope`, `LetScope`, `AttrSetScope`, `RecAttrSetScope`,
+`FunctionScope`, `WithScope`.
+
+Edge labels: `Parent`, `Import`, `With`, `Inherit`, `AttrAccess`.
+
+**`--json`** emits the scope graph as a JSON object with the following
+structure:
+
+```json
+{
+  "scopes": [
+    {
+      "id": 0,
+      "declarations": [
+        { "name": "...", "span": {...}, "scope": 0, "assocScope": null,
+          "type": null, "doc": null }
+      ],
+      "references": [
+        { "name": "...", "span": {...}, "scope": 0, "kind": "VarRef" }
+      ],
+      "edges": [
+        { "source": 1, "target": 0, "label": "Parent" }
+      ],
+      "kind": "FileScope"
+    }
+  ],
+  "root": 0,
+  "file": "default.nix"
+}
+```
+
+Reference kinds: `VarRef`, `AttrRef`, `InheritRef`, `ImportRef`.
+
+**`--dhall`** emits an equivalent Dhall expression for consumption by
+zeitschrift or other Dhall-based tooling.
+
+Exits 1 on parse errors.
+
+---
+
+### `lsp`
+
+```
+nix-compile lsp
+```
+
+Starts a Language Server Protocol server over stdio.  The server
+provides diagnostics (lint and type errors) for opened Nix files.
+
+Exits 0 on clean shutdown.
+
+---
+
+## Dhall config integration
+
+Create a `.nix-compile.dhall` file in your project root:
+
+```dhall
+{ profile = "my-project"
+, overrides =
+    [ { id = "with-lib"
+      , severity = SevOff
+      , reason = Some "Using with pkgs; is our house style"
+      }
+    , { id = "type-check-failure"
+      , severity = SevWarning
+      , reason = Some "Type inference is advisory for now"
+      }
+    ]
+, extra-ignores = [ "contrib/**", "legacy/**" ]
+}
+```
+
+- `profile` appears in log output for traceability.
+- `overrides` adjust rule severity.  `SevOff` silences the rule
+  entirely; `SevWarning` downgrades errors to warnings (so the exit
+  code is unaffected); `SevError` (the implicit default) causes
+  `exitFailure`.
+- `extra-ignores` uses glob patterns.  A path is ignored if it matches
+  any pattern.  The tool also always skips: `.git`, `.direnv`,
+  `node_modules`, `.cache`, `.lake`, `result`, `result-lib`, `target`.
+
+To use a non-default config path:
+
+```
+nix-compile --config ./ci/check.dhall check .
+```
+
+---
+
+## Troubleshooting
+
+### Corrupted Nix eval cache
+
+If you see mysterious parse or type errors after upgrading nixpkgs or
+changing Nix evaluation settings, the Nix flake eval cache may be
+stale.  Run:
+
+```
+nix flake check --no-eval-cache
+```
+
+to force a full re-evaluation, then re-run `nix-compile`.
+
+### Suppressing violations
+
+Use Dhall overrides in `.nix-compile.dhall` to control per-rule severity.
+Set `SevOff` to silence a rule, or `SevWarning` to keep it as a
+diagnostic without failing the exit code.
+
+### Dynamic attr-set or `with` expressions
+
+Files using `with`, `rec { }`, or dynamic attribute access (like
+`pkgs.${system}`) cannot be type-checked.  `nix-compile check` skips
+type inference for those files (marking them `[UNC]`), but lint checks
+still run.

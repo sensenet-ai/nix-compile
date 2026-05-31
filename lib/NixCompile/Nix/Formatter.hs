@@ -38,6 +38,18 @@ data Src = Src
     , srcDocCommentFlags :: [Bool]
     }
 
+isBlankLine :: Text -> Bool
+isBlankLine t = T.null (T.strip t)
+
+precedingBlankCount :: Src -> Int -> Int
+precedingBlankCount src target =
+    let ls = take (target - 1) (srcLines src)
+     in length (takeWhileEnd isBlankLine ls)
+
+precedingBlankDoc :: Src -> NSourcePos -> Doc ann
+precedingBlankDoc src spos =
+    if precedingBlankCount src (lineNum spos) > 0 then hardline else mempty
+
 precedingComments :: Src -> Int -> [Text]
 precedingComments src target =
     map fst $ takeWhileEnd (\(t, isDoc) -> isCommentLike t isDoc) (take (target - 1) (zip (srcLines src) (srcDocCommentFlags src)))
@@ -166,9 +178,12 @@ printStringPart src = \case
 
 printIndentedPart :: Src -> Antiquoted Text NExprLoc -> Doc ann
 printIndentedPart src = \case
-    Plain t -> pretty t
+    Plain t -> pretty (escapeIndentedString t)
     Antiquoted e -> "${" <> printExpr src e <> "}"
     EscapedNewline -> "\\" <> line
+
+escapeIndentedString :: Text -> Text
+escapeIndentedString = T.replace "$" "''$"
 
 escapeString :: Text -> Text
 escapeString = T.concatMap $ \c -> case c of
@@ -214,8 +229,9 @@ printSet src isRec bindings
 printBinding :: Src -> Binding NExprLoc -> Doc ann
 printBinding src = \case
     NamedVar path value spos ->
-        let commentDoc = precedingCommentsDoc src spos
-         in commentDoc <> printBindingVal src (printAttrPath src path <+> "=") value <> ";"
+        let blankDoc = precedingBlankDoc src spos
+            commentDoc = precedingCommentsDoc src spos
+         in blankDoc <> commentDoc <> printBindingVal src (printAttrPath src path <+> "=") value <> ";"
     Inherit mScope keys _ ->
         let keyDocs = map (pretty . varNameText) keys
          in case mScope of
@@ -244,10 +260,19 @@ printAbs :: Src -> Params NExprLoc -> NExprLoc -> Doc ann
 printAbs src params body = case params of
     Param name ->
         printBindingVal src (pretty (varNameText name) <> ":") body
-    ParamSet mName _isVariadic paramSet ->
-        let varNames = maybe id (\n -> (n :)) mName (map fst paramSet)
-            doc = hsep (punctuate "," (map (pretty . varNameText) varNames))
-            key = lbrace <> space <> doc <> space <> rbrace <> ":"
+    ParamSet mName isVariadic paramSet ->
+        let
+            varNames = map fst paramSet
+            namesDoc = hsep (punctuate "," (map (pretty . varNameText) varNames))
+            variadicDoc = case isVariadic of
+                Variadic ->
+                    if null paramSet then mempty <> "..."
+                    else if not (null paramSet) then "," <+> "..."
+                    else mempty
+                _ -> mempty
+            atDoc = maybe mempty (\n -> mempty <+> "@" <+> pretty (varNameText n)) mName
+            doc = namesDoc <> variadicDoc
+            key = lbrace <> space <> doc <> space <> rbrace <> atDoc <> ":"
          in printBindingVal src key body
 
 printApp :: Src -> NExprLoc -> NExprLoc -> Doc ann

@@ -35,8 +35,19 @@ module NixCompile.Nix.LayoutConvention (
     -- * Validation
     validateLayout,
     validateFile,
+    validateFileExpr,
+    validateFileFromExpr,
     validateAttrName,
     validateIdentifier,
+
+    -- * Convention lookup
+    layoutFromName,
+
+    -- * Universal checks
+    isIndexFile,
+    isMainFile,
+    checkBannedFiles,
+    checkClassAttr,
 
     -- * Results
     LayoutError (..),
@@ -52,10 +63,18 @@ module NixCompile.Nix.LayoutConvention (
 where
 
 import Data.Char (isAlphaNum, isLower, isUpper, toLower)
+import Data.Coerce (coerce)
+import Data.Fix (Fix (..))
 import Data.List (isPrefixOf, isSuffixOf)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Nix.Expr.Types
+import Nix.Expr.Types.Annotated
+import Nix.Utils qualified as NixPath
 import NixCompile.Nix.ModuleKind
+import NixCompile.Types (Loc (..), Span (..))
 import System.FilePath (makeRelative, splitDirectories, takeFileName)
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -116,7 +135,7 @@ data NamingConvention
 -- ══════════════════════════════════════════════════════════════════════════════
 
 data ErrorCode
-    = -- | File in wrong location
+    = -- | File in wrong location for its module kind
       E001
     | -- | File in forbidden location
       E002
@@ -126,10 +145,16 @@ data ErrorCode
       E004
     | -- | Wrong identifier convention
       E005
-    | -- | Not a flake module (when required)
+    | -- | Must be flake module but isn't
       E006
-    | -- | Missing required export
+    | -- | _index.nix files are banned
       E007
+    | -- | _main.nix files are banned
+      E008
+    | -- | Missing required _class attribute
+      E009
+    | -- | _class value doesn't match location
+      E010
     deriving (Eq, Show)
 
 data LayoutError = LayoutError
@@ -319,6 +344,15 @@ nixosConfig =
         , convRequireFlakeMod = False
         }
 
+-- | Look up a convention by name. Defaults to 'straylight' if unrecognised.
+layoutFromName :: Text -> Convention
+layoutFromName = \case
+    "straylight" -> straylight
+    "nixpkgs-by-name" -> nixpkgsByName
+    "flake-parts" -> flakeParts
+    "nixos-config" -> nixosConfig
+    _ -> straylight
+
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                           // naming validation
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -411,6 +445,139 @@ suggestName SnakeCase s = toSnakeCase s
 suggestName _ s = s
 
 -- ══════════════════════════════════════════════════════════════════════════════
+--                                                     // universal checks
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Checks that apply regardless of convention: banned file names, _class
+-- attribute validation.
+
+isIndexFile :: FilePath -> Bool
+isIndexFile path = takeFileName path == "_index.nix"
+
+isMainFile :: FilePath -> Bool
+isMainFile path = takeFileName path == "_main.nix"
+
+checkBannedFiles :: FilePath -> [LayoutError]
+checkBannedFiles path
+    | isIndexFile path =
+        [ LayoutError
+            { errCode = E007
+            , errPath = path
+            , errKind = Unknown
+            , errMessage = "_index.nix files are banned; module graph is derived from directory structure"
+            , errExpected = Nothing
+            }
+        ]
+    | isMainFile path =
+        [ LayoutError
+            { errCode = E008
+            , errPath = path
+            , errKind = Unknown
+            , errMessage = "_main.nix files are banned; use explicit imports in flake.nix"
+            , errExpected = Nothing
+            }
+        ]
+    | otherwise = []
+
+classForPath :: FilePath -> Maybe Text
+classForPath path = findClass (splitDirectories path)
+  where
+    findClass (x : y : _)
+        | x == "modules" = classForDir (dropSlash y)
+    findClass (_ : rest) = findClass rest
+    findClass [] = Nothing
+    dropSlash s
+        | "/" `isSuffixOf` s = dropSlash (take (length s - 1) s)
+        | otherwise = s
+    classForDir = \case
+        "flake" -> Just "flake"
+        "nixos" -> Just "nixos"
+        "home" -> Just "home"
+        "home-manager" -> Just "home"
+        "darwin" -> Just "darwin"
+        _ -> Nothing
+
+findClassAttrWithSpan :: NExprLoc -> Maybe (Text, Span)
+findClassAttrWithSpan = go
+  where
+    go (Fix (Compose (AnnUnit _ e))) = case e of
+        NSet _ bindings -> findInBindings bindings
+        NAbs _ body -> go body
+        NLet _ body -> go body
+        NWith _ body -> go body
+        _ -> Nothing
+    findInBindings bindings =
+        let classes = mapMaybe extractClass bindings
+         in listToMaybe classes
+    extractClass :: Binding NExprLoc -> Maybe (Text, Span)
+    extractClass = \case
+        NamedVar (StaticKey name :| []) valExpr _
+            | varNameText name == "_class" -> extractStringValue valExpr
+        _ -> Nothing
+    extractStringValue :: NExprLoc -> Maybe (Text, Span)
+    extractStringValue (Fix (Compose (AnnUnit srcSpan e'))) = case e' of
+        NStr (DoubleQuoted [Plain t]) -> Just (t, toSpan srcSpan)
+        NStr (Indented _ [Plain t]) -> Just (t, toSpan srcSpan)
+        _ -> Nothing
+    varNameText :: VarName -> Text
+    varNameText = coerce
+
+toSpan :: SrcSpan -> Span
+toSpan srcSpan =
+    let begin = getSpanBegin srcSpan
+        end = getSpanEnd srcSpan
+     in Span
+            { spanStart = Loc (srcPosLine begin) (srcPosCol begin)
+            , spanEnd = Loc (srcPosLine end) (srcPosCol end)
+            , spanFile = case begin of
+                NSourcePos path _ _ -> Just (coerce path)
+            }
+  where
+    srcPosLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
+    srcPosCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
+
+checkClassAttr :: FilePath -> NExprLoc -> [LayoutError]
+checkClassAttr path expr = case classForPath path of
+    Nothing -> []
+    Just expected ->
+        case findClassAttrWithSpan expr of
+            Nothing ->
+                [ LayoutError
+                    { errCode = E009
+                    , errPath = path
+                    , errKind = Unknown
+                    , errMessage = "Module missing _class attribute; expected _class = \"" <> expected <> "\""
+                    , errExpected = Just expected
+                    }
+                ]
+            Just (actual, _sp)
+                | actual /= expected ->
+                    [ LayoutError
+                        { errCode = E010
+                        , errPath = path
+                        , errKind = Unknown
+                        , errMessage = "Wrong _class: got \"" <> actual <> "\", expected \"" <> expected <> "\""
+                        , errExpected = Just expected
+                        }
+                    ]
+                | otherwise -> []
+
+-- | Validate a file with its parsed AST, running universal checks only.
+-- For use by the module graph builder which already has the AST.
+validateFileExpr :: FilePath -> NExprLoc -> [LayoutError]
+validateFileExpr path expr =
+    concat
+        [ checkBannedFiles path
+        , checkClassAttr path expr
+        ]
+
+-- | Full validation: convention-specific rules plus universal checks.
+-- Takes the project root for relative path computation.
+validateFileFromExpr :: Convention -> FilePath -> FilePath -> NExprLoc -> [LayoutError]
+validateFileFromExpr conv root path expr =
+    validateFile conv root path (detectKind path expr)
+        ++ checkClassAttr path expr
+
+-- ══════════════════════════════════════════════════════════════════════════════
 --                                                                // validation
 -- ══════════════════════════════════════════════════════════════════════════════
 
@@ -422,7 +589,8 @@ validateFile conv root path detection =
         components = splitDirectories relPath
         fileName = takeFileName path
      in concat
-            [ validateLocation conv relPath components kind
+            [ checkBannedFiles path
+            , validateLocation conv relPath components kind
             , validateForbidden conv relPath components kind
             , validateFileName conv relPath fileName
             , validateFlakeModReq conv relPath kind detection

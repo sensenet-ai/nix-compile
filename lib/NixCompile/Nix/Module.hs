@@ -58,7 +58,7 @@ import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as NixPath
 import NixCompile.Nix.Infer (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
-import NixCompile.Nix.Layout (LayoutViolation, findLayoutViolations)
+import NixCompile.Nix.LayoutConvention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types
 import NixCompile.Types (Loc (..), Span (..))
@@ -99,7 +99,7 @@ data LintFailure = LintFailure
 
 data LayoutFailure = LayoutFailure
     { layPath :: !FilePath
-    , layViolations :: ![LayoutViolation]
+    , layViolations :: ![LayoutError]
     }
     deriving (Show)
 
@@ -131,11 +131,11 @@ data BuildState = BuildState
 resolves imports transitively, computes topological order, collects failures,
 then infers types in topological order with cross-module type propagation
 -}
-buildModuleGraph :: FilePath -> IO (Either Text ModuleGraph)
-buildModuleGraph rootPath = do
+buildModuleGraph :: Convention -> FilePath -> IO (Either Text ModuleGraph)
+buildModuleGraph conv rootPath = do
     canonRoot <- canonicalizePath rootPath
     let rootDir = takeDirectory canonRoot
-    finalState <- buildModules rootDir canonRoot Set.empty (BuildState Map.empty [] [] [])
+    finalState <- buildModules conv rootDir canonRoot Set.empty (BuildState Map.empty [] [] [])
     let order = computeOrder canonRoot (bsModules finalState)
     let moduleGraph =
             ModuleGraph
@@ -152,25 +152,25 @@ buildModuleGraph rootPath = do
     pure $ Right finalGraph
 
 -- | build module graph starting from flake.nix in the given directory
-buildModuleGraphFromFlake :: FilePath -> IO (Either Text ModuleGraph)
-buildModuleGraphFromFlake dir = do
+buildModuleGraphFromFlake :: Convention -> FilePath -> IO (Either Text ModuleGraph)
+buildModuleGraphFromFlake conv dir = do
     let flakePath = dir </> "flake.nix"
     exists <- doesFileExist flakePath
     if exists
-        then buildModuleGraph flakePath
+        then buildModuleGraph conv flakePath
         else pure $ Left $ "No flake.nix found in " <> T.pack dir
 
 -- ── recursive module loading ─────────────────────────────────────
 
 -- | build modules by recursively walking imports, guarding against cycles via visited set
-buildModules :: FilePath -> FilePath -> Set FilePath -> BuildState -> IO BuildState
-buildModules _rootDir path visited state
+buildModules :: Convention -> FilePath -> FilePath -> Set FilePath -> BuildState -> IO BuildState
+buildModules conv _rootDir path visited state
     | path `Set.member` visited = pure state
-    | otherwise = processFile path visited state
+    | otherwise = processFile conv path visited state
 
 -- | parse a single file and, on success, process its imports
-processFile :: FilePath -> Set FilePath -> BuildState -> IO BuildState
-processFile path visited state = do
+processFile :: Convention -> FilePath -> Set FilePath -> BuildState -> IO BuildState
+processFile conv path visited state = do
     fileExists <- doesFileExist path
     if not fileExists
         then pure state
@@ -182,19 +182,22 @@ processFile path visited state = do
                 Right (Left parseError) ->
                     pure $ state{bsFailures = ParseFailure path (T.pack (show parseError)) : bsFailures state}
                 Right (Right expr) ->
-                    processParsedFile path visited state expr
+                    processParsedFile conv path visited state expr
 
 -- ── process a successfully parsed file ───────────────────────────
 
 -- | extract imports, run type inference / lint / layout checks, then recurse
-processParsedFile :: FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
-processParsedFile path visited state expr = do
-    let imports = findImports (takeDirectory path) expr
+processParsedFile :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
+processParsedFile conv path visited state expr = do
+    let rootDir = takeDirectory path
+    let imports = findImports rootDir expr
     let moduleType = case inferExpr expr of
             Right (type_, _) -> type_
             Left _ -> TAny
     let lintViolations = findNixViolations expr
-    let layoutViolations = findLayoutViolations path expr
+    let layoutViolations = validateFileFromExpr conv rootDir path expr
+
+    putStrLn $ "  " ++ path ++ " [" ++ show (length imports) ++ " imports, " ++ show (length lintViolations) ++ " lint, " ++ show (length layoutViolations) ++ " layout]"
 
     let moduleDefinition =
             Module
@@ -209,7 +212,7 @@ processParsedFile path visited state expr = do
     let withLayout = recordLayoutFailures path layoutViolations withLint
     let updatedVisited = Set.insert path visited
 
-    foldM (processImport (takeDirectory path) updatedVisited) withLayout imports
+    foldM (processImport conv (takeDirectory path) updatedVisited) withLayout imports
 
 -- | record lint violations only if non-empty (avoids cluttering failure list)
 recordLintFailures :: FilePath -> [NixViolation] -> BuildState -> BuildState
@@ -217,7 +220,7 @@ recordLintFailures path violations state
     | null violations = state
     | otherwise = state{bsLintFailures = LintFailure path violations : bsLintFailures state}
 
-recordLayoutFailures :: FilePath -> [LayoutViolation] -> BuildState -> BuildState
+recordLayoutFailures :: FilePath -> [LayoutError] -> BuildState -> BuildState
 recordLayoutFailures path violations state
     | null violations = state
     | otherwise = state{bsLayoutFailures = LayoutFailure path violations : bsLayoutFailures state}
@@ -227,8 +230,8 @@ recordLayoutFailures path violations state
 {- | process a single import: check existence, enforce root-boundary, recurse
 n.b. imports outside rootDir are silently skipped (vendored deps boundary)
 -}
-processImport :: FilePath -> Set FilePath -> BuildState -> Import -> IO BuildState
-processImport rootDir visited state importBinding = do
+processImport :: Convention -> FilePath -> Set FilePath -> BuildState -> Import -> IO BuildState
+processImport conv rootDir visited state importBinding = do
     exists <- doesFileExist (impPath importBinding)
     if not exists
         then pure state
@@ -236,7 +239,7 @@ processImport rootDir visited state importBinding = do
             canonPath <- canonicalizePath (impPath importBinding)
             let rootPrefix = rootDir ++ [pathSeparator]
             if rootPrefix `isPrefixOf` canonPath || canonPath == rootDir
-                then buildModules rootDir canonPath visited state
+                then buildModules conv rootDir canonPath visited state
                 else pure state
 
 -- ═════════════════════════════════════════════════════════════════════════════

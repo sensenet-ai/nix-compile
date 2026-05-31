@@ -22,6 +22,7 @@
     loadConfig,
     defaultConfig,
     effectiveSeverity,
+    effectiveLayout,
     configIgnores,
     isIgnored,
     isSuppressed,
@@ -44,6 +45,7 @@ import Dhall qualified
 import System.FilePath qualified as FP
 
 import NixCompile.Lint.Forbidden qualified as Bash
+import NixCompile.Nix.LayoutConvention (Convention, layoutFromName)
 import NixCompile.Nix.Lint qualified as NixLint
 import NixCompile.Nix.LintDerivation qualified as Deriv
 import NixCompile.Nix.LintPackages qualified as LintPackages
@@ -86,6 +88,7 @@ instance FromDhall RuleOverride where
 
 data Config = Config
     { configProfile :: !Text
+    , configLayout :: !Text
     , configExtraIgnores :: ![Text]
     , configOverrides :: ![RuleOverride]
     }
@@ -97,6 +100,7 @@ instance FromDhall Config where
             ( defaultInterpretOptions
                 { fieldModifier = \case
                     "configProfile" -> "profile"
+                    "configLayout" -> "layout"
                     "configExtraIgnores" -> "extra-ignores"
                     "configOverrides" -> "overrides"
                     n -> n
@@ -111,9 +115,17 @@ defaultConfig :: Config
 defaultConfig =
     Config
         { configProfile = "standard"
+        , configLayout = "straylight"
         , configExtraIgnores = []
         , configOverrides = []
         }
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- Queries
+-- ────────────────────────────────────────────────────────────────────────────
+
+effectiveLayout :: Config -> Convention
+effectiveLayout = layoutFromName . configLayout
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- Loading
