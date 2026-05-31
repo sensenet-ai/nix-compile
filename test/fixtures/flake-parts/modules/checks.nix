@@ -1,16 +1,16 @@
 { lib, flake-parts-lib, ... }:
-  let
+let
   inherit (lib) mkOption types;
   inherit (flake-parts-lib) mkTransposedPerSystemModule;
-in mkTransposedPerSystemModule {
+in
+mkTransposedPerSystemModule {
   name = "checks";
-  option =
-    mkOption {
+  option = mkOption {
     type = types.lazyAttrsOf types.package;
     default = { };
-    description =
-      ''
+    description = ''
       Derivations to be built by [`nix flake check`](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake-check.html).
+
 
     '';
   };

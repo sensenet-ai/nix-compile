@@ -32,9 +32,9 @@ where
 
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -202,10 +202,13 @@ inferEnumType e = case unwrap e of
 inferSubmoduleType :: NExprLoc -> NixType
 inferSubmoduleType e = case unwrap e of
     NSet _ bindings ->
-        let opts = mapMaybe (\(k, v) -> case k of
-                    StaticKey name -> Just (coerceVarName name, inferTypeExpr v)
-                    _ -> Nothing
-                ) (mapMaybe bindingToPair bindings)
+        let opts =
+                mapMaybe
+                    ( \(k, v) -> case k of
+                        StaticKey name -> Just (coerceVarName name, inferTypeExpr v)
+                        _ -> Nothing
+                    )
+                    (mapMaybe bindingToPair bindings)
          in TAttrs (Map.map (\(t) -> (t, True)) (Map.fromList opts))
     _ -> TAttrsOpen Map.empty
 
@@ -288,7 +291,7 @@ extractStringLit e = case unwrap e of
 -- | extract binding as (key, value) pair if it has a static key
 bindingToPair :: Binding NExprLoc -> Maybe (NKeyName NExprLoc, NExprLoc)
 bindingToPair = \case
-    NamedVar (StaticKey _ :| []) val _ -> Just (StaticKey "" , val) -- placeholder
+    NamedVar (StaticKey _ :| []) val _ -> Just (StaticKey "", val) -- placeholder
     _ -> Nothing
 
 -- | extract all expressions from a list literal
@@ -300,4 +303,5 @@ nixListExprs (Fix (Compose (AnnUnit _ e))) = case e of
 -- | crude span extraction from an expression
 spanFromExpr :: NExprLoc -> Span
 spanFromExpr _ = Span (Loc 0 0) (Loc 0 0) Nothing
-    -- n.b. real spans require SrcSpan conversion; placeholder for now
+
+-- n.b. real spans require SrcSpan conversion; placeholder for now

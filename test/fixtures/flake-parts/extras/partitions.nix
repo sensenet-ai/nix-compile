@@ -1,115 +1,130 @@
-{ lib, config, inputs, extendModules, partitionStack, self, ... }:
-  let
-  inherit (lib) literalMD mapAttrs mkOption optionalAttrs types;
+{
+  lib,
+  config,
+  inputs,
+  extendModules,
+  partitionStack,
+  self,
+  ...
+}:
+let
+  inherit (lib)
+    literalMD
+    mapAttrs
+    mkOption
+    optionalAttrs
+    types
+    ;
 
   partitionModule =
-    { config, options, name, ... }:
     {
-    options =
-      {
-      extraInputsFlake =
-        mkOption {
-        type = types.raw;
-        description =
-          ''
-          Location of a flake whose inputs to add to the inputs module argument in the partition.
-          Note that flake `follows` are resolved without any awareness of inputs that are not in the flake.
-          As a consequence, a `follows` entry in the flake inputs can not refer to inputs that are not in that specific flake.
+      config,
+      options,
+      name,
+      ...
+    }:
+    {
+      options = {
+        extraInputsFlake = mkOption {
+          type = types.raw;
+          description = ''
+            Location of a flake whose inputs to add to the inputs module argument in the partition.
+            Note that flake `follows` are resolved without any awareness of inputs that are not in the flake.
+            As a consequence, a `follows` entry in the flake inputs can not refer to inputs that are not in that specific flake.
 
-          Implementation note: if the type of `extraInputsFlake` is a path, it is loaded with an expression-based reimplementation of `builtins.getFlake`, as `getFlake` is incapable of loading paths in pure mode as of writing.
+            Implementation note: if the type of `extraInputsFlake` is a path, it is loaded with an expression-based reimplementation of `builtins.getFlake`, as `getFlake` is incapable of loading paths in pure mode as of writing.
 
-        '';
-        example = lib.literalExpression "./dev";
+
+          '';
+          example = lib.literalExpression "./dev";
+        };
+        extraInputs = mkOption {
+          type = types.lazyAttrsOf types.raw;
+          description = ''
+            Extra inputs to add to the inputs module argument in the partition.
+
+            This can be used as a workaround for the fact that transitive inputs are locked in the "end user" flake.
+            That's not desirable for inputs they don't need, such as development inputs.
+
+
+          '';
+          default = { };
+          defaultText = literalMD ''
+            if `extraInputsFlake` is set, then `builtins.getFlake extraInputsFlake`, else `{ }`
+
+
+          '';
+        };
+        module = mkOption {
+          type =
+            (extendModules {
+              specialArgs =
+                let
+                  inputs2 =
+                    inputs
+                    // (
+                      config.extraInputs
+                      // {
+                        self = self2;
+                      }
+                    );
+                  self2 = self // {
+                    inputs = inputs2;
+                  };
+                in
+                {
+                  inputs = inputs2;
+                  self = self2;
+                  partitionStack = partitionStack ++ [ name ];
+                };
+            }).type;
+          default = { };
+          description = ''
+            A re-evaluation of the flake-parts top level modules.
+
+            You may define config definitions, `imports`, etc here, and it can be read like any other submodule.
+
+
+          '';
+          example = lib.literalExpression ''
+            {
+              imports = [
+                ./dev/flake-module.nix
+              ];
+            }
+
+
+          '';
+          visible = "shallow";
+        };
       };
-      extraInputs =
-        mkOption {
-        type = types.lazyAttrsOf types.raw;
-        description =
-          ''
-          Extra inputs to add to the inputs module argument in the partition.
-
-          This can be used as a workaround for the fact that transitive inputs are locked in the "end user" flake.
-          That's not desirable for inputs they don't need, such as development inputs.
-
-        '';
-        default = { };
-        defaultText =
-          literalMD ''
-          if `extraInputsFlake` is set, then `builtins.getFlake extraInputsFlake`, else `{ }`
-
-        '';
-      };
-      module =
-        mkOption {
-        type =
-          (extendModules {
-          specialArgs =
-            let
-            inputs2 =
-              inputs // (config.extraInputs // {
-              self = self2;
-            });
-            self2 =
-              self // {
-              inputs = inputs2;
-            };
-          in {
-            inputs = inputs2;
-            self = self2;
-            partitionStack = partitionStack ++ [name];
-          };
-        }).type;
-        default = { };
-        description =
-          ''
-          A re-evaluation of the flake-parts top level modules.
-
-          You may define config definitions, `imports`, etc here, and it can be read like any other submodule.
-
-        '';
-        example =
-          lib.literalExpression ''
-          {
-            imports = [
-              ./dev/flake-module.nix
-            ];
-          }
-
-        '';
-        visible = "shallow";
+      config = {
+        extraInputs = lib.mkIf options.extraInputsFlake.isDefined (
+          let
+            p = options.extraInputsFlake.value;
+            flake = if builtins.typeOf p == "path" then get-flake p else builtins.getFlake p;
+          in
+          flake.inputs
+        );
       };
     };
-    config =
-      {
-      extraInputs =
-        lib.mkIf options.extraInputsFlake.isDefined (let
-        p = options.extraInputsFlake.value;
-        flake =
-          if builtins.typeOf p == "path"
-        then get-flake p
-        else builtins.getFlake p;
-      in flake.inputs);
-    };
-  };
   # Nix does not recognize that a flake like "${./dev}", which is a content
   # addressed store path is a pure input, so we have to fetch and wire it
   # manually with flake-compat.
   get-flake =
     src:
     (flake-compat {
-    inherit src;
-    system = throw "operating flake-compat in pure mode; system not allowed to be used";
-  }).outputs;
+      inherit src;
+      system = throw "operating flake-compat in pure mode; system not allowed to be used";
+    }).outputs;
   flake-compat = import ./../vendor/flake-compat;
-in {
-  options =
-    {
-    partitionedAttrs =
-      mkOption {
+in
+{
+  options = {
+    partitionedAttrs = mkOption {
       type = types.attrsOf types.str;
       default = { };
-      description =
-        ''
+      description = ''
         A set of flake output attributes that are taken from a partition instead of the default top level flake-parts evaluation.
 
         The attribute name refers to the flake output attribute name, and the value is the name of the partition to use.
@@ -122,20 +137,18 @@ in {
 
         Equivalent: `flake.devShells = lib.mkForce config.partitions.dev.module.flake.devShells;`
 
+
       '';
-      example =
-        {
+      example = {
         "devShells" = "dev";
         "checks" = "dev";
         "herculesCI" = "dev";
       };
     };
-    partitions =
-      mkOption {
+    partitions = mkOption {
       type = types.attrsOf (types.submodule partitionModule);
       default = { };
-      description =
-        ''
+      description = ''
         By partitioning the flake, you can avoid fetching inputs that are not
         needed for the evaluation of a particular attribute.
 
@@ -152,9 +165,9 @@ in {
         is cheap, it can only happen after fetching the input, which is not
         as cheap.
 
+
       '';
-      example =
-        lib.literalExpression ''
+      example = lib.literalExpression ''
         {
           dev = {
             extraInputsFlake = ./dev;
@@ -162,13 +175,17 @@ in {
           };
         }
 
+
       '';
     };
   };
-  config =
-    {
+  config = {
     # Default, overriden with specialArgs inside partitions.
-    _module.args.partitionStack = [];
-    flake = optionalAttrs (partitionStack == []) (mapAttrs (attrName: partition: lib.mkForce config.partitions.${partition}.module.flake.${attrName}) config.partitionedAttrs);
+    _module.args.partitionStack = [ ];
+    flake = optionalAttrs (partitionStack == [ ]) (
+      mapAttrs (
+        attrName: partition: lib.mkForce config.partitions.${partition}.module.flake.${attrName}
+      ) config.partitionedAttrs
+    );
   };
 }

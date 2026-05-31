@@ -561,8 +561,9 @@ checkClassAttr path expr = case classForPath path of
                     ]
                 | otherwise -> []
 
--- | Validate a file with its parsed AST, running universal checks only.
--- For use by the module graph builder which already has the AST.
+{- | Validate a file with its parsed AST, running universal checks only.
+For use by the module graph builder which already has the AST.
+-}
 validateFileExpr :: FilePath -> NExprLoc -> [LayoutError]
 validateFileExpr path expr =
     concat
@@ -570,8 +571,9 @@ validateFileExpr path expr =
         , checkClassAttr path expr
         ]
 
--- | Full validation: convention-specific rules plus universal checks.
--- Takes the project root for relative path computation.
+{- | Full validation: convention-specific rules plus universal checks.
+Takes the project root for relative path computation.
+-}
 validateFileFromExpr :: Convention -> FilePath -> FilePath -> NExprLoc -> [LayoutError]
 validateFileFromExpr conv root path expr =
     validateFile conv root path (detectKind path expr)

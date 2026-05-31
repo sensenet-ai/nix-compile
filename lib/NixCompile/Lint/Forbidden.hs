@@ -87,17 +87,18 @@ checkForEval tokenId commandWords
     | otherwise = pure []
 
 isEvalInvocation :: [SA.Token] -> Bool
-isEvalInvocation tokens =
-    any isEvalToken (map tokenToText tokens)
-
-isEvalToken :: Text -> Bool
-isEvalToken text =
-    text == "eval" || "/eval" `T.isSuffixOf` text
+isEvalInvocation [] = False
+isEvalInvocation (cmd : _) = tokenToText cmd == "eval"
 
 tokenToText :: SA.Token -> Text
-tokenToText (SA.OuterToken _ inner) = case inner of
-    SA.Inner_T_NormalWord [SA.OuterToken _ (SA.Inner_T_Literal literal)] -> T.pack literal
-    SA.Inner_T_Literal literal -> T.pack literal
+tokenToText (SA.OuterToken _ inner) = innerToText inner
+
+innerToText :: SA.InnerToken SA.Token -> Text
+innerToText = \case
+    SA.Inner_T_Literal content -> T.pack content
+    SA.Inner_T_SingleQuoted content -> T.pack content
+    SA.Inner_T_NormalWord parts -> T.concat (map tokenToText parts)
+    SA.Inner_T_DoubleQuoted parts -> T.concat (map tokenToText parts)
     _ -> ""
 
 mkSpan :: SA.Id -> Reader (Map SA.Id (Position, Position)) Span

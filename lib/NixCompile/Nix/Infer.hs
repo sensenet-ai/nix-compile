@@ -39,7 +39,7 @@ module NixCompile.Nix.Infer (
 where
 
 import Control.Exception (IOException, try)
-import Control.Monad (foldM, forM, forM_, replicateM)
+import Control.Monad (foldM, forM, forM_, replicateM, when)
 import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.Coerce (coerce)
@@ -520,8 +520,9 @@ inferAssert environment cond body = do
     unify condT TBool
     infer environment body
 
--- | function application: unify func type as TFun arg result, return result
--- n.b. intercepts import ./path to use cross-module type info
+{- | function application: unify func type as TFun arg result, return result
+n.b. intercepts import ./path to use cross-module type info
+-}
 inferAppWithImport :: TypeEnv -> NExprLoc -> NExprLoc -> Infer NixType
 inferAppWithImport environment func arg =
     case extractImportPathLiteral arg of
@@ -719,21 +720,6 @@ bindingNames (Nix.NamedVar (StaticKey name :| []) _ _) = [varNameText name]
 bindingNames (Nix.Inherit _ keys _) = map varNameText keys
 bindingNames _ = []
 
-{- | after unification, check that a rec binding resolved to something concrete
-n.b. if it's still a type variable, user wrote `rec { x = x; }`
--}
-checkInfinite :: Text -> NixType -> Infer ()
-checkInfinite bindingName typeVar = do
-    resolvedType <- applyCurrentSubst typeVar
-    case resolvedType of
-        TVar varId
-            | TVar varId == typeVar ->
-                throwTypeError $
-                    "infinite type: rec binding '"
-                        <> bindingName
-                        <> "' has no concrete constraint"
-        _ -> pure ()
-
 {- | partition fresh type vars per binding by name count
 each binding may introduce multiple names (e.g. inherit a b c)
 -}
@@ -751,7 +737,6 @@ inferRecBinding extendedEnv (Nix.NamedVar (StaticKey name :| []) expr pos) (type
     let bindingName = varNameText name
     t <- infer extendedEnv expr
     unify typeVar t
-    checkInfinite bindingName typeVar
     t' <- applyCurrentSubst t
     emitBinding bindingName t' (posToSpan pos)
     pure [(bindingName, t)]
@@ -761,7 +746,6 @@ inferRecBinding extendedEnv (Nix.Inherit maybeScope keys _) typeVarList = do
         [ do
             t <- resolveInheritType extendedEnv maybeScope k
             unify typeVar t
-            checkInfinite keyName typeVar
             pure (keyName, t)
         | (k, typeVar) <- zip keys typeVarList
         , let keyName = varNameText k
@@ -782,6 +766,17 @@ inferRecursiveBindings environment bindings' = do
     let extendedEnv = foldr (\(n, t) e -> extendEnv n (Forall [] t) e) environment (zip names freshTypeVars)
     let varChunks = assignChunks freshTypeVars bindings'
     inferredBindings <- sequence [inferRecBinding extendedEnv binding typeVars | (binding, typeVars) <- zip bindings' varChunks]
+    resolvedVars <- forM freshTypeVars applyCurrentSubst
+    when
+        ( all
+            ( \(resolved, original) -> case resolved of
+                TVar vid -> TVar vid == original
+                _ -> False
+            )
+            (zip resolvedVars freshTypeVars)
+        )
+        $ throwTypeError
+        $ "infinite type: rec bindings " <> T.intercalate ", " names <> " have no concrete constraint"
     pure $ concat inferredBindings
 
 -- | infer a single non-recursive binding and accumulate results
@@ -856,19 +851,20 @@ inferLetGroup _baseEnv currentEnv scc = do
     forM_ (zip groupBindings freshVars) $ \((name, expr, sp), typeVar) -> do
         t <- infer envRecursive expr
         unify typeVar t
-
-        t'' <- applyCurrentSubst typeVar
-        case t'' of
-            TVar typeVariable'
-                | TVar typeVariable' == typeVar ->
-                    throwTypeError $
-                        "infinite type: rec binding '"
-                            <> name
-                            <> "' has no concrete constraint"
-            _ -> pure ()
-
         t' <- applyCurrentSubst t
         emitBinding name t' sp
+
+    resolvedVars <- forM freshVars applyCurrentSubst
+    when
+        ( all
+            ( \(resolved, original) -> case resolved of
+                TVar vid -> TVar vid == original
+                _ -> False
+            )
+            (zip resolvedVars freshVars)
+        )
+        $ throwTypeError
+        $ "infinite type: rec bindings " <> T.intercalate ", " names <> " have no concrete constraint"
 
     -- generalize each binding for let-polymorphism
     schemes <- mapM (generalize currentEnv) freshVars

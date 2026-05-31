@@ -1,45 +1,39 @@
 { lib }:
-  let
+let
   inherit (lib) mkIf versionAtLeast versionOlder;
-in {
+in
+{
   # Keeping these around in case we decide to change this horrible implementation :)
   option =
     x:
-    x // {
-    # Keeping these around in case we decide to change this horrible implementation :)
-    optional = true;
-  };
+    x
+    // {
+      # Keeping these around in case we decide to change this horrible implementation :)
+      optional = true;
+    };
 
-  yes =
-    {
+  yes = {
     tristate = "y";
     optional = false;
   };
-  no =
-    {
+  no = {
     tristate = "n";
     optional = false;
   };
-  module =
-    {
+  module = {
     tristate = "m";
     optional = false;
   };
-  unset =
-    {
+  unset = {
     tristate = null;
     optional = false;
   };
-  freeform =
-    x:
-    {
+  freeform = x: {
     freeform = x;
     optional = false;
   };
   #  Common patterns/legacy used in common-config/hardened/config.nix
-  whenHelpers =
-    version:
-    {
+  whenHelpers = version: {
     whenAtLeast = ver: mkIf (versionAtLeast version ver);
     whenOlder = ver: mkIf (versionOlder version ver);
     # range is (inclusive, exclusive)

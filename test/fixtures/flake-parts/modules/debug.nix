@@ -15,9 +15,7 @@ let
     optionalAttrs
     types
     ;
-  inherit (flake-parts-lib)
-    mkPerSystemOption
-    ;
+  inherit (flake-parts-lib) mkPerSystemOption;
 
   mkDebugConfig =
     {
@@ -44,7 +42,7 @@ in
         `nix repl`.
 
         ```
-        $ nix repl
+        ''$ nix repl
         nix-repl> :lf .
         nix-repl> currentSystem._module.args.pkgs.hello
         «derivation /nix/store/7vf0d0j7majv1ch1xymdylyql80cn5fp-hello-2.12.1.drv»
@@ -62,6 +60,7 @@ in
            Works for arbitrary system values.
 
         See [Expore and debug option values](../debug.html) for more examples.
+
       '';
     };
     perSystem = mkPerSystemOption (
@@ -78,12 +77,15 @@ in
             description = ''
               Values to return in e.g. `allSystems.<system>` when
               [`debug = true`](#opt-debug).
+
             '';
             type = types.lazyAttrsOf types.raw;
           };
         };
         config = {
-          debug = mkDebugConfig { inherit config options extendModules; };
+          debug = mkDebugConfig {
+            inherit config options extendModules;
+          };
         };
       }
     );
@@ -91,7 +93,9 @@ in
 
   config = mkIf config.debug {
     flake = {
-      debug = mkDebugConfig { inherit config options extendModules; };
+      debug = mkDebugConfig {
+        inherit config options extendModules;
+      };
       allSystems = mapAttrs (_s: c: c.debug) config.allSystems;
     }
     // optionalAttrs (builtins ? currentSystem) {

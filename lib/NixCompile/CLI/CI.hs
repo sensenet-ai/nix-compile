@@ -15,15 +15,15 @@ module NixCompile.CLI.CI (
 )
 where
 
-import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
-import GHC.Conc (getNumCapabilities)
-import Control.Exception (bracket_)
-import Control.Monad.IO.Class (MonadIO (..))
 import Control.Concurrent.Async (forConcurrently)
+import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
+import Control.Exception (bracket_)
 import Control.Monad (foldM, unless)
+import Control.Monad.IO.Class (MonadIO (..))
 import Data.List (isPrefixOf)
 import Data.Set qualified as Set
 import Data.Text qualified as T
+import GHC.Conc (getNumCapabilities)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (makeRelative, takeDirectory, takeExtension, (</>))
@@ -55,13 +55,15 @@ runCIPhases config dir = do
 
     typeCounts <- runTypeCheckPhase config dir
 
-    graphCounts <- if hasFlake
-        then runGraphPhase config flakePath
-        else pure emptyCICounts
+    graphCounts <-
+        if hasFlake
+            then runGraphPhase config flakePath
+            else pure emptyCICounts
 
-    bashCounts <- if hasFlake
-        then runNixPhase config flakePath
-        else pure emptyCICounts
+    bashCounts <-
+        if hasFlake
+            then runNixPhase config flakePath
+            else pure emptyCICounts
 
     files <- liftIO $ collectFiles config dir
     pkgCounts <- runPackagePhase config files

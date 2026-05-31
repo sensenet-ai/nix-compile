@@ -1,6 +1,5 @@
 {
-  imports =
-    [
+  imports = [
     ./modules/apps.nix
     ./modules/checks.nix
     ./modules/debug.nix

@@ -630,25 +630,28 @@ prop_literal_type_preserved lit =
 -- SUBSTITUTION — CHAIN RESOLUTION
 -- ============================================================================
 
--- | applySubst must follow chains to terminal types.
---   e.g. {PORT → TVar HOST, HOST → TInt} must resolve PORT to TInt.
+{- | applySubst must follow chains to terminal types.
+  e.g. {PORT → TVar HOST, HOST → TInt} must resolve PORT to TInt.
+-}
 prop_subst_chain_bash :: Property
 prop_subst_chain_bash =
     forAll genValidVarName $ \v1 -> forAll genValidVarName $ \v2 ->
-    let subst = Map.fromList
-            [ (TypeVar v1, TVar (TypeVar v2))
-            , (TypeVar v2, TInt)
-            ]
-        resolved = applySubst subst (TVar (TypeVar v1))
-     in resolved === TInt
+        let subst =
+                Map.fromList
+                    [ (TypeVar v1, TVar (TypeVar v2))
+                    , (TypeVar v2, TInt)
+                    ]
+            resolved = applySubst subst (TVar (TypeVar v1))
+         in resolved === TInt
 
 -- | Nix substitution must also follow chains.
 prop_subst_chain_nix :: Bool
 prop_subst_chain_nix =
-    let s = Map.fromList
-            [ (NT.TypeVar 0, NT.TVar (NT.TypeVar 1))
-            , (NT.TypeVar 1, NT.TInt)
-            ]
+    let s =
+            Map.fromList
+                [ (NT.TypeVar 0, NT.TVar (NT.TypeVar 1))
+                , (NT.TypeVar 1, NT.TInt)
+                ]
      in NT.applySubst s (NT.TVar (NT.TypeVar 0)) == NT.TInt
 
 -- ============================================================================
