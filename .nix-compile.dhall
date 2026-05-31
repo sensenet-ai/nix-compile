@@ -4,6 +4,6 @@ let overrideOff = \(id : Text) -> { id, severity = Severity.Off, reason = None T
 
 in  { profile = "standard"
     , layout = "straylight"
-    , extra-ignores = [ "test/fixtures/**" ]
+    , extra-ignores = [ "test/fixtures/**", "tools/adversarial_output/**" ]
     , overrides = [ overrideOff "long-inline-string" ]
     }
