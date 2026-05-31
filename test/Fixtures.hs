@@ -26,7 +26,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile (Schema (..), Script (..), parseScript)
 import NixCompile.Nix.Infer (inferFile)
-import NixCompile.Nix.Layout (LayoutCode (..), LayoutViolation (..), findLayoutViolations)
+import NixCompile.Nix.LayoutConvention (ErrorCode (..), LayoutError (..), validateFileExpr)
 import NixCompile.Nix.Lint (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Nix.Parse (parseNixFile)
 import NixCompile.Types (Fact (..))
@@ -197,7 +197,7 @@ testGpuBrokerLayoutValid = do
             putStrLn $ "Parse failed: " ++ show err
             return False
         Right expr -> do
-            let violations = findLayoutViolations path expr
+            let violations = validateFileExpr path expr
             if null violations
                 then do
                     putStrLn "OK"
@@ -222,13 +222,13 @@ testGpuBrokerLayoutInvalid = do
             putStrLn $ "Parse failed: " ++ show err
             return False
         Right expr -> do
-            let violations = findLayoutViolations path expr
-            let hasWrongClass = any (\v -> lvCode v == L004) violations
+            let violations = validateFileExpr path expr
+            let hasWrongClass = any (\v -> errCode v == E010) violations
 
             if hasWrongClass
                 then do
                     putStrLn "OK"
                     return True
                 else do
-                    putStrLn $ "Layout check failed (expected L004): " ++ show violations
+                    putStrLn $ "Layout check failed (expected E010): " ++ show violations
                     return False

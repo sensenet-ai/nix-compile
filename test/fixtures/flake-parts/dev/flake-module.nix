@@ -1,27 +1,15 @@
-{
-  config,
-  lib,
-  inputs,
-  self,
-  withSystem,
-  ...
-}:
+{ config, lib, inputs, self, withSystem, ... }:
+  {
+  imports = [inputs.pre-commit-hooks-nix.flakeModule inputs.hercules-ci-effects.flakeModule];
+  systems = ["x86_64-linux" "aarch64-darwin"];
 
-{
-  imports = [
-    inputs.pre-commit-hooks-nix.flakeModule
-    inputs.hercules-ci-effects.flakeModule # herculesCI attr
-  ];
-  systems = [
-    "x86_64-linux"
-    "aarch64-darwin"
-  ];
-
-  hercules-ci.flake-update = {
+  hercules-ci.flake-update =
+    {
     enable = true;
     autoMergeMethod = "merge";
     when.dayOfMonth = 1;
-    flakes = {
+    flakes =
+      {
       "." = { };
       "dev" = { };
     };
@@ -30,42 +18,54 @@
   perSystem =
     { config, pkgs, ... }:
     {
+    
+    devShells.default =
+      pkgs.mkShell {
+      nativeBuildInputs = [pkgs.nixpkgs-fmt pkgs.hci];
+      shellHook =
+        ''
+        ${config.pre-commit.shellHook}
 
-      devShells.default = pkgs.mkShell {
-        nativeBuildInputs = [
-          pkgs.nixpkgs-fmt
-          pkgs.hci
-        ];
-        shellHook = ''
-          ${config.pre-commit.shellHook}
-        '';
-      };
-
-      pre-commit = {
-        inherit pkgs; # should make this default to the one it can get via follows
-        settings = {
-          hooks.nixpkgs-fmt.enable = true;
-        };
-      };
-
-      checks.eval-tests =
-        let
-          tests = import ./tests/eval-tests.nix { flake-parts = self; };
-        in
-        tests.runTests pkgs.emptyFile // { internals = tests; };
-
+      '';
     };
-  flake = {
+
+    pre-commit =
+      {
+      inherit pkgs;
+      settings =
+        {
+        hooks.nixpkgs-fmt.enable = true;
+      };
+    };
+
+    checks.eval-tests =
+      let
+      tests =
+        import ./tests/eval-tests.nix {
+        flake-parts = self;
+      };
+    in tests.runTests pkgs.emptyFile // {
+      internals = tests;
+    };
+  };
+  flake =
+    {
     # for repl exploration / debug
     config.config = config;
-    options.mySystem = lib.mkOption { default = config.allSystems.${builtins.currentSystem}; };
-    config.effects = withSystem "x86_64-linux" (
-      { pkgs, hci-effects, ... }:
+    options.mySystem =
+      lib.mkOption {
+      default = config.allSystems.${builtins.currentSystem};
+    };
+    config.effects =
+      withSystem "x86_64-linux" ({ pkgs, hci-effects, ... }:
       {
-        tests = {
-          template = pkgs.callPackage ./tests/template.nix { inherit hci-effects; };
+      tests =
+        {
+        template =
+          pkgs.callPackage ./tests/template.nix {
+          inherit hci-effects;
         };
-      }
-    );
+      };
+    });
   };
 }

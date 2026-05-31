@@ -77,7 +77,7 @@ traverseNixExpr (Fix (Compose (AnnUnit srcSpan expression))) = case expression o
     NStr (DoubleQuoted parts) ->
         checkInlineStringLength srcSpan parts ++ concatMap nixPartExprs parts
     NStr (Indented _ parts) ->
-        checkInlineStringLength srcSpan parts ++ concatMap nixPartExprs parts
+        concatMap nixPartExprs parts
     NSet NonRecursive bindings -> concatMap traverseNixBinding bindings
     NList xs -> concatMap traverseNixExpr xs
     NLet bindings body -> concatMap traverseNixBinding bindings ++ traverseNixExpr body

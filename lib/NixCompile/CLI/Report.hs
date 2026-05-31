@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wwarn=unused-imports #-}
 
 module NixCompile.CLI.Report (
     partitionViolations,

@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wwarn=unused-imports #-}
 
 module NixCompile.CLI.CI (
     cmdCI,
@@ -21,11 +20,7 @@ import GHC.Conc (getNumCapabilities)
 import Control.Exception (bracket_)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Concurrent.Async (forConcurrently)
-import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
-import GHC.Conc (getNumCapabilities)
-import Control.Exception (bracket_)
 import Control.Monad (foldM, unless)
-import Control.Concurrent.Async (forConcurrently)
 import Data.List (isPrefixOf)
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -116,8 +111,9 @@ runTypeCheckPhase config dir = do
             }
 
 runGraphPhase :: Config.Config -> FilePath -> AppM CICounts
-runGraphPhase _config flakePath = do
-    graphResult <- liftIO $ Mod.buildModuleGraphFromFlake (takeDirectory flakePath)
+runGraphPhase config flakePath = do
+    let conv = Config.effectiveLayout config
+    graphResult <- liftIO $ Mod.buildModuleGraphFromFlake conv (takeDirectory flakePath)
     case graphResult of
         Left err -> do
             $(logTM) ErrorS $ logStr $ "Graph error: " <> err

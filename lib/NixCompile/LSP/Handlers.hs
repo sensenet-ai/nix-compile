@@ -45,6 +45,7 @@ import NixCompile.Nix.Infer (TypeEnv (..), builtinEnv, extendImport, inferExprWi
 import NixCompile.Nix.Lint (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Nix.LintDerivation qualified as Deriv
 import NixCompile.Nix.LintPatterns qualified as Patterns
+import NixCompile.Nix.LayoutConvention (straylight)
 import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Nix.ModuleSystem qualified as MS
 import NixCompile.Nix.Parse qualified as NixParse
@@ -663,7 +664,7 @@ projectWideDiagnostics uri = do
             let flakePath = root </> "flake.nix"
             hasFlake <- doesFileExist flakePath
             if hasFlake then do
-                result <- Mod.buildModuleGraph flakePath
+                result <- Mod.buildModuleGraph straylight flakePath
                 case result of
                     Left _ -> pure ()
                     Right _ -> pure ()
@@ -788,7 +789,7 @@ buildCrossEnv uri = do
             let flakePath = root </> "flake.nix"
             hasFlake <- doesFileExist flakePath
             if hasFlake then do
-                result <- Mod.buildModuleGraph flakePath
+                result <- Mod.buildModuleGraph straylight flakePath
                 case result of
                     Left _ -> pure builtinEnv
                     Right mg -> do
@@ -813,7 +814,7 @@ buildCrossScopeGraphWith uri mCurrentExpr = do
             let flakePath = root </> "flake.nix"
             hasFlake <- doesFileExist flakePath
             if hasFlake then do
-                result <- Mod.buildModuleGraph flakePath
+                result <- Mod.buildModuleGraph straylight flakePath
                 case result of
                     Left _ -> pure Scope.empty
                     Right mg -> do

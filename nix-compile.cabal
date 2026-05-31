@@ -43,7 +43,6 @@ library
         NixCompile.Nix.Flake
         NixCompile.Nix.Format
         NixCompile.Nix.Infer
-        NixCompile.Nix.Layout
         NixCompile.Nix.LayoutConvention
         NixCompile.Nix.Lint
         NixCompile.Nix.LintCombined

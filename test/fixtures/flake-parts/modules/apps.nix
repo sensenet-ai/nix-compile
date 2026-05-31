@@ -1,60 +1,71 @@
 { lib, flake-parts-lib, ... }:
-let
-  inherit (lib)
-    mkOption
-    types
-    ;
-  inherit (flake-parts-lib)
-    mkTransposedPerSystemModule
-    ;
+  let
+  inherit (lib) mkOption types;
+  inherit (flake-parts-lib) mkTransposedPerSystemModule;
 
   programType = lib.types.coercedTo derivationType lib.getExe lib.types.str;
 
-  derivationType = lib.types.package // {
+  derivationType =
+    lib.types.package // {
     check = lib.isDerivation;
   };
 
-  appType = lib.types.submodule {
-    options = {
-      type = mkOption {
-        type = lib.types.enum [ "app" ];
+  appType =
+    lib.types.submodule {
+    options =
+      {
+      type =
+        mkOption {
+        type = lib.types.enum ["app"];
         default = "app";
-        description = ''
+        description =
+          ''
           A type tag for `apps` consumers.
+
         '';
       };
-      program = mkOption {
+      program =
+        mkOption {
         type = programType;
-        description = ''
+        description =
+          ''
           A path to an executable or a derivation with `meta.mainProgram`.
+
         '';
       };
-      meta = mkOption {
+      meta =
+        mkOption {
         type = types.lazyAttrsOf lib.types.raw;
         default = { };
         # TODO refer to Nix manual 2.25
-        description = ''
+        description =
+          ''
           Metadata information about the app.
           Standardized in Nix at <https://github.com/NixOS/nix/pull/11297>.
 
           Note: `nix flake check` is only aware of the `description` attribute in `meta`.
+
         '';
       };
     };
   };
-in
-mkTransposedPerSystemModule {
+in mkTransposedPerSystemModule {
   name = "apps";
-  option = mkOption {
+  option =
+    mkOption {
     type = types.lazyAttrsOf appType;
     default = { };
-    description = ''
+    description =
+      ''
       Programs runnable with nix run `<name>`.
+
     '';
-    example = lib.literalExpression ''
+    example =
+      lib.literalExpression ''
       {
         default.program = "''${config.packages.hello}/bin/hello";
       }
+
     '';
   };
   file = ./apps.nix;

@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wwarn=unused-imports #-}
 
 module NixCompile.CLI.Bash (
     checkBashFile,
@@ -53,7 +52,7 @@ checkBashFile config file = do
                     $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
                     liftIO $ putStrLn ""
 
-                let facts = extractFacts ast
+                let facts = extractFacts ast :: [Fact]
                 case validateConfigPaths facts of
                     Left err -> do
                         $(logTM) ErrorS $ logStr $ "Config error: " <> err
@@ -128,7 +127,7 @@ checkScript configuration file bs = do
                 $(logTM) WarningS $ logStr "  Non-store-path interpolations (may need verification):"
                 liftIO $ mapM_ (\i -> putStrLn $ "    ${" ++ T.unpack (Nix.intExpr i) ++ "}") badInterps
 
-            let facts = extractFacts ast
+            let facts = extractFacts ast :: [Fact]
             configErrors <- case validateConfigPaths facts of
                 Left err -> do
                     $(logTM) ErrorS $ logStr $ "  Config error: " <> err
