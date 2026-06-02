@@ -27,6 +27,8 @@ import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (takeExtension)
 
+import Nix.Expr.Types.Annotated (NExprLoc)
+
 import NixCompile (parseScriptFile, scriptSchema)
 import NixCompile.CLI.Bash
 import NixCompile.CLI.CI
@@ -38,6 +40,7 @@ import NixCompile.Nix.Format qualified as NixFmt
 import NixCompile.Nix.Formatter qualified as Formatter
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
+import NixCompile.Safety qualified as Safety
 
 cmdCheck :: Config.Config -> FilePath -> AppM ()
 cmdCheck config path = do
@@ -52,25 +55,32 @@ cmdCheck config path = do
                     ".nix" -> checkNixFile config path
                     _ -> checkBashFile config path
 
-cmdFmt :: FilePath -> AppM ()
-cmdFmt file = do
+{- | Run an analysis pass after enforcing the depth guard.
+n.b. every command except `check` flowed through 'inferExpr'/'buildExpr' with no
+depth guard; this helper funnels them all through 'Safety.analyzeDepth' first.
+-}
+withSafeNix :: FilePath -> (NExprLoc -> AppM ()) -> AppM ()
+withSafeNix file act = do
     parseResult <- liftIO $ Nix.parseNixFile file
     case parseResult of
-        Left err -> do $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure
-        Right expr -> do
-            srcResult <- liftIO $ safeReadFile file
-            case srcResult of
-                Left err -> do $(logTM) ErrorS $ logStr $ "I/O error: " <> err; liftIO exitFailure
-                Right src -> do
-                    liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr
+        Left err -> failParse err
+        Right expr -> case Safety.analyzeDepth expr of
+            Left de -> failParse (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+            Right () -> act expr
+
+cmdFmt :: FilePath -> AppM ()
+cmdFmt file = withSafeNix file $ \expr -> do
+    srcResult <- liftIO $ safeReadFile file
+    case srcResult of
+        Left err -> do $(logTM) ErrorS $ logStr $ "I/O error: " <> err; liftIO exitFailure
+        Right src -> liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr
 
 cmdInfer :: FilePath -> AppM ()
-cmdInfer file = do
+cmdInfer file = withSafeNix file $ \_expr -> do
     result <- liftIO $ NixFmt.formatFile file
     case result of
         Left err -> do $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure
-        Right formatted -> do
-            liftIO $ TIO.putStr formatted
+        Right formatted -> liftIO $ TIO.putStr formatted
 
 cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do
@@ -84,31 +94,19 @@ cmdLSP :: AppM ()
 cmdLSP = liftIO LSP.run >> liftIO exitSuccess
 
 cmdScope :: FilePath -> AppM ()
-cmdScope file = do
-    result <- liftIO $ Nix.parseNixFile file
-    case result of
-        Left err -> failParse err
-        Right expr -> do
-            let scopeGraph = Scope.fromNixFile file expr
-            liftIO $ printScopeGraph scopeGraph
+cmdScope file = withSafeNix file $ \expr -> do
+    let scopeGraph = Scope.fromNixFile file expr
+    liftIO $ printScopeGraph scopeGraph
 
 cmdScopeJSON :: FilePath -> AppM ()
-cmdScopeJSON file = do
-    result <- liftIO $ Nix.parseNixFile file
-    case result of
-        Left err -> failParse err
-        Right expr -> do
-            let scopeGraph = Scope.fromNixFile file expr
-            liftIO $ BL.putStrLn $ encode scopeGraph
+cmdScopeJSON file = withSafeNix file $ \expr -> do
+    let scopeGraph = Scope.fromNixFile file expr
+    liftIO $ BL.putStrLn $ encode scopeGraph
 
 cmdScopeDhall :: FilePath -> AppM ()
-cmdScopeDhall file = do
-    result <- liftIO $ Nix.parseNixFile file
-    case result of
-        Left err -> failParse err
-        Right expr -> do
-            let scopeGraph = Scope.fromNixFile file expr
-            liftIO $ TIO.putStrLn $ Scope.toDhall scopeGraph
+cmdScopeDhall file = withSafeNix file $ \expr -> do
+    let scopeGraph = Scope.fromNixFile file expr
+    liftIO $ TIO.putStrLn $ Scope.toDhall scopeGraph
 
 failParse :: Text -> AppM a
 failParse err = do $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure

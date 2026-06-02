@@ -18,8 +18,10 @@
 - [Nix Type Inference](./nix-inference.md)
 - [Scope Graphs](./scope-graphs.md)
 - [Builtins Database](./builtins.md)
+- [Safety](./safety.md)
 
 # Development
 
 - [Bug Tracker](./bugs.md)
 - [Testing](./testing.md)
+- [Benchmarks](./benchmarks.md)

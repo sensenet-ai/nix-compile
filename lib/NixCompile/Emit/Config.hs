@@ -36,6 +36,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Numeric (showHex)
 
+import NixCompile.Bash.Patterns (escapeForParamExpansion)
 import NixCompile.Types
 
 jsonEscape :: Text -> Text
@@ -430,6 +431,11 @@ renderTemplateParts = concatTemplates . map renderPart
   where
     renderPart (ConfigText txt) = literalTemplate (jsonEscape txt)
     renderPart (ConfigVar var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
-    renderPart (ConfigVarDefault var def) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":-" <> def <> "}\")")
+    -- n.b. escape def/alt before embedding (closes C1 from review-2). The user-controlled
+    -- default text from `${VAR:-…}` flows in raw; bash would otherwise evaluate $(…), backticks,
+    -- etc. inside the default and execute arbitrary commands.
+    renderPart (ConfigVarDefault var def) =
+        dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":-" <> escapeForParamExpansion def <> "}\")")
     renderPart (ConfigVarRequired var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
-    renderPart (ConfigVarAlternate var alt) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":+" <> alt <> "}\")")
+    renderPart (ConfigVarAlternate var alt) =
+        dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":+" <> escapeForParamExpansion alt <> "}\")")

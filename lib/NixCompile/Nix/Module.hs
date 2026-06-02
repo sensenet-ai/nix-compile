@@ -40,7 +40,6 @@ module NixCompile.Nix.Module (
 )
 where
 
-import Control.Exception (IOException, try)
 import Control.Monad (foldM)
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
@@ -55,12 +54,12 @@ import Data.Text qualified as T
 import Nix.Expr.Types hiding (Binding)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
-import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as NixPath
 import NixCompile.Nix.Infer (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
 import NixCompile.Nix.LayoutConvention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types
+import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))
@@ -167,27 +166,47 @@ buildModules conv _rootDir path visited state
     | path `Set.member` visited = pure state
     | otherwise = processFile conv path visited state
 
--- | parse a single file and, on success, process its imports
+{- | parse a single file and, on success, process its imports.
+n.b. routes through Safety.safeParseNixFile (review-2 C4) — catches StackOverflow
+from megaparsec recursion on adversarial input, IO errors, and parse errors,
+all as structured ParseFailures.
+-}
 processFile :: Convention -> FilePath -> Set FilePath -> BuildState -> IO BuildState
 processFile conv path visited state = do
     fileExists <- doesFileExist path
     if not fileExists
         then pure state
         else do
-            parseResult <- try (parseNixFileLoc (NixPath.Path path))
+            parseResult <- Safety.safeParseNixFile path
             case parseResult of
-                Left (exception :: IOException) ->
-                    pure $ state{bsFailures = ParseFailure path (T.pack $ show exception) : bsFailures state}
-                Right (Left parseError) ->
-                    pure $ state{bsFailures = ParseFailure path (T.pack (show parseError)) : bsFailures state}
-                Right (Right expr) ->
+                Left e ->
+                    pure $ state{bsFailures = ParseFailure path (Safety.renderSafetyError e) : bsFailures state}
+                Right expr ->
                     processParsedFile conv path visited state expr
 
 -- ── process a successfully parsed file ───────────────────────────
 
--- | extract imports, run type inference / lint / layout checks, then recurse
+{- | extract imports, run type inference / lint / layout checks, then recurse.
+n.b. fixed from review-2:
+  * routes through Safety.analyzeDepth so a hostile module can't OOM the loader.
+  * still produces a partial graph on depth-overflow (records as ParseFailure) so
+    subsequent files still get processed.
+-}
 processParsedFile :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
-processParsedFile conv path visited state expr = do
+processParsedFile conv path visited state expr = case Safety.analyzeDepth expr of
+    Left de ->
+        pure $
+            state
+                { bsFailures =
+                    ParseFailure
+                        path
+                        (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+                        : bsFailures state
+                }
+    Right () -> processParsedFile' conv path visited state expr
+
+processParsedFile' :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
+processParsedFile' conv path visited state expr = do
     let rootDir = takeDirectory path
     let imports = findImports rootDir expr
     let moduleType = case inferExpr expr of

@@ -26,7 +26,7 @@ import Data.Text qualified as T
 import GHC.Conc (getNumCapabilities)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (exitFailure, exitSuccess)
-import System.FilePath (makeRelative, takeDirectory, takeExtension, (</>))
+import System.FilePath (makeRelative, pathSeparator, takeDirectory, takeExtension, (</>))
 
 import NixCompile.CLI.Bash
 import NixCompile.CLI.Check
@@ -253,7 +253,11 @@ walkDirectory :: FilePath -> Set.Set FilePath -> [FilePath] -> Set.Set FilePath 
 walkDirectory _canonicalRoot _ignoredDirs accumulatedFiles _visited [] = pure accumulatedFiles
 walkDirectory canonicalRoot ignoredDirs accumulatedFiles visited (directory : worklist) = do
     canonical <- canonicalizePath directory
-    if canonical `Set.member` visited || not (canonicalRoot `isPrefixOf` canonical)
+    -- n.b. boundary check must include the path separator (C5 from review-2). Without it,
+    -- `/home/u/proj` is considered a prefix of `/home/u/proj-evil`, walking the sibling.
+    let rootBoundary = canonicalRoot ++ [pathSeparator]
+        insideRoot = canonical == canonicalRoot || rootBoundary `isPrefixOf` canonical
+    if canonical `Set.member` visited || not insideRoot
         then walkDirectory canonicalRoot ignoredDirs accumulatedFiles visited worklist
         else do
             entries <- listDirectory directory
@@ -270,7 +274,8 @@ classifyEntries basePath ignoredDirs entries =
     foldM
         ( \(nixFiles, subDirectories) entry -> do
             let fullPath = basePath </> entry
-            if entry `elem` Set.toList ignoredDirs
+            -- n.b. use Set.member instead of Set.toList .. elem (P2 from review-2).
+            if Set.member entry ignoredDirs
                 then pure (nixFiles, subDirectories)
                 else do
                     isDirectory <- doesDirectoryExist fullPath

@@ -42,7 +42,6 @@ module NixCompile.Nix.Parse (
 )
 where
 
-import Control.Exception (IOException, try)
 import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
@@ -50,9 +49,9 @@ import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import Nix.Parser (parseNixFileLoc, parseNixTextLoc)
-import Nix.Utils (Path (..))
+import Nix.Parser qualified
 import NixCompile.Nix.Utils (toSpan, varNameText)
+import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Span (..))
 
 -- | A bash script extracted from a Nix file
@@ -81,20 +80,27 @@ data ShellScriptCall = ShellScriptCall
     }
     deriving (Show)
 
--- | Parse a Nix file and return the annotated AST
+{- | Parse a Nix file and return the annotated AST.
+n.b. catches StackOverflow from the parser (megaparsec recursion blows the stack
+on adversarial input like deeply-nested parens); routes through Safety wrappers.
+-}
 parseNixFile :: FilePath -> IO (Either Text NExprLoc)
-parseNixFile path = do
-    result <- try (parseNixFileLoc (Path path))
-    pure $ case result of
-        Left (e :: IOException) -> Left (T.pack $ show e)
-        Right (Left doc) -> Left (T.pack $ show doc)
-        Right (Right expr) -> Right expr
+parseNixFile path = either (Left . Safety.renderSafetyError) Right <$> Safety.safeParseNixFile path
 
--- | Parse a Nix expression from text
+{- | Parse a Nix expression from text.
+n.b. this is the safe variant — exception-handling lives in Safety.
+-}
 parseNixExpr :: Text -> Either Text NExprLoc
-parseNixExpr src = case parseNixTextLoc src of
-    Left doc -> Left (T.pack $ show doc)
-    Right expr -> Right expr
+parseNixExpr src =
+    let parseResult = (case Safety.safeAnalyze =<< parseNoIO src of
+            Left e -> Left (Safety.renderSafetyError e)
+            Right expr -> Right expr)
+     in parseResult
+  where
+    parseNoIO :: Text -> Either Safety.SafetyError NExprLoc
+    parseNoIO s = case Nix.Parser.parseNixTextLoc s of
+        Left doc -> Left (Safety.SafetyParseFailed (T.pack (show doc)))
+        Right expr -> Right expr
 
 -- | Parse a Nix expression from text with filepath for error context
 parseNix :: FilePath -> Text -> Either Text NExprLoc

@@ -109,6 +109,8 @@ mkSpan tokenId = do
 lookupPosition :: SA.Id -> Map SA.Id (Position, Position) -> Span
 lookupPosition tokenId positionMap
     | Just (startPosition, endPosition) <- Map.lookup tokenId positionMap =
+        -- n.b. ShellCheck positions are 1-based (matching megaparsec); the prior
+        -- REVIEW erroneously claimed they were 0-based. No adjustment needed.
         Span
             (Loc (fromIntegral $ posLine startPosition) (fromIntegral $ posColumn startPosition))
             (Loc (fromIntegral $ posLine endPosition) (fromIntegral $ posColumn endPosition))
