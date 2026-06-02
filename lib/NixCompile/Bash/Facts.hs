@@ -665,6 +665,8 @@ mkSpan shellCheckId = do
     posMap <- ask
     case Map.lookup shellCheckId posMap of
         Just (start, end) ->
+            -- n.b. ShellCheck positions are 1-based (per the Interface module);
+            -- this matches megaparsec's positions so no adjustment is needed.
             pure $
                 Span
                     (Loc (fromIntegral $ posLine start) (fromIntegral $ posColumn start))

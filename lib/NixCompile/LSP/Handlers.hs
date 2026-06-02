@@ -20,9 +20,10 @@ module NixCompile.LSP.Handlers (
 where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent.Async (async)
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
-import Control.Monad (when)
+import Control.Concurrent.Async (Async, async, waitCatch)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
+import Control.Exception (SomeException, try)
+import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Fix (Fix (..))
 import Data.Functor.Compose (Compose (..))
@@ -50,10 +51,12 @@ import NixCompile.Nix.LintDerivation qualified as Deriv
 import NixCompile.Nix.LintPatterns qualified as Patterns
 import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Nix.ModuleSystem qualified as MS
+import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Nix.Parse qualified as NixParse
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
+import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
@@ -62,6 +65,44 @@ import System.IO.Unsafe (unsafePerformIO)
 {-# NOINLINE moduleGraphCache #-}
 moduleGraphCache :: MVar (Map.Map FilePath Mod.ModuleGraph)
 moduleGraphCache = unsafePerformIO $ newMVar Map.empty
+
+{-# NOINLINE inflightCache #-}
+-- | Tracks an in-flight graph build per project root so concurrent requests
+-- don't both rebuild the same graph (Race-A from the audit).
+inflightCache :: MVar (Map.Map FilePath (Async (Maybe Mod.ModuleGraph)))
+inflightCache = unsafePerformIO $ newMVar Map.empty
+
+{-# NOINLINE projectCacheRef #-}
+{- | Per-file, content-addressed project cache. Built lazily and incrementally
+in the background; lookups never block. Replaces the all-or-nothing
+moduleGraphCache for hover/inlay/completion paths.
+-}
+projectCacheRef :: MVar (Maybe PC.ProjectCache)
+projectCacheRef = unsafePerformIO (newMVar Nothing)
+
+-- | Get the project cache, creating it (and starting workers) the first time.
+-- Subsequent calls return the same cache.
+getProjectCache :: IO PC.ProjectCache
+getProjectCache = modifyMVar projectCacheRef $ \case
+    Just pc -> pure (Just pc, pc)
+    Nothing -> do
+        pc <- PC.newProjectCache
+        PC.startWorkers pc
+        pure (Just pc, pc)
+
+{- | Parse text inside an LSP handler. Returns Nothing on parse failure,
+depth overflow, or stack overflow — handlers respond gracefully instead of
+crashing the whole server.
+-}
+lspSafeParse :: Text -> Maybe NExprLoc
+lspSafeParse txt = unsafePerformIO $ do
+    r <- try (Exc.evaluate (parseNixTextLoc txt))
+    pure $ case r of
+        Left (_ :: SomeException) -> Nothing
+        Right (Left _) -> Nothing
+        Right (Right e) -> case Safety.analyzeDepth e of
+            Left _ -> Nothing
+            Right () -> Just e
 
 handlers :: Handlers (LspM ())
 handlers =
@@ -92,17 +133,33 @@ semanticLegend =
 -- ═══════════════════════ lifecycle ═══════════════════════
 
 initializedHandler :: TNotificationMessage 'Method_Initialized -> LspM () ()
-initializedHandler _not =
+initializedHandler _not = do
+    -- Eagerly construct the project cache so its workers are running and
+    -- ready to drain enqueued files as soon as the first didOpen lands.
+    -- Cheap: just spawns N idle threads.
+    _ <- liftIO getProjectCache
     sendNotification SMethod_WindowLogMessage $
         LogMessageParams MessageType_Info "nix-compile LSP — panopticon online"
 
 documentOpenHandler :: TNotificationMessage 'Method_TextDocumentDidOpen -> LspM () ()
 documentOpenHandler notif = do
     let TNotificationMessage _ _ (DidOpenTextDocumentParams (TextDocumentItem uri _ _ txt)) = notif
+    -- Single-file diagnostics: always available, never blocks.
     let diags = fullLint txt
     sendNotification SMethod_TextDocumentPublishDiagnostics $
         PublishDiagnosticsParams uri Nothing diags
-    liftIO $ voidProjectDiags uri
+    -- BFS seed: the currently-open file is the highest priority. Workers will
+    -- pick it up, expand to its imports, etc. This replaces voidProjectDiags
+    -- as the "warm the cache" entry point.
+    liftIO $ do
+        case uriToFilePath uri of
+            Just fp -> do
+                pc <- getProjectCache
+                PC.enqueueFile pc fp
+            Nothing -> pure ()
+        -- Keep the existing flake-graph warm path for now; safe to call in
+        -- parallel with the per-file cache.
+        voidProjectDiags uri
 
 documentChangeHandler :: TNotificationMessage 'Method_TextDocumentDidChange -> LspM () ()
 documentChangeHandler notif = do
@@ -123,7 +180,17 @@ documentChangeHandler notif = do
 documentSaveHandler :: TNotificationMessage 'Method_TextDocumentDidSave -> LspM () ()
 documentSaveHandler notif = do
     let TNotificationMessage _ _ (DidSaveTextDocumentParams (TextDocumentIdentifier uri) txt) = notif
-    liftIO $ invalidateModuleGraphCache uri
+    liftIO $ do
+        invalidateModuleGraphCache uri
+        case uriToFilePath uri of
+            Just fp -> do
+                pc <- getProjectCache
+                -- Per-file invalidation: the saved file + its reverse-dep
+                -- closure are marked Stale; the saved file is re-enqueued
+                -- for immediate recompute; reverse-deps recompute lazily
+                -- when something asks for them.
+                PC.invalidateFile pc fp
+            Nothing -> pure ()
     case txt of
         Just t -> do
             let diags = fullLint t
@@ -150,9 +217,9 @@ hoverHandler req responder = do
         Nothing -> responder $ Right $ InL $ Hover{_contents = InL noFile, _range = Nothing}
         Just vf -> do
             let txt = virtualFileText vf
-            case parseNixTextLoc txt of
-                Left _ -> responder $ Right $ InL $ Hover{_contents = InL parseErr, _range = Nothing}
-                Right expr -> do
+            case lspSafeParse txt of
+                Nothing -> responder $ Right $ InL $ Hover{_contents = InL parseErr, _range = Nothing}
+                Just expr -> do
                     env <- liftIO $ buildCrossEnv uri
                     let contents = case inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c) of
                             Nothing -> MarkupContent MarkupKind_Markdown "`no expression at cursor`"
@@ -180,9 +247,9 @@ definitionHandler req responder = do
         Nothing -> responder $ Right $ InR $ InR Null
         Just vf -> do
             let txt = virtualFileText vf
-            case parseNixTextLoc txt of
-                Left _ -> responder $ Right $ InR $ InR Null
-                Right expr -> do
+            case lspSafeParse txt of
+                Nothing -> responder $ Right $ InR $ InR Null
+                Just expr -> do
                     sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
                     let cursorLine = fromIntegral l + 1; cursorCol = fromIntegral c + 1
                     case findRef (cursorLine, cursorCol) sg of
@@ -234,9 +301,9 @@ renameHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR Null
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR Null
-            Right expr ->
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR Null
+            Just expr ->
                 let sg = Scope.fromNixExpr Nothing expr
                     cl = fromIntegral l + 1
                     cc = fromIntegral c + 1
@@ -279,9 +346,9 @@ referencesHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR Null
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR Null
-            Right expr -> do
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR Null
+            Just expr -> do
                 sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
                 let cl = fromIntegral l + 1; cc = fromIntegral c + 1
                 case findRef (cl, cc) sg of
@@ -322,9 +389,9 @@ completionHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR (InR Null)
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR (InR Null)
-            Right expr -> do
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR (InR Null)
+            Just expr -> do
                 env <- liftIO $ buildCrossEnv uri
                 let items = completionsForExpr env expr (fromIntegral l) (fromIntegral c)
                 responder $ Right $ InL items
@@ -395,9 +462,9 @@ signatureHelpHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR Null
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR Null
-            Right expr -> do
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR Null
+            Just expr -> do
                 env <- liftIO $ buildCrossEnv uri
                 case signatureAtCursor env expr (fromIntegral l) (fromIntegral c) of
                     Just sh -> responder $ Right $ InL sh
@@ -504,9 +571,9 @@ documentSymbolHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR (InL [])
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR (InL [])
-            Right expr -> do
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR (InL [])
+            Just expr -> do
                 let syms = collectTopBindingSymbols expr
                 responder $ Right $ InR (InL syms)
 
@@ -563,9 +630,9 @@ semanticTokensFullHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR Null
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR Null
-            Right expr -> do
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR Null
+            Just expr -> do
                 let tokens = semanticTokens expr
                 responder $ Right $ InL tokens
 
@@ -656,9 +723,9 @@ inlayHintHandler req responder = do
     mvf <- getVirtualFile (toNormalizedUri uri)
     case mvf of
         Nothing -> responder $ Right $ InR Null
-        Just vf -> case parseNixTextLoc (virtualFileText vf) of
-            Left _ -> responder $ Right $ InR Null
-            Right expr -> do
+        Just vf -> case lspSafeParse (virtualFileText vf) of
+            Nothing -> responder $ Right $ InR Null
+            Just expr -> do
                 env <- liftIO $ buildCrossEnv uri
                 let hints = inlayHintsForExpr env expr range
                 responder $ Right $ InL hints
@@ -688,9 +755,9 @@ cursorInRange (Position l c) (Range (Position rl rc) (Position rel rec)) =
 -- ═══════════════════════ diagnostics engine ═══════════════════════
 
 fullLint :: Text -> [Diagnostic]
-fullLint txt = case parseNixTextLoc txt of
-    Left _ -> []
-    Right expr ->
+fullLint txt = case lspSafeParse txt of
+    Nothing -> []
+    Just expr ->
         concat [nixVios' expr, derivVios' "<buffer>" expr, patternVios' expr, embeddedBashDiags expr]
 
 nixVios' :: NExprLoc -> [Diagnostic]
@@ -747,26 +814,20 @@ bashErrorCode Forbidden.VBacktick = "ALEPH-B004"
 
 -- ═══════════════════════ project-wide diagnostics ═══════════════════════
 
+{- | Eagerly warm the module-graph cache for the URI's project.
+n.b. fixed from review-2 (B5 voidProjectDiags was a no-op stub):
+  * actually populates the cache so subsequent hover/definition are warm
+  * exception-safe via getOrBuildModuleGraph's try/catch
+  * uses the inflight-dedup machinery so we don't race the foreground request
+-}
 voidProjectDiags :: Uri -> IO ()
 voidProjectDiags uri = do
-    _ <- async $ projectWideDiagnostics uri
+    _ <- async $ do
+        result <- try (getOrBuildModuleGraph uri)
+        case result :: Either SomeException (Maybe Mod.ModuleGraph) of
+            Left _ -> pure ()
+            Right _ -> pure ()
     pure ()
-
-projectWideDiagnostics :: Uri -> IO ()
-projectWideDiagnostics uri = do
-    mRoot <- findProjectRoot uri
-    case mRoot of
-        Nothing -> pure ()
-        Just root -> do
-            let flakePath = root </> "flake.nix"
-            hasFlake <- doesFileExist flakePath
-            if hasFlake
-                then do
-                    result <- Mod.buildModuleGraph straylight flakePath
-                    case result of
-                        Left _ -> pure ()
-                        Right _ -> pure ()
-                else pure ()
 
 -- ═══════════════════════ legacy lint ═══════════════════════
 
@@ -789,34 +850,28 @@ nixCode = \case
     VLongInlineString n -> "ALEPH-N012 (" <> T.pack (show n) <> " chars)"
 
 spToDiagnostic :: Text -> Span -> Diagnostic
-spToDiagnostic msg (Span (Loc line col) (Loc endL endC) _)
-    | line <= 0 && col <= 0 =
-        Diagnostic
-            { _range = Range (Position 0 0) (Position 0 0)
-            , _severity = Just DiagnosticSeverity_Error
-            , _code = Nothing
-            , _codeDescription = Nothing
-            , _source = Just "nix-compile"
-            , _message = msg
-            , _tags = Nothing
-            , _relatedInformation = Nothing
-            , _data_ = Nothing
-            }
-    | otherwise =
-        Diagnostic
-            { _range =
-                Range
-                    (Position (fromIntegral (line - 1)) (fromIntegral (col - 1)))
-                    (Position (fromIntegral (endL - 1)) (fromIntegral (endC - 1)))
-            , _severity = Just DiagnosticSeverity_Error
-            , _code = Nothing
-            , _codeDescription = Nothing
-            , _source = Just "nix-compile"
-            , _message = msg
-            , _tags = Nothing
-            , _relatedInformation = Nothing
-            , _data_ = Nothing
-            }
+spToDiagnostic msg (Span (Loc line col) (Loc endL endC) _) =
+    -- n.b. ShellCheck positions are 0-based; megaparsec positions are 1-based.
+    -- Clamp to zero rather than wrap unsigned underflow (B4 from review-2).
+    Diagnostic
+        { _range =
+            Range
+                (Position (clampU32 (line - 1)) (clampU32 (col - 1)))
+                (Position (clampU32 (endL - 1)) (clampU32 (endC - 1)))
+        , _severity = Just DiagnosticSeverity_Error
+        , _code = Nothing
+        , _codeDescription = Nothing
+        , _source = Just "nix-compile"
+        , _message = msg
+        , _tags = Nothing
+        , _relatedInformation = Nothing
+        , _data_ = Nothing
+        }
+  where
+    clampU32 :: Int -> UInt
+    clampU32 n
+        | n < 0 = 0
+        | otherwise = fromIntegral n
 
 -- ═══════════════════════ expression traversal ═══════════════════════
 
@@ -908,6 +963,11 @@ exprName (Fix (Compose (AnnUnit _ e))) = case e of
 
 -- ═══════════════════════ cross-module helpers ═══════════════════════
 
+-- | Maximum number of directory levels to walk up looking for a project root.
+-- n.b. raised from 10 to 64 to handle deeply nested workspaces (B6 from review-2).
+projectRootWalkupLimit :: Int
+projectRootWalkupLimit = 64
+
 findProjectRoot :: Uri -> IO (Maybe FilePath)
 findProjectRoot uri = do
     case uriToFilePath uri of
@@ -915,7 +975,7 @@ findProjectRoot uri = do
         Just fp -> do
             canon <- canonicalizePath fp
             let dir = takeDirectory canon
-            findRoot dir (10 :: Int)
+            findRoot dir projectRootWalkupLimit
   where
     findRoot _ 0 = pure Nothing
     findRoot dir n = do
@@ -926,8 +986,43 @@ findProjectRoot uri = do
             then pure (Just dir)
             else let parent = takeDirectory dir in if parent == dir then pure Nothing else findRoot parent (n - 1)
 
+{- | Build a TypeEnv enriched with cross-module type information.
+
+Order of preference, non-blocking:
+
+  1. Project cache (per-file, content-addressed): consult first. Whatever's
+     'Fresh' goes into the env. Stale or missing entries are simply absent;
+     the inference engine treats absent imports as opaque and proceeds.
+  2. Module-graph cache (legacy, all-or-nothing): used as a backstop only
+     when the project cache has nothing useful. This will be removed once
+     the per-file cache stabilises.
+  3. 'builtinEnv': always.
+
+Crucially, this function never blocks. If the project cache is still warming,
+hover/definition still return immediately with single-file precision.
+-}
 buildCrossEnv :: Uri -> IO TypeEnv
 buildCrossEnv uri = do
+    pc <- getProjectCache
+    snap <- PC.snapshotFiles pc
+    let pcEnv =
+            Map.foldlWithKey'
+                ( \acc fp entry ->
+                    if PC.feStatus entry == PC.Fresh
+                        then extendImport fp (PC.feType entry) acc
+                        else acc
+                )
+                builtinEnv
+                snap
+    -- If the per-file cache hasn't produced anything for this project yet,
+    -- fall back to the legacy module-graph cache so we don't regress the
+    -- first hover.
+    if Map.null snap
+        then legacyBuildCrossEnv uri
+        else pure pcEnv
+
+legacyBuildCrossEnv :: Uri -> IO TypeEnv
+legacyBuildCrossEnv uri = do
     mMg <- getOrBuildModuleGraph uri
     case mMg of
         Nothing -> pure builtinEnv
@@ -964,6 +1059,12 @@ buildCrossScopeGraphWith uri mCurrentExpr = do
                     _ -> exprs
             pure $ Scope.fromModuleGraph exprs'
 
+{- | Look up or build the module graph for a project root.
+n.b. fixes from review-2:
+  * exception-safe (catches StackOverflow from hnix, IO errors)
+  * in-flight dedup: concurrent requests share a single build
+  * negative cache via try @SomeException so a failing build doesn't loop
+-}
 getOrBuildModuleGraph :: Uri -> IO (Maybe Mod.ModuleGraph)
 getOrBuildModuleGraph uri = do
     mRoot <- findProjectRoot uri
@@ -973,31 +1074,50 @@ getOrBuildModuleGraph uri = do
             cache <- readMVar moduleGraphCache
             case Map.lookup root cache of
                 Just mg -> pure (Just mg)
-                Nothing -> do
-                    let flakePath = root </> "flake.nix"
-                    hasFlake <- doesFileExist flakePath
-                    if not hasFlake
-                        then pure Nothing
-                        else do
-                            result <- Mod.buildModuleGraph straylight flakePath
-                            case result of
-                                Left _ -> pure Nothing
-                                Right mg -> do
-                                    modifyMVar moduleGraphCache (\m -> pure (Map.insert root mg m, ()))
-                                    pure (Just mg)
+                Nothing -> joinOrStartBuild root
 
+joinOrStartBuild :: FilePath -> IO (Maybe Mod.ModuleGraph)
+joinOrStartBuild root = do
+    -- Check inflight or claim it atomically; whoever wins starts the build.
+    action <- modifyMVar inflightCache $ \m -> case Map.lookup root m of
+        Just a -> pure (m, Right a)
+        Nothing -> do
+            a <- async (startBuild root)
+            pure (Map.insert root a m, Left a)
+    let asyncHandle = either id id action
+    waitResult <- waitCatch asyncHandle
+    -- Clean up inflight entry no matter what.
+    modifyMVar_ inflightCache (pure . Map.delete root)
+    case waitResult of
+        Left _ -> pure Nothing
+        Right r -> pure r
+
+startBuild :: FilePath -> IO (Maybe Mod.ModuleGraph)
+startBuild root = do
+    let flakePath = root </> "flake.nix"
+    hasFlake <- doesFileExist flakePath
+    if not hasFlake
+        then pure Nothing
+        else do
+            -- Catch every exception: hnix parser stack overflow, IO errors,
+            -- whatever buildModuleGraph might throw beyond its Either return.
+            outcome <- try (Mod.buildModuleGraph straylight flakePath)
+            case outcome :: Either SomeException (Either Text Mod.ModuleGraph) of
+                Left _ -> pure Nothing
+                Right (Left _) -> pure Nothing
+                Right (Right mg) -> do
+                    modifyMVar moduleGraphCache (\m -> pure (Map.insert root mg m, ()))
+                    pure (Just mg)
+
+{- | Invalidate the module-graph cache for the project containing the given URI.
+n.b. fixed from review-2: invalidate on ANY save in the project, not just flake.nix.
+-}
 invalidateModuleGraphCache :: Uri -> IO ()
 invalidateModuleGraphCache uri = do
     mRoot <- findProjectRoot uri
     case mRoot of
         Nothing -> pure ()
-        Just root -> case uriToFilePath uri of
-            Nothing -> pure ()
-            Just fp -> do
-                canon <- canonicalizePath fp
-                flakeCanon <- canonicalizePath (root </> "flake.nix")
-                when (canon == flakeCanon) $
-                    modifyMVar moduleGraphCache (\m -> pure (Map.delete root m, ()))
+        Just root -> modifyMVar_ moduleGraphCache (pure . Map.delete root)
 
 inferOptionAtPath :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe MS.OptionInfo
 inferOptionAtPath _env expr l c = do

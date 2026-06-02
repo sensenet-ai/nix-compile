@@ -36,12 +36,15 @@ module NixCompile.Config (
 where
 
 import Control.Exception (SomeException, try)
-import GHC.Generics (Generic)
-
+import Data.Foldable (toList)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import Dhall (FromDhall, InterpretOptions (..), defaultInterpretOptions, genericAutoWith)
 import Dhall qualified
+import Dhall.Core qualified as DhallCore
+import Dhall.Parser qualified as DhallParser
+import GHC.Generics (Generic)
 import System.FilePath qualified as FP
 
 import NixCompile.Lint.Forbidden qualified as Bash
@@ -131,12 +134,58 @@ effectiveLayout = layoutFromName . configLayout
 -- Loading
 -- ────────────────────────────────────────────────────────────────────────────
 
+{- | Load a Dhall config file with remote imports forbidden.
+n.b. fixes C6 from review-2: a hostile `.nix-compile.dhall` containing
+`https://attacker.example/x.dhall` would otherwise perform outbound HTTPS
+requests on every `nix-compile check` invocation. We pre-parse the source,
+walk the AST for any 'DhallImport.Remote' imports, and refuse the file if
+any are present.
+-}
 loadConfig :: FilePath -> IO (Either Text Config)
 loadConfig path = do
-    result <- try (Dhall.inputFile Dhall.auto path)
-    case result of
+    srcResult <- try (TIO.readFile path)
+    case srcResult of
         Left (e :: SomeException) -> pure (Left (T.pack (show e)))
-        Right config -> pure (Right config)
+        Right src -> case DhallParser.exprFromText path src of
+            Left e -> pure (Left ("dhall parse error: " <> T.pack (show e)))
+            Right parsed -> case findRemoteImport parsed of
+                Just url ->
+                    pure $
+                        Left $
+                            "refusing to load "
+                                <> T.pack path
+                                <> ": remote dhall import disabled (saw "
+                                <> url
+                                <> "). nix-compile config must be self-contained."
+                Nothing -> do
+                    -- The pre-parse check guarantees no Remote imports survive to Dhall.inputFile.
+                    -- We still wrap in try so any unexpected exception (eval errors, etc.) is structured.
+                    result <- try (Dhall.inputFile Dhall.auto path)
+                    case result of
+                        Left (e :: SomeException) -> pure (Left (T.pack (show e)))
+                        Right config -> pure (Right config)
+
+-- | Walk a parsed Dhall expression and return the first remote URL we encounter, if any.
+findRemoteImport :: DhallCore.Expr DhallParser.Src DhallCore.Import -> Maybe Text
+findRemoteImport expr = case foldr step Nothing (toList expr) of
+    Just t -> Just t
+    Nothing -> scanEmbed expr
+  where
+    step ::
+        DhallCore.Import ->
+        Maybe Text ->
+        Maybe Text
+    step imp acc = case acc of
+        Just _ -> acc
+        Nothing -> case DhallCore.importType (DhallCore.importHashed imp) of
+            DhallCore.Remote url -> Just (T.pack (show url))
+            _ -> Nothing
+
+    scanEmbed e = case e of
+        DhallCore.Embed imp -> case DhallCore.importType (DhallCore.importHashed imp) of
+            DhallCore.Remote url -> Just (T.pack (show url))
+            _ -> Nothing
+        _ -> Nothing
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- Queries

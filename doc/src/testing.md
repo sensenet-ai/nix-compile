@@ -1,6 +1,7 @@
 # Testing
 
-nix-compile has four test suites with 315 property tests and 10 integration tests.
+nix-compile has four test suites with 339 property tests, 34 adversarial regression
+tests (the "psychotic" suite for review-2 findings), and 10 integration tests.
 
 ## Running tests
 
@@ -82,3 +83,25 @@ The property tests follow an adversarial philosophy:
 5. **Order-independence** -- constraint solving is tested against reversed input to catch order-dependent bugs.
 
 The `Adversarial.hs` module contains additional security-focused properties (injection blocking, store path traversal rejection, bounded resource tests) that run alongside the main property suite.
+
+### `Psychotic.hs` — review-2 regression suite
+
+`test/Psychotic.hs` holds the regression suite for the second-round adversarial
+audit (`REVIEW-2.md`). Each finding gets at least one negative test (input that
+previously crashed or accepted bad code) and at least one positive test (input
+that still works correctly after the fix). The 34 tests are grouped by finding:
+
+| Group | Tests | Subject |
+|-------|-------|---------|
+| C1    | 6     | `escapeForParamExpansion` defeats every payload, idempotent under double-escape, end-to-end through `parseScriptFile` → `emitConfigFunction` |
+| C2/C3 | 6     | `analyzeDepth` rejects `NWith`/`NApp` bypass chains; shallow ASTs accepted; structured `DepthError` |
+| C4    | 2     | `safeParseNixText` survives 5000-deep parens, 3000-deep lists |
+| C5    | 1     | Sibling-directory `proj-evil` not considered inside `proj` |
+| C6    | 2     | Dhall config containing `https://attacker.example/x.dhall` rejected; local config still loads |
+| S1    | 1     | `builtins.head [1 2 3] + 1` type-checks with polymorphic builtins |
+| S2    | 3     | Closed-set missing-key errors; missing-with-`or` works; present-key works |
+| S3    | 3     | Unbound variable errors; let-bound works; `envLenient = True` retains old behavior |
+| S5    | 1     | `let xs = { a.b = 1; }; in xs.a.b` type-checks |
+| S6    | 4     | `null + null`, `true + false` fail; `Int + Int`, `String + String` work |
+| B1    | 2     | `combinedLintSafe` returns `LintDepthExceeded` past depth; clean returns `LintOk` |
+| Safety wrappers | 3 | `renderSafetyError` total; `safeIO` catches exceptions; `safeReadFile` returns Left for missing path |

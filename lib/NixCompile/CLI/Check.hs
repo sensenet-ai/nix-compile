@@ -9,6 +9,9 @@ module NixCompile.CLI.Check (
     formatTypeError,
     detectUnsupportedConstruct,
     detectUnsupportedBinding,
+
+    -- * Re-exports
+    Safety.maxRecursionDepth,
 )
 where
 
@@ -30,6 +33,7 @@ import NixCompile.Nix.Infer qualified
 import NixCompile.Nix.LintCombined qualified as Combined
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Types qualified
+import NixCompile.Safety qualified as Safety
 
 checkFile :: Config.Config -> FilePath -> AppM TCResult
 checkFile config file = do
@@ -46,16 +50,21 @@ checkFile config file = do
                         , ""
                         ]
             return TCFail
-        Right expression ->
-            case detectUnsupportedConstruct expression of
-                Just reason
-                    | "deeply nested" `T.isPrefixOf` reason -> do
-                        $(logTM) ErrorS $ logStr $ crossMarker <> " " <> T.pack file <> " (depth limit exceeded: " <> reason <> ")"
-                        return TCFail
-                    | otherwise -> do
+        Right expression -> case Safety.analyzeDepth expression of
+            Left de -> do
+                $(logTM) ErrorS $
+                    logStr $
+                        crossMarker <> " " <> T.pack file
+                            <> " (depth limit exceeded: "
+                            <> Safety.renderSafetyError (Safety.SafetyDepthExceeded de)
+                            <> ")"
+                return TCFail
+            Right () ->
+                case detectUnsupportedConstruct expression of
+                    Just reason -> do
                         $(logTM) InfoS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
                         checkWithViolations config file expression True
-                Nothing -> checkWithViolations config file expression False
+                    Nothing -> checkWithViolations config file expression False
 
 checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
 checkWithViolations config file expression skipTypeCheck = do
@@ -129,75 +138,43 @@ formatTypeError errorText =
         (firstLine : remainingLines) -> T.unlines $ ("  TYPE WARNING: " <> firstLine) : map ("         " <>) remainingLines
         [] -> "  TYPE WARNING: unknown error"
 
-maxRecursionDepth :: Int
-maxRecursionDepth = 200
-
+{- | Detect AST shapes that are syntactically valid but semantically unsupported.
+n.b. depth checking now lives in 'NixCompile.Safety.analyzeDepth' and runs BEFORE
+this; we only flag rec/dynamic-key here, never depth.
+-}
 detectUnsupportedConstruct :: NExprLoc -> Maybe T.Text
-detectUnsupportedConstruct = go 0
+detectUnsupportedConstruct = go
   where
-    go :: Int -> NExprLoc -> Maybe T.Text
-    go d _
-        | d > maxRecursionDepth = Just "deeply nested expression"
-    go d (Fix (Compose (AnnUnit _ expression))) =
-        let n = d + 1
-         in case expression of
-                NSelect _ _ (DynamicKey _ :| _) -> Just "dynamic attribute access"
-                NSet Recursive _ -> Just "rec attrset"
-                NAbs _ body -> go n body
-                NLet bindings body ->
-                    foldl (<|>) (go n body) (map (detectUnsupportedBindingDepth n) bindings)
-                NSet _ bindings ->
-                    foldl (<|>) Nothing (map (detectUnsupportedBindingDepth n) bindings)
-                NList elements ->
-                    foldl (<|>) Nothing (map (go n) elements)
-                NBinary _ left right ->
-                    go n left <|> go n right
-                NUnary _ arg -> go n arg
-                NSelect _ base _ -> go n base
-                NHasAttr base attributePath
-                    | any isDynamicKey attributePath -> Just "dynamic attribute test"
-                    | otherwise -> go n base
-                NApp function arg -> go n function <|> go n arg
-                NIf cond thenBranch elseBranch ->
-                    go n cond <|> go n thenBranch <|> go n elseBranch
-                NAssert cond body -> go n cond <|> go n body
-                _ -> Nothing
+    go (Fix (Compose (AnnUnit _ expression))) = case expression of
+        NSelect _ _ (DynamicKey _ :| _) -> Just "dynamic attribute access"
+        NSet Recursive _ -> Just "rec attrset"
+        NAbs _ body -> go body
+        NLet bindings body ->
+            foldl (<|>) (go body) (map detectUnsupportedBinding bindings)
+        NSet _ bindings ->
+            foldl (<|>) Nothing (map detectUnsupportedBinding bindings)
+        NList elements -> foldl (<|>) Nothing (map go elements)
+        NBinary _ left right -> go left <|> go right
+        NUnary _ arg -> go arg
+        NSelect _ base _ -> go base
+        NHasAttr base attributePath
+            | any isDynamicKey attributePath -> Just "dynamic attribute test"
+            | otherwise -> go base
+        NApp function arg -> go function <|> go arg
+        NIf cond thenBranch elseBranch -> go cond <|> go thenBranch <|> go elseBranch
+        NAssert cond body -> go cond <|> go body
+        NWith scope body -> go scope <|> go body
+        NStr (DoubleQuoted parts) -> foldl (<|>) Nothing (map goAnti parts)
+        NStr (Indented _ parts) -> foldl (<|>) Nothing (map goAnti parts)
+        _ -> Nothing
+
+    goAnti (Antiquoted e) = go e
+    goAnti _ = Nothing
 
     isDynamicKey (DynamicKey _) = True
     isDynamicKey _ = False
 
 detectUnsupportedBinding :: Binding NExprLoc -> Maybe T.Text
-detectUnsupportedBinding = detectUnsupportedBindingDepth 0
-
-detectUnsupportedBindingDepth :: Int -> Binding NExprLoc -> Maybe T.Text
-detectUnsupportedBindingDepth d (NamedVar _ e _) = go d e
-  where
-    go depth _
-        | depth > maxRecursionDepth = Just "deeply nested expression"
-    go depth (Fix (Compose (AnnUnit _ expression))) =
-        let n = depth + 1
-         in case expression of
-                NSelect _ _ (DynamicKey _ :| _) -> Just "dynamic attribute access"
-                NSet Recursive _ -> Just "rec attrset"
-                NAbs _ body -> go n body
-                NLet bindings body ->
-                    foldl (<|>) (go n body) (map (detectUnsupportedBindingDepth n) bindings)
-                NSet _ bindings ->
-                    foldl (<|>) Nothing (map (detectUnsupportedBindingDepth n) bindings)
-                NList elements ->
-                    foldl (<|>) Nothing (map (go n) elements)
-                NBinary _ left right ->
-                    go n left <|> go n right
-                NUnary _ arg -> go n arg
-                NSelect _ base _ -> go n base
-                NHasAttr base attributePath
-                    | any hasDynKey attributePath -> Just "dynamic attribute test"
-                    | otherwise -> go n base
-                NApp function arg -> go n function <|> go n arg
-                NIf cond thenBranch elseBranch ->
-                    go n cond <|> go n thenBranch <|> go n elseBranch
-                NAssert cond body -> go n cond <|> go n body
-                _ -> Nothing
-    hasDynKey (DynamicKey _) = True
-    hasDynKey _ = False
-detectUnsupportedBindingDepth _ (Inherit _ _ _) = Nothing
+detectUnsupportedBinding (NamedVar _ e _) = detectUnsupportedConstruct e
+detectUnsupportedBinding (Inherit (Just s) _ _) = detectUnsupportedConstruct s
+detectUnsupportedBinding (Inherit Nothing _ _) = Nothing

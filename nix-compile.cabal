@@ -37,6 +37,7 @@ library
         NixCompile.Lint.Forbidden
         NixCompile.Log
         NixCompile.LSP.Handlers
+        NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
         NixCompile.Nix.Annotate
         NixCompile.Nix.Effect
@@ -60,6 +61,7 @@ library
         NixCompile.Nix.Types
         NixCompile.Nix.Utils
         NixCompile.Pretty
+        NixCompile.Safety
         NixCompile.Schema.Build
         NixCompile.Types
     build-depends:
@@ -68,6 +70,7 @@ library
         base >= 4.16 && < 4.21,
         bytestring >= 0.11 && < 0.13,
         containers >= 0.6 && < 0.8,
+        cryptohash-sha256 >= 0.11 && < 0.12,
         data-fix >= 0.3 && < 0.4,
         dhall >= 1.42 && < 1.43,
         directory >= 1.3 && < 1.4,
@@ -81,6 +84,7 @@ library
         prettyprinter >= 1.7 && < 1.8,
         prettyprinter-ansi-terminal >= 1.1 && < 1.2,
         ShellCheck >= 0.9 && < 0.12,
+        stm >= 2.5 && < 2.6,
         text >= 2.0 && < 2.2,
         transformers >= 0.5 && < 0.7
     hs-source-dirs:   lib
@@ -114,7 +118,7 @@ test-suite nix-compile-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Props.hs
-    other-modules: Adversarial, NixAdversarial
+    other-modules: Adversarial, NixAdversarial, ProjectCacheSpec, Psychotic
     build-depends:
         aeson >= 2.0 && < 2.3,
         async >= 2.2 && < 2.3,
@@ -133,6 +137,7 @@ test-suite nix-compile-test
         nix-compile,
         QuickCheck >= 2.14 && < 2.16,
         ShellCheck >= 0.9 && < 0.12,
+        temporary >= 1.3 && < 1.4,
         text >= 2.0 && < 2.2,
         transformers >= 0.5 && < 0.7
     hs-source-dirs:   test
@@ -175,3 +180,37 @@ test-suite nix-compile-flake-parts
         text >= 2.0 && < 2.2
     hs-source-dirs:   test
     default-language: GHC2021
+
+benchmark nix-compile-bench
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Bench.hs
+    build-depends:
+        base >= 4.16 && < 4.21,
+        containers >= 0.6 && < 0.8,
+        data-fix >= 0.3 && < 0.4,
+        deepseq >= 1.4 && < 1.6,
+        hnix >= 0.17 && < 0.18,
+        nix-compile,
+        tasty-bench >= 0.3 && < 0.5,
+        text >= 2.0 && < 2.2
+    hs-source-dirs:   bench
+    default-language: GHC2021
+    ghc-options: -rtsopts "-with-rtsopts=-A32m"
+
+benchmark nix-compile-nixpkgs-bench
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          NixpkgsBench.hs
+    build-depends:
+        base >= 4.16 && < 4.21,
+        containers >= 0.6 && < 0.8,
+        directory >= 1.3 && < 1.4,
+        filepath >= 1.4 && < 1.6,
+        nix-compile,
+        process >= 1.6 && < 1.7,
+        text >= 2.0 && < 2.2,
+        time >= 1.12 && < 1.15
+    hs-source-dirs:   bench
+    default-language: GHC2021
+    ghc-options: -threaded -rtsopts "-with-rtsopts=-N -A32m"

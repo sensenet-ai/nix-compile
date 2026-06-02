@@ -71,11 +71,15 @@ data TypeEnv = TypeEnv
     { envBindings :: Map Text Scheme
     , envWith :: Maybe NixType
     , envImportTypes :: Map FilePath NixType
+    , envLenient :: Bool
+    -- ^ when True, treat unbound names as fresh polymorphic vars instead of
+    -- errors. Used for backwards compatibility with libraries that mention
+    -- builtins we don't yet model. Default: False (strict).
     }
     deriving (Eq, Show)
 
 emptyEnv :: TypeEnv
-emptyEnv = TypeEnv Map.empty Nothing Map.empty
+emptyEnv = TypeEnv Map.empty Nothing Map.empty False
 
 {- | extend the env with one name → scheme binding
 n.b. this shadows — if a name already exists the new scheme wins
@@ -105,6 +109,7 @@ builtinEnv =
         { envBindings = builtinBindings
         , envWith = Nothing
         , envImportTypes = Map.empty
+        , envLenient = False
         }
   where
     -- ── core type scheme helpers ──────────────────────────────────
@@ -114,7 +119,26 @@ builtinEnv =
     -- ── builtins attrset ──────────────────────────────────────────
     -- 'builtins' itself is typed as attrset of all function entries
     builtinsAttr = Map.singleton "builtins" (mono $ TAttrs builtinsTypes)
-    builtinBindings = Map.union builtinsAttr (Map.map (mono . fst) builtinsTypes)
+    -- n.b. polymorphic builtins (head/tail/length/map/filter etc.) are typed
+    -- as schemes that quantify a single element-var. S1 from review-2: TAny
+    -- previously made these a universal escape hatch — `builtins.length "x"`
+    -- type-checked. Now they are real schemes, so misuse fails.
+    builtinBindings = Map.union builtinsAttr (Map.union polymorphicBuiltins (Map.map (mono . fst) builtinsTypes))
+
+    polymorphicBuiltins :: Map Text Scheme
+    polymorphicBuiltins =
+        Map.fromList
+            [ ("head", scheme1 (\a -> TFun (TList a) a))
+            , ("tail", scheme1 (\a -> TFun (TList a) (TList a)))
+            , ("length", scheme1 (\a -> TFun (TList a) TInt))
+            , ("elemAt", scheme1 (\a -> TFun (TList a) (TFun TInt a)))
+            , ("filter", scheme1 (\a -> TFun (TFun a TBool) (TFun (TList a) (TList a))))
+            , ("concatLists", scheme1 (\a -> TFun (TList (TList a)) (TList a)))
+            ]
+      where
+        scheme1 builder =
+            let a = TypeVar 0
+             in Forall [a] (builder (TVar a))
 
     -- n.b. hand-maintained signatures — must stay in sync with nixpkgs
     builtinsTypes :: Map Text (NixType, Bool)
@@ -551,30 +575,53 @@ inferApp environment func arg = do
     unify funcT (TFun argT resultT)
     applyCurrentSubst resultT
 
-{- | attribute select e.name: look up name in e's attr type
-dynamic keys and unknown attrs get a fresh type variable
+{- | attribute select @e.name@: look up name in e's attr type.
+n.b. fixes S2 from review-2: a missing key on a *closed* attrset is a type
+error. Open attrsets may legitimately have more fields, so a miss there is
+just a fresh polymorphic var.
+The 'hasDefault' parameter (from @attrs.x or default@) suppresses the error,
+because the source has explicitly declared "ok if missing".
 -}
-inferSelect :: TypeEnv -> NExprLoc -> NKeyName NExprLoc -> Infer NixType
-inferSelect environment base attr = do
+inferSelect :: TypeEnv -> NExprLoc -> NKeyName NExprLoc -> Bool -> Infer NixType
+inferSelect environment base attr hasDefault = do
     baseT <- infer environment base
     t' <- applyCurrentSubst baseT
     let key = case attr of
             StaticKey k -> Just (varNameText k)
             DynamicKey _ -> Nothing
     case (t', key) of
-        (TAttrs fields, Just k) -> lookupField k fields
-        (TAttrsOpen fields, Just k) -> lookupField k fields
+        (TAttrs fields, Just k) -> case Map.lookup k fields of
+            Just (t, _) -> pure t
+            Nothing
+                | hasDefault -> freshVar
+                | otherwise ->
+                    throwTypeError $
+                        "attribute '" <> k <> "' missing on closed attribute set (keys: "
+                            <> T.intercalate ", " (Map.keys fields)
+                            <> ")"
+        (TAttrsOpen fields, Just k) -> case Map.lookup k fields of
+            Just (t, _) -> pure t
+            Nothing -> freshVar
         _ -> freshVar
-  where
-    lookupField k fields = case Map.lookup k fields of
-        Just (t, _) -> pure t
-        Nothing -> freshVar
 
--- | hasAttr: always returns Bool (we don't track presence at the type level)
+{- | @e ? attr@: returns Bool. We additionally check that any dynamic-key
+antiquotations type-check correctly (S4 from review-2 — previously the path
+was ignored entirely).
+-}
 inferHasAttr :: TypeEnv -> NExprLoc -> NAttrPath NExprLoc -> Infer NixType
-inferHasAttr environment base _attr = do
+inferHasAttr environment base attrPath = do
     _ <- infer environment base
+    mapM_ checkKey attrPath
     pure TBool
+  where
+    checkKey (StaticKey _) = pure ()
+    checkKey (DynamicKey antiq) = case antiq of
+        Plain _ -> pure ()
+        EscapedNewline -> pure ()
+        Antiquoted e -> do
+            t <- infer environment e
+            -- The antiquoted expression must be a string (Nix coerces here)
+            unify t TString
 
 -- | unary ops: negation requires int, not requires bool
 inferUnary :: TypeEnv -> NUnaryOp -> NExprLoc -> Infer NixType
@@ -584,12 +631,18 @@ inferUnary environment op e = do
         NNeg -> unify t TInt >> pure TInt
         NNot -> unify t TBool >> pure TBool
 
--- | symbol resolution: lookup in env, or fall through to `with` scope, or fresh var
+{- | symbol resolution: lookup in env, or fall through to `with` scope, or error.
+n.b. fixes S3 from review-2: previously fell through to 'freshVar' for any unbound
+name. Now we error unless the name is in env or under an enclosing 'with' scope.
+'envWithBypass' lets call paths opt into the old behavior — used at the top
+level where some legitimate imports/builtins arrive un-modeled.
+-}
 inferSymbol :: TypeEnv -> Text -> Infer NixType
 inferSymbol environment symbolName
     | Just scheme <- lookupEnv symbolName environment = instantiate scheme
     | Just scopeType <- envWith environment = resolveWithScope symbolName scopeType
-    | otherwise = freshVar
+    | envLenient environment = freshVar
+    | otherwise = throwTypeError $ "unbound variable: " <> symbolName
   where
     -- resolve via `with <scope>`: constrain field in scope type, memoize result
     resolveWithScope name scopeType = do
@@ -622,10 +675,21 @@ inferBinary environment op left right = do
         NAnd -> unify leftT TBool >> unify rightT TBool >> pure TBool
         NOr -> unify leftT TBool >> unify rightT TBool >> pure TBool
         NImpl -> unify leftT TBool >> unify rightT TBool >> pure TBool
-        -- n.b. nix + works on strings, ints, paths — we approximate
+        -- n.b. nix `+` works on Int/Float (numeric add), String (concat), and Path
+        -- (path-string concat). S6 from review-2: previously accepted any (t, t)
+        -- — including null+null and true+true. We now require an addable type.
         NPlus -> do
             unify leftT rightT
-            applyCurrentSubst leftT
+            resolved <- applyCurrentSubst leftT
+            case resolved of
+                TInt -> pure TInt
+                TFloat -> pure TFloat
+                TString -> pure TString
+                TStrLit _ -> pure TString
+                TPath -> pure TPath
+                TVar _ -> pure resolved -- polymorphic — leave as-is
+                TAny -> pure TAny
+                _ -> throwTypeError $ "operator `+` expects Int, Float, String, or Path; got " <> prettyType resolved
         -- arithmetic (int-only in our model)
         NMinus -> unify leftT TInt >> unify rightT TInt >> pure TInt
         NMult -> unify leftT TInt >> unify rightT TInt >> pure TInt
@@ -637,7 +701,10 @@ inferBinary environment op left right = do
             unify leftT listT
             unify rightT listT
             applyCurrentSubst listT
-        -- attrset update // operator
+        -- attrset update // operator. Co1 from review-2: the TVar fallback
+        -- previously unified leftT against rightT, collapsing a polymorphic
+        -- parameter to the right operand's exact shape. We now route TVar
+        -- through TAttrsOpen instead so `\x. x // {a=1;}` stays polymorphic.
         NUpdate -> do
             leftT' <- applyCurrentSubst leftT
             rightT' <- applyCurrentSubst rightT
@@ -646,6 +713,24 @@ inferBinary environment op left right = do
                 (TAttrsOpen l, TAttrsOpen r) -> pure $ TAttrsOpen (r `Map.union` l)
                 (TAttrs l, TAttrsOpen r) -> pure $ TAttrsOpen (r `Map.union` l)
                 (TAttrsOpen l, TAttrs r) -> pure $ TAttrsOpen (r `Map.union` l)
+                (TVar _, TAttrs r) -> do
+                    -- Constrain x to be an attrset (open) and produce an open row
+                    -- containing at least the right side's keys.
+                    unify leftT (TAttrsOpen Map.empty)
+                    pure (TAttrsOpen r)
+                (TVar _, TAttrsOpen r) -> do
+                    unify leftT (TAttrsOpen Map.empty)
+                    pure (TAttrsOpen r)
+                (TAttrs l, TVar _) -> do
+                    unify rightT (TAttrsOpen Map.empty)
+                    pure (TAttrsOpen l)
+                (TAttrsOpen l, TVar _) -> do
+                    unify rightT (TAttrsOpen Map.empty)
+                    pure (TAttrsOpen l)
+                (TVar _, TVar _) -> do
+                    unify leftT (TAttrsOpen Map.empty)
+                    unify rightT (TAttrsOpen Map.empty)
+                    pure (TAttrsOpen Map.empty)
                 _ -> do
                     unify leftT rightT
                     applyCurrentSubst leftT
@@ -704,7 +789,7 @@ infer environment (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp
     NAssert cond body -> inferAssert environment cond body
     NAbs params body -> inferLambda environment params body
     NApp func arg -> inferAppWithImport environment func arg
-    NSelect _ base (attr :| _) -> inferSelect environment base attr
+    NSelect mDef base (attr :| _) -> inferSelect environment base attr (isJust mDef)
     NHasAttr base attr -> inferHasAttr environment base attr
     NUnary op e -> inferUnary environment op e
     NBinary op left right -> inferBinary environment op left right
@@ -751,16 +836,22 @@ inferRecBinding extendedEnv (Nix.Inherit maybeScope keys _) typeVarList = do
         , let keyName = varNameText k
         ]
   where
+    -- Use the scope's own span (Co2 from review-2) so error messages from
+    -- `inherit (foo) bar` point at the inherit clause, not at (0,0).
     resolveInheritType env (Just scope) k =
-        infer env (Fix (Compose (AnnUnit nullSpan (NSelect Nothing scope (StaticKey k :| [])))))
+        let scopeSp = case scope of Fix (Compose (AnnUnit s _)) -> s
+         in infer env (Fix (Compose (AnnUnit scopeSp (NSelect Nothing scope (StaticKey k :| [])))))
     resolveInheritType env Nothing k = case lookupEnv (varNameText k) env of
         Just scheme -> instantiate scheme
         Nothing -> freshVar
 inferRecBinding _ _ _ = pure []
 
--- | infer all bindings in a recursive set: pre-allocate vars, then unify each
+-- | infer all bindings in a recursive set: pre-allocate vars, then unify each.
+-- n.b. desugars nested-path bindings (S5 from review-2) so @{ a.b = 1; }@ is
+-- treated as @{ a = { b = 1; }; }@ before inference begins.
 inferRecursiveBindings :: TypeEnv -> [Nix.Binding NExprLoc] -> Infer [(Text, NixType)]
-inferRecursiveBindings environment bindings' = do
+inferRecursiveBindings environment bindings'' = do
+    let bindings' = desugarNestedBindings bindings''
     let names = concatMap bindingNames bindings'
     freshTypeVars <- replicateM (length names) freshVar
     let extendedEnv = foldr (\(n, t) e -> extendEnv n (Forall [] t) e) environment (zip names freshTypeVars)
@@ -791,7 +882,9 @@ inferNonRecursiveBinding environment accumulatedBindings (Nix.Inherit maybeScope
     additionalBindings <- forM keys $ \key -> do
         let keyName = varNameText key
         t <- case maybeScope of
-            Just scope -> infer environment (Fix (Compose (AnnUnit nullSpan (NSelect Nothing scope (StaticKey key :| [])))))
+            Just scope ->
+                let scopeSp = case scope of Fix (Compose (AnnUnit s _)) -> s
+                 in infer environment (Fix (Compose (AnnUnit scopeSp (NSelect Nothing scope (StaticKey key :| [])))))
             Nothing -> case lookupEnv keyName environment of
                 Just scheme -> instantiate scheme
                 Nothing -> freshVar
@@ -803,7 +896,42 @@ inferNonRecursiveBinding _ accumulatedBindings _ = pure accumulatedBindings
 inferBindings :: Bool -> TypeEnv -> [Nix.Binding NExprLoc] -> Infer [(Text, NixType)]
 inferBindings recursive environment bindings
     | recursive = inferRecursiveBindings environment bindings
-    | otherwise = foldM (inferNonRecursiveBinding environment) [] bindings
+    | otherwise = foldM (inferNonRecursiveBinding environment) [] (desugarNestedBindings bindings)
+
+{- | Desugar nested-path bindings into top-level bindings whose value is a
+synthesised attrset. Closes S5 from review-2: previously @{ a.b = 1; }@ was
+silently dropped because the inference engine only matched singleton paths.
+We also merge bindings that share a top-level key, so @{ a.b = 1; a.c = 2; }@
+becomes @{ a = { b = 1; c = 2; }; }@.
+-}
+desugarNestedBindings :: [Nix.Binding NExprLoc] -> [Nix.Binding NExprLoc]
+desugarNestedBindings = mergeByKey . map desugar1
+  where
+    desugar1 (Nix.NamedVar (StaticKey k :| (k2 : ks)) e pos) =
+        let inner = Fix (Compose (AnnUnit nullSpan (NSet NonRecursive [Nix.NamedVar (k2 :| ks) e pos])))
+         in Nix.NamedVar (StaticKey k :| []) inner pos
+    desugar1 b = b
+
+    mergeByKey [] = []
+    mergeByKey (Nix.NamedVar (StaticKey k :| []) val pos : rest) =
+        let (mergeable, others) = partitionByKey (varNameText k) rest
+            merged = foldr addAttrs val (map fst mergeable)
+         in Nix.NamedVar (StaticKey k :| []) merged pos : mergeByKey others
+    mergeByKey (b : rest) = b : mergeByKey rest
+
+    partitionByKey k =
+        foldr
+            ( \binding (mergeable, others) -> case binding of
+                Nix.NamedVar (StaticKey k' :| []) v p
+                    | varNameText k' == k -> ((v, p) : mergeable, others)
+                _ -> (mergeable, binding : others)
+            )
+            ([], [])
+
+    addAttrs (Fix (Compose (AnnUnit s (NSet r bs1)))) (Fix (Compose (AnnUnit _ (NSet _ bs2)))) =
+        Fix (Compose (AnnUnit s (NSet r (bs2 ++ bs1))))
+    addAttrs additional original = original `mergeOrKeep` additional
+    mergeOrKeep a _ = a
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- inference: let expressions
@@ -819,9 +947,12 @@ parseBinding (Nix.Inherit mScope keys pos) =
     map
         ( \key ->
             let name = varNameText key
+                spForSynth = case mScope of
+                    Just scope -> case scope of Fix (Compose (AnnUnit s _)) -> s
+                    Nothing -> nullSpan
                 expr = case mScope of
-                    Just scope -> Fix (Compose (AnnUnit nullSpan (NSelect Nothing scope (StaticKey key :| []))))
-                    Nothing -> Fix (Compose (AnnUnit nullSpan (NSym key)))
+                    Just scope -> Fix (Compose (AnnUnit spForSynth (NSelect Nothing scope (StaticKey key :| []))))
+                    Nothing -> Fix (Compose (AnnUnit spForSynth (NSym key)))
              in (name, expr, posToSpan pos)
         )
         keys

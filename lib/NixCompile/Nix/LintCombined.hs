@@ -16,8 +16,10 @@
 
 module NixCompile.Nix.LintCombined (
     LintBundle (..),
+    LintResult (..),
     emptyBundle,
     combinedLint,
+    combinedLintSafe,
 )
 where
 
@@ -44,6 +46,7 @@ import NixCompile.Nix.LintPatterns (
     PatternViolationType (VAttrTranslation, VOrNullFallback),
  )
 import NixCompile.Nix.Utils (varNameText)
+import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Loc (..), Span (..))
 
 data LintBundle = LintBundle
@@ -56,28 +59,50 @@ data LintBundle = LintBundle
 emptyBundle :: LintBundle
 emptyBundle = LintBundle [] [] []
 
+{- | LintBundle | DepthExceeded — callers can distinguish "no violations"
+from "skipped because too deep". Past depth, return Left so the caller can
+report a hard error instead of silently dropping violations.
+-}
+data LintResult
+    = LintOk !LintBundle
+    | LintDepthExceeded !Safety.DepthError
+    deriving (Eq, Show)
+
 -- ── entry point ────────────────────────────────────────────────────
 -- Single AST walk collecting all three violation categories.
 -- Replaces three separate traversals.
 
+-- | Legacy entry: returns 'emptyBundle' on depth-exceeded for backwards compat.
 combinedLint :: FilePath -> NExprLoc -> LintBundle
-combinedLint filePath = walkExpr (0 :: Int)
-  where
-    maxDepth :: Int
-    maxDepth = 200
+combinedLint filePath expr = case combinedLintSafe filePath expr of
+    LintOk b -> b
+    LintDepthExceeded _ -> emptyBundle
 
+{- | Safer entry: distinguishes "no violations" from "depth-exceeded".
+n.b. depth limit shared with 'NixCompile.Safety.maxRecursionDepth'.
+-}
+combinedLintSafe :: FilePath -> NExprLoc -> LintResult
+combinedLintSafe filePath = walkExpr (0 :: Int)
+  where
     walkExpr depth (Fix (Compose (AnnUnit srcSpan expression)))
-        | depth > maxDepth = emptyBundle
+        | depth > Safety.maxRecursionDepth = LintDepthExceeded (Safety.DepthError depth (T.pack "lint"))
         | otherwise =
             let d = depth + 1
-                local = localViolations filePath srcSpan expression
-                rest = concatBundle (map (walkExpr d) (childExprs expression))
-             in combineBundle local (combineBundle (concatBundle (map (walkBinding d) (bindingsOf expression))) rest)
+                local = LintOk (localViolations filePath srcSpan expression)
+                rest = combineResults (map (walkExpr d) (childExprs expression))
+                bindings = combineResults (map (walkBinding d) (bindingsOf expression))
+             in mergeResults local (mergeResults bindings rest)
 
     walkBinding depth = \case
         NamedVar _ expr _ -> walkExpr depth expr
         Inherit (Just scope) _ _ -> walkExpr depth scope
-        Inherit Nothing _ _ -> emptyBundle
+        Inherit Nothing _ _ -> LintOk emptyBundle
+
+    mergeResults (LintDepthExceeded e) _ = LintDepthExceeded e
+    mergeResults _ (LintDepthExceeded e) = LintDepthExceeded e
+    mergeResults (LintOk a) (LintOk b) = LintOk (combineBundle a b)
+
+    combineResults = foldr mergeResults (LintOk emptyBundle)
 
 -- ── per-node violation checks ──────────────────────────────────────
 
@@ -269,9 +294,6 @@ toSpan srcSpan =
 combineBundle :: LintBundle -> LintBundle -> LintBundle
 combineBundle (LintBundle n1 d1 p1) (LintBundle n2 d2 p2) =
     LintBundle (n1 ++ n2) (d1 ++ d2) (p1 ++ p2)
-
-concatBundle :: [LintBundle] -> LintBundle
-concatBundle = foldr combineBundle emptyBundle
 
 instance Semigroup LintBundle where
     (<>) = combineBundle

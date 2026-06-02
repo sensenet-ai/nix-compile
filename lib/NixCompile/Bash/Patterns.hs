@@ -32,6 +32,11 @@ module NixCompile.Bash.Patterns (
     isBoolLiteral,
     isStorePathSafe,
     safeParseInt,
+
+    -- * Shell escaping
+    escapeForParamExpansion,
+    escapeForSingleQuoted,
+    isSafeDefaultValue,
 )
 where
 
@@ -298,3 +303,56 @@ safeParseInt text = case readMaybe (T.unpack text) :: Maybe Integer of
 -- | is this text exactly "true" or "false"?
 isBoolLiteral :: Text -> Bool
 isBoolLiteral text = text == "true" || text == "false"
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- Shell escaping (closes C1 from review-2)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{- | Escape text for safe inclusion inside @${VAR:-DEFAULT}@ or @${VAR:+ALT}@
+in a double-quoted bash context. We backslash-escape every character bash would
+otherwise interpret. Crucially:
+  * @$@ → @\\\$@   (prevents parameter / command substitution)
+  * @\`@ → @\\\`@  (prevents legacy command substitution)
+  * @\\@ → @\\\\@  (preserves literal backslashes)
+  * @\"@ → @\\\"@  (prevents premature termination of the surrounding @\"…\"@)
+  * @\}@ → @\\}@   (prevents premature termination of the @${…}@ expansion)
+After escaping, bash treats the value as a verbatim string. See review-2 C1 for
+the attack vectors this blocks (e.g. @${UNSET:-$(touch /tmp/pwn)}@).
+-}
+escapeForParamExpansion :: Text -> Text
+escapeForParamExpansion = T.concatMap escape
+  where
+    escape c = case c of
+        '$' -> "\\$"
+        '`' -> "\\`"
+        '\\' -> "\\\\"
+        '"' -> "\\\""
+        '}' -> "\\}"
+        '\n' -> " "
+        '\r' -> " "
+        _ -> T.singleton c
+
+{- | Escape text for safe inclusion inside a bash single-quoted string.
+The standard idiom for embedding @'@ inside @'…'@ is @'\\''@: close the string,
+emit a backslash-quote, reopen. Defensive secondary layer to 'escapeForParamExpansion'.
+-}
+escapeForSingleQuoted :: Text -> Text
+escapeForSingleQuoted = T.replace "'" "'\\''"
+
+{- | Predicate: is this text safe to embed in 'ConfigVarDefault' / 'ConfigVarAlternate'
+without escaping? Safe characters are alphanumerics, dash, underscore, dot,
+colon, slash, and space. Used by tests to assert escape coverage.
+-}
+isSafeDefaultValue :: Text -> Bool
+isSafeDefaultValue = T.all isSafeChar
+  where
+    isSafeChar c =
+        (c >= 'a' && c <= 'z')
+            || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9')
+            || c == '-'
+            || c == '_'
+            || c == '.'
+            || c == ':'
+            || c == '/'
+            || c == ' '

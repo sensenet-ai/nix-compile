@@ -67,6 +67,8 @@ import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
+import ProjectCacheSpec qualified
+import Psychotic qualified
 import System.Directory (removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
@@ -4460,12 +4462,37 @@ main = do
             , run "cli_lint_check_fails" prop_cli_lint_check_fails
             ]
 
+    -- Adversarial regression suite for review-2 findings (C1-C6, S1-S6, B*, P*)
     putStrLn ""
-    let passed = length (filter id results)
-    let totalPassed = length results
+    putStrLn "  -- psychotic adversarial regression suite --"
+    psychoticResults <- sequence
+        [ do
+            putStr $ "  " ++ name ++ " ... "
+            ok <- action
+            putStrLn (if ok then "OK" else "FAILED")
+            pure ok
+        | (name, action) <- Psychotic.psychoticTests
+        ]
+
+    -- LSP project cache (non-blocking incremental cross-module inference)
+    putStrLn ""
+    putStrLn "  -- project cache --"
+    pcResults <- sequence
+        [ do
+            putStr $ "  " ++ name ++ " ... "
+            ok <- action
+            putStrLn (if ok then "OK" else "FAILED")
+            pure ok
+        | (name, action) <- ProjectCacheSpec.projectCacheTests
+        ]
+
+    putStrLn ""
+    let allResults = results ++ psychoticResults ++ pcResults
+    let passed = length (filter id allResults)
+    let totalPassed = length allResults
     putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
 
-    if all id results
+    if all id allResults
         then do
             putStrLn "All tests passed!"
             exitSuccess

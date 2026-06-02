@@ -17,48 +17,51 @@
 module NixCompile.Nix.Format (
     -- * Formatting
     formatFile,
+    formatFileWithEnv,
     formatExpr,
 )
 where
 
-import Control.Exception (IOException, try)
 import Data.Text (Text)
-import Data.Text qualified as T
-import Data.Text.IO qualified as TIO
 import Nix.Expr.Types.Annotated (NExprLoc)
-import Nix.Parser (parseNixFileLoc, parseNixTextLoc)
-import Nix.Utils qualified as Nix
-import NixCompile.Nix.Infer (InferResult (..), inferExpr)
+import NixCompile.Nix.Infer (InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
+import NixCompile.Nix.Parse (parseNix, parseNixFile)
 import NixCompile.Nix.Pretty (annotateSource)
+import NixCompile.Safety qualified as Safety
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- formatting
 -- ═════════════════════════════════════════════════════════════════════════════
 
+-- | Format a file with the default (no-import) environment.
 formatFile :: FilePath -> IO (Either Text Text)
-formatFile path = do
-    readResult <- try (TIO.readFile path)
-    case readResult of
-        Left (e :: IOException) -> return $ Left $ T.pack $ show e
-        Right src -> formatFile' path src
+formatFile = formatFileWithEnv builtinEnv
 
-formatFile' :: FilePath -> Text -> IO (Either Text Text)
-formatFile' path src = do
-    result <- try (parseNixFileLoc (Nix.Path path))
-    case result of
-        Left (e :: IOException) -> pure $ Left (T.pack $ show e)
-        Right (Right expr) -> pure $ formatExpr' src expr
-        Right (Left doc) -> pure $ Left (T.pack $ show doc)
+-- | Format a file using a pre-built TypeEnv (e.g. from cross-module inference).
+-- n.b. D2 from review-2: previously the `infer` command threw away any
+-- cross-module knowledge by calling 'inferExpr' with the empty env.
+formatFileWithEnv :: TypeEnv -> FilePath -> IO (Either Text Text)
+formatFileWithEnv env path = do
+    readResult <- Safety.safeReadFile path
+    case readResult of
+        Left e -> pure $ Left (Safety.renderSafetyError e)
+        Right src -> do
+            parseResult <- parseNixFile path
+            case parseResult of
+                Left err -> pure (Left err)
+                Right expr -> pure (formatExprWithEnv env src expr)
 
 formatExpr :: Text -> Either Text Text
-formatExpr src = case parseNixTextLoc src of
-    Left doc -> Left (T.pack $ show doc)
-    Right expr -> formatExpr' src expr
+formatExpr src = case parseNix "<input>" src of
+    Left err -> Left err
+    Right expr -> formatExprWithEnv builtinEnv src expr
 
-formatExpr' :: Text -> NExprLoc -> Either Text Text
-formatExpr' src expr =
-    case inferExpr expr of
-        Left err -> Left err
-        Right (_, bindings) ->
-            let res = InferResult bindings []
-             in Right $ annotateSource src res
+formatExprWithEnv :: TypeEnv -> Text -> NExprLoc -> Either Text Text
+formatExprWithEnv env src expr =
+    case Safety.analyzeDepth expr of
+        Left de -> Left (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+        Right () -> case inferExprWithEnv env expr of
+            Left err -> Left err
+            Right (_, bindings) ->
+                let res = InferResult bindings []
+                 in Right $ annotateSource src res

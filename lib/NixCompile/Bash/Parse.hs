@@ -24,12 +24,11 @@ module NixCompile.Bash.Parse (
 )
 where
 
-import Control.Exception (IOException, try)
 import Control.Monad.Identity (Identity, runIdentity)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.IO qualified as TIO
+import NixCompile.Safety qualified as Safety
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (
     ParseResult (..),
@@ -75,10 +74,17 @@ parseBashWithFilename filename sourceText =
             { siReadFile = \_ _ -> return (Left "no file access")
             }
 
--- | Parse a bash file
+{- | Parse a bash file.
+n.b. routes through Safety to catch StackOverflow and other async exceptions
+that try @IOException misses.
+-}
 parseBashFile :: FilePath -> IO (Either Text BashAST)
 parseBashFile path = do
-    result <- try (TIO.readFile path)
-    case result of
-        Left (e :: IOException) -> return $ Left $ T.pack $ show e
-        Right content -> return $ parseBashWithFilename path content
+    readResult <- Safety.safeReadFile path
+    case readResult of
+        Left e -> pure $ Left $ Safety.renderSafetyError e
+        Right content -> do
+            parseAttempt <- Safety.safeIO (pure (parseBashWithFilename path content))
+            case parseAttempt of
+                Left e -> pure $ Left $ Safety.renderSafetyError e
+                Right res -> pure res
