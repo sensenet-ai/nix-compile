@@ -169,12 +169,14 @@ them in surfaced these. Each is an `expectFailure` in Props now — fix flips it
 - [ ] **TOCTOU in file collection.** Canonicalize after listing, not before
       (carried from prior TODO — re-verify in `Module`/`ModuleSystem` before
       acting).
-- [ ] **[RC4, conditional] Quadratic substitution.** Eager `composeSubst`
-      (`Nix/Types.hs:116-118`) + per-`unify` whole-subst re-apply
-      (`Infer.hs:300-304`) + chasing `applySubst` (`Nix/Types.hs:122-126`) →
-      O(n²) on wide attrsets / long chains. **Measure first** (needs a real box +
-      a forcing benchmark); only switch `Subst` to union-find if the curve
-      confirms it. Orthogonal to RC1/RC2 — do it last. (REVIEW-3 #17)
+- [ ] **[RC4] Quadratic substitution — MEASURED, confirmed.** Eager `composeSubst`
+      (`Nix/Types.hs`) + per-`unify` whole-subst re-apply + chasing `applySubst`.
+      The forcing benchmark (`nix-compile-bench -p inferExprWithEnv`, #18) now shows
+      the cliff on wide attrsets: 10f=3µs, 100f=96µs, 1000f=8.6ms, **5000f=291ms**
+      → 1000→5000 is 5× fields / 34× time ≈ **n^2.2** (super-quadratic). `let`-chains
+      are milder (~n^1.3). The fix (still TODO): switch `Subst` to union-find /
+      apply-on-read so a bind is O(1) and you don't re-walk the whole substitution.
+      Last remaining root cause; perf-only (no correctness impact). (REVIEW-3 #17/#18)
 
 ## P3 — hygiene & process
 
