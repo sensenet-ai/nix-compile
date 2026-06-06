@@ -23,6 +23,10 @@ module NixCompile.Nix.Types (
     RowTail (..),
     pattern TAttrs,
     pattern TAttrsOpen,
+    tRecOpenAnon,
+    anonRowVar,
+    isAnonRowVar,
+    rowTailVars,
     TypeVar (..),
 
     -- * Type schemes (polymorphic types)
@@ -88,26 +92,34 @@ instance FromJSON NixType
 
 instance ToJSON NixType
 
-{- | A record's row tail: closed (exactly the known fields) or open (at least
-them). Stage 1 keeps the tail nullary — semantically identical to the old
-@TAttrs@/@TAttrsOpen@. RC1 stage 2 will carry a row variable + lacks-constraints
-in 'ROpen' so open records can accumulate fields across unifications.
+{- | A record's row tail: closed (exactly the known fields) or open with a row
+**variable** standing for "at least these fields, plus whatever @r@ resolves to".
+The row var lets open records accumulate fields across unifications (RC1); its
+lacks-constraints (which labels it must NOT gain) live in a side store in the
+inference state ('NixCompile.Nix.Infer').
 -}
-data RowTail = RClosed | ROpen
+data RowTail = RClosed | ROpen !TypeVar
     deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON RowTail
 
 instance ToJSON RowTail
 
-{- | Back-compat views over 'TRec'. The rest of the codebase keeps matching and
-building @TAttrs@/@TAttrsOpen@ while the representation moves to 'TRec'.
+{- | Closed-record view: bidirectional, so @TAttrs m@ both matches and builds
+@TRec m RClosed@.
 -}
 pattern TAttrs :: Map Text (NixType, Bool) -> NixType
 pattern TAttrs fields = TRec fields RClosed
 
+{- | Open-record view. Matching ignores the row variable; building uses the
+anonymous sentinel ('anonRowVar') — fine for pure/display and test construction.
+Inference sites that need field accumulation build @TRec m (ROpen r)@ with a
+FRESH @r@ instead (see 'NixCompile.Nix.Infer.mkOpenRec').
+-}
 pattern TAttrsOpen :: Map Text (NixType, Bool) -> NixType
-pattern TAttrsOpen fields = TRec fields ROpen
+pattern TAttrsOpen fields <- TRec fields (ROpen _)
+    where
+        TAttrsOpen fields = TRec fields (ROpen anonRowVar)
 
 {-# COMPLETE
     TVar
@@ -160,6 +172,28 @@ composeSubst :: Subst -> Subst -> Subst
 composeSubst substitution1 substitution2 =
     Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
 
+-- | the row variable in an open tail, if any
+rowTailVars :: RowTail -> Set TypeVar
+rowTailVars (ROpen r) = Set.singleton r
+rowTailVars RClosed = Set.empty
+
+{- | Sentinel row variable for "anonymous open" records built in PURE contexts
+(flake/module display types) that have no fresh-var supply. Unification must never
+bind it (see 'isAnonRowVar'), so such records behave like the old tail-less open
+attrset — no field accumulation. Negative id can never collide with the inference
+supply (which counts up from 0).
+-}
+anonRowVar :: TypeVar
+anonRowVar = TypeVar (-1)
+
+isAnonRowVar :: TypeVar -> Bool
+isAnonRowVar v = v == anonRowVar
+
+-- | build an open record with the anonymous tail (pure-context helper for
+-- flake/module types; the inference engine uses fresh row vars instead)
+tRecOpenAnon :: Map Text (NixType, Bool) -> NixType
+tRecOpenAnon m = TRec m (ROpen anonRowVar)
+
 applySubst :: Subst -> NixType -> NixType
 applySubst s = go
   where
@@ -174,8 +208,18 @@ applySubst s = go
             Just t -> go t
             Nothing -> TVar v
         TList t -> TList (go t)
-        TAttrs m -> TAttrs (Map.map (\(t, o) -> (go t, o)) m)
-        TAttrsOpen m -> TAttrsOpen (Map.map (\(t, o) -> (go t, o)) m)
+        TRec m tail_ ->
+            let m' = Map.map (\(t, o) -> (go t, o)) m
+             in case tail_ of
+                    RClosed -> TRec m' RClosed
+                    ROpen r -> case Map.lookup r s of
+                        Nothing -> TRec m' (ROpen r)
+                        Just (TVar r') | r' == r -> TRec m' (ROpen r) -- self-map: identity
+                        Just (TVar r') -> TRec m' (ROpen r') -- tail var renamed
+                        -- row var bound to a record: merge known fields (disjoint by
+                        -- lacks) and continue resolving the bound row's own tail
+                        Just (TRec m2 tail2) -> go (TRec (Map.union m' m2) tail2)
+                        Just _ -> TRec m' (ROpen r) -- defensive: non-row binding
         TFun a b -> TFun (go a) (go b)
         TUnion ts -> TUnion (map go ts)
         t -> t
@@ -192,8 +236,9 @@ freeTypeVars :: NixType -> Set TypeVar
 freeTypeVars = \case
     TVar v -> Set.singleton v
     TList t -> freeTypeVars t
-    TAttrs m -> Set.unions (map (freeTypeVars . fst) (Map.elems m))
-    TAttrsOpen m -> Set.unions (map (freeTypeVars . fst) (Map.elems m))
+    TRec m tail_ ->
+        Set.unions (map (freeTypeVars . fst) (Map.elems m))
+            `Set.union` rowTailVars tail_
     TFun a b -> freeTypeVars a `Set.union` freeTypeVars b
     TUnion ts -> Set.unions (map freeTypeVars ts)
     _ -> Set.empty
@@ -239,8 +284,8 @@ prettyTypeWith mapping = go
         TPath -> "Path"
         TNull -> "Null"
         TList t -> "[" <> go t <> "]"
-        TAttrs m -> prettyAttrs m
-        TAttrsOpen m -> prettyAttrs m <> " | ..."
+        TRec m RClosed -> prettyAttrs m
+        TRec m (ROpen r) -> prettyAttrs m <> " | " <> Map.findWithDefault ".." r mapping
         TFun a b -> prettyArg a <> " -> " <> go b
         TDerivation -> "Derivation"
         TUnion ts -> T.intercalate " | " (map go ts)

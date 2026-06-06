@@ -273,10 +273,10 @@ inferOutputType = \case
     "devShells" -> TDerivation
     "checks" -> TDerivation
     "apps" -> TAttrs $ Map.fromList [("type", (TString, False)), ("program", (TString, False))]
-    "overlays" -> TFun (TAttrsOpen Map.empty) (TFun (TAttrsOpen Map.empty) (TAttrsOpen Map.empty))
-    "nixosModules" -> TAttrsOpen Map.empty
-    "nixosConfigurations" -> TAttrsOpen Map.empty
-    "lib" -> TAttrsOpen Map.empty
+    "overlays" -> TFun (tRecOpenAnon Map.empty) (TFun (tRecOpenAnon Map.empty) (tRecOpenAnon Map.empty))
+    "nixosModules" -> tRecOpenAnon Map.empty
+    "nixosConfigurations" -> tRecOpenAnon Map.empty
+    "lib" -> tRecOpenAnon Map.empty
     _ -> TAny
 
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -303,8 +303,8 @@ inferFlake flake =
 inferFlakeInputs :: Map Text FlakeInput -> NixType
 inferFlakeInputs inputs =
     TAttrs $
-        Map.fromList [("self", (TAttrsOpen Map.empty, False))]
-            `Map.union` Map.map (const $ (TAttrsOpen Map.empty, False)) inputs
+        Map.fromList [("self", (tRecOpenAnon Map.empty, False))]
+            `Map.union` Map.map (const $ (tRecOpenAnon Map.empty, False)) inputs
 
 inferFlakeOutputs :: FlakeOutputs -> NixType
 inferFlakeOutputs outputs =
@@ -315,7 +315,7 @@ inferFlakeOutputs outputs =
                 , present "devShells" (outDevShells outputs) (inferPerSystemOutputs TDerivation)
                 , present "checks" (outChecks outputs) (inferPerSystemOutputs TDerivation)
                 , present "apps" (outApps outputs) (inferPerSystemOutputs flakeAppType)
-                , present "overlays" (outOverlays outputs) (TAttrsOpen Map.empty)
+                , present "overlays" (outOverlays outputs) (tRecOpenAnon Map.empty)
                 ]
   where
     present name field entryType
@@ -332,10 +332,10 @@ inferPerSystemOutputs :: NixType -> NixType
 inferPerSystemOutputs elementType =
     TAttrs $
         Map.fromList
-            [ ("x86_64-linux", (TAttrsOpen (Map.singleton "_" (elementType, False)), False))
-            , ("aarch64-linux", (TAttrsOpen (Map.singleton "_" (elementType, False)), False))
-            , ("x86_64-darwin", (TAttrsOpen (Map.singleton "_" (elementType, False)), False))
-            , ("aarch64-darwin", (TAttrsOpen (Map.singleton "_" (elementType, False)), False))
+            [ ("x86_64-linux", (tRecOpenAnon (Map.singleton "_" (elementType, False)), False))
+            , ("aarch64-linux", (tRecOpenAnon (Map.singleton "_" (elementType, False)), False))
+            , ("x86_64-darwin", (tRecOpenAnon (Map.singleton "_" (elementType, False)), False))
+            , ("aarch64-darwin", (tRecOpenAnon (Map.singleton "_" (elementType, False)), False))
             ]
 
 flakeAppType :: NixType
@@ -353,19 +353,19 @@ flakeOutputSchema =
             , ("devShells", (systemMapType TDerivation, False))
             , ("checks", (systemMapType TDerivation, False))
             , ("apps", (systemMapType flakeAppType, False))
-            , ("overlays", (TAttrsOpen (Map.singleton "_" (flakeOverlayType, False)), False))
-            , ("nixosModules", (TAttrsOpen Map.empty, False))
-            , ("nixosConfigurations", (TAttrsOpen Map.empty, False))
-            , ("lib", (TAttrsOpen Map.empty, False))
+            , ("overlays", (tRecOpenAnon (Map.singleton "_" (flakeOverlayType, False)), False))
+            , ("nixosModules", (tRecOpenAnon Map.empty, False))
+            , ("nixosConfigurations", (tRecOpenAnon Map.empty, False))
+            , ("lib", (tRecOpenAnon Map.empty, False))
             , ("formatter", (systemMapType TDerivation, False))
-            , ("templates", (TAttrsOpen (Map.singleton "_" (flakeTemplateType, False)), False))
+            , ("templates", (tRecOpenAnon (Map.singleton "_" (flakeTemplateType, False)), False))
             ]
 
 systemMapType :: NixType -> NixType
-systemMapType t = TAttrsOpen (Map.singleton "_" ((TAttrsOpen (Map.singleton "_" (t, False))), False))
+systemMapType t = tRecOpenAnon (Map.singleton "_" ((tRecOpenAnon (Map.singleton "_" (t, False))), False))
 
 flakeOverlayType :: NixType
-flakeOverlayType = TFun (TAttrsOpen Map.empty) (TFun (TAttrsOpen Map.empty) (TAttrsOpen Map.empty))
+flakeOverlayType = TFun (tRecOpenAnon Map.empty) (TFun (tRecOpenAnon Map.empty) (tRecOpenAnon Map.empty))
 
 flakeTemplateType :: NixType
 flakeTemplateType = TAttrs $ Map.fromList [("description", (TString, False)), ("path", (TPath, False))]

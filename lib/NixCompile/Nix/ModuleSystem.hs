@@ -139,7 +139,7 @@ inferTypeExpr e = case unwrap e of
     -- lib.types.str → String
     NApp func arg -> case funcName func of
         Just "types.listOf" -> TList (inferTypeExpr arg)
-        Just "types.attrsOf" -> TAttrsOpen (Map.singleton "_" (inferTypeExpr arg, False))
+        Just "types.attrsOf" -> tRecOpenAnon (Map.singleton "_" (inferTypeExpr arg, False))
         Just "types.nullOr" -> TUnion [TNull, inferTypeExpr arg]
         Just "types.either" -> TUnion (collectEitherTypes arg)
         Just "types.enum" -> inferEnumType arg
@@ -210,7 +210,7 @@ inferSubmoduleType e = case unwrap e of
                     )
                     (mapMaybe bindingToPair bindings)
          in TAttrs (Map.map (\(t) -> (t, True)) (Map.fromList opts))
-    _ -> TAttrsOpen Map.empty
+    _ -> tRecOpenAnon Map.empty
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- module-level collection

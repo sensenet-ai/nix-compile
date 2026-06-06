@@ -176,12 +176,14 @@ builtinEnv =
                 , ("concatLists", TFun (TList (TList TAny)) (TList TAny))
                 , ("concatMap", TFun (TFun TAny (TList TAny)) (TFun (TList TAny) (TList TAny)))
                 , -- ── attribute set introspection ──
-                  ("attrNames", TFun (TAttrsOpen Map.empty) (TList TString))
-                , ("attrValues", TFun (TAttrsOpen (Map.singleton "_" (TAny, False))) (TList TAny))
-                , ("hasAttr", TFun TString (TFun (TAttrsOpen Map.empty) TBool))
-                , ("getAttr", TFun TString (TFun (TAttrsOpen Map.empty) TAny))
-                , ("removeAttrs", TFun (TAttrsOpen Map.empty) (TFun (TList TString) (TAttrsOpen Map.empty)))
-                , ("listToAttrs", TFun (TList (TAttrs (Map.fromList [("name", (TString, False)), ("value", (TAny, False))]))) (TAttrsOpen Map.empty))
+                  -- n.b. record args are TAny here; real row-polymorphic signatures
+                  -- for these land in rows stage 4 (these feed the `builtins.X` path).
+                  ("attrNames", TFun TAny (TList TString))
+                , ("attrValues", TFun TAny (TList TAny))
+                , ("hasAttr", TFun TString (TFun TAny TBool))
+                , ("getAttr", TFun TString (TFun TAny TAny))
+                , ("removeAttrs", TFun TAny (TFun (TList TString) TAny))
+                , ("listToAttrs", TFun (TList (TAttrs (Map.fromList [("name", (TString, False)), ("value", (TAny, False))]))) TAny)
                 , -- ── type predicates ──
                   ("isNull", TFun TAny TBool)
                 , ("isInt", TFun TAny TBool)
@@ -202,7 +204,7 @@ builtinEnv =
                   ("import", TFun TPath TAny)
                 , ("readFile", TFun TPath TString)
                 , ("toPath", TFun TString TPath)
-                , ("derivation", TFun (TAttrsOpen Map.empty) TDerivation)
+                , ("derivation", TFun TAny TDerivation)
                 , -- ── control flow / debugging ──
                   ("throw", TFun TString TAny)
                 , ("abort", TFun TString TAny)
@@ -267,10 +269,20 @@ throwTypeError msg = do
 
 -- ── allocate a fresh type variable (monotonically increasing id) ──
 freshVar :: Infer NixType
-freshVar = do
+freshVar = TVar <$> freshTypeVar
+
+-- | allocate a fresh type/row variable (the raw 'TypeVar', for row tails)
+freshTypeVar :: Infer TypeVar
+freshTypeVar = do
     s <- get
     put s{inferSupply = inferSupply s + 1}
-    pure $ TVar (TypeVar (inferSupply s))
+    pure $ TypeVar (inferSupply s)
+
+-- | build an open record with the given known fields and a FRESH row tail var
+mkOpenRec :: Map Text (NixType, Bool) -> Infer NixType
+mkOpenRec m = do
+    r <- freshTypeVar
+    pure (TRec m (ROpen r))
 
 -- ── apply the current substitution to a type (idempotent with current subst) ──
 applyCurrentSubst :: NixType -> Infer NixType
@@ -363,8 +375,9 @@ occursCheck v = \case
     TVar typeVariable' -> v == typeVariable'
     TList t -> occursCheck v t
     TFun a b -> occursCheck v a || occursCheck v b
-    TAttrs m -> any (occursCheck v . fst) (Map.elems m)
-    TAttrsOpen m -> any (occursCheck v . fst) (Map.elems m)
+    TRec m tail_ ->
+        any (occursCheck v . fst) (Map.elems m)
+            || case tail_ of ROpen r -> v == r; RClosed -> False
     TUnion ts -> any (occursCheck v) ts
     _ -> False
 
@@ -474,7 +487,8 @@ fieldConstraint name scopeT valueT
     | TAttrs m <- scopeT = lookupAndUnify name valueT m
     | TAttrsOpen m <- scopeT = lookupAndUnify name valueT m
     | TVar _ <- scopeT = do
-        let fieldType = TAttrsOpen (Map.singleton name (valueT, False))
+        r <- freshTypeVar
+        let fieldType = TRec (Map.singleton name (valueT, False)) (ROpen r)
         unify scopeT fieldType
     | otherwise = pure ()
   where
@@ -773,27 +787,27 @@ inferBinary environment op left right = do
             rightT' <- applyCurrentSubst rightT
             case (leftT', rightT') of
                 (TAttrs l, TAttrs r) -> pure $ TAttrs (r `Map.union` l)
-                (TAttrsOpen l, TAttrsOpen r) -> pure $ TAttrsOpen (r `Map.union` l)
-                (TAttrs l, TAttrsOpen r) -> pure $ TAttrsOpen (r `Map.union` l)
-                (TAttrsOpen l, TAttrs r) -> pure $ TAttrsOpen (r `Map.union` l)
+                (TAttrsOpen l, TAttrsOpen r) -> mkOpenRec (r `Map.union` l)
+                (TAttrs l, TAttrsOpen r) -> mkOpenRec (r `Map.union` l)
+                (TAttrsOpen l, TAttrs r) -> mkOpenRec (r `Map.union` l)
                 (TVar _, TAttrs r) -> do
                     -- Constrain x to be an attrset (open) and produce an open row
                     -- containing at least the right side's keys.
-                    unify leftT (TAttrsOpen Map.empty)
-                    pure (TAttrsOpen r)
+                    mkOpenRec Map.empty >>= unify leftT
+                    mkOpenRec r
                 (TVar _, TAttrsOpen r) -> do
-                    unify leftT (TAttrsOpen Map.empty)
-                    pure (TAttrsOpen r)
+                    mkOpenRec Map.empty >>= unify leftT
+                    mkOpenRec r
                 (TAttrs l, TVar _) -> do
-                    unify rightT (TAttrsOpen Map.empty)
-                    pure (TAttrsOpen l)
+                    mkOpenRec Map.empty >>= unify rightT
+                    mkOpenRec l
                 (TAttrsOpen l, TVar _) -> do
-                    unify rightT (TAttrsOpen Map.empty)
-                    pure (TAttrsOpen l)
+                    mkOpenRec Map.empty >>= unify rightT
+                    mkOpenRec l
                 (TVar _, TVar _) -> do
-                    unify leftT (TAttrsOpen Map.empty)
-                    unify rightT (TAttrsOpen Map.empty)
-                    pure (TAttrsOpen Map.empty)
+                    mkOpenRec Map.empty >>= unify leftT
+                    mkOpenRec Map.empty >>= unify rightT
+                    mkOpenRec Map.empty
                 _ -> do
                     unify leftT rightT
                     applyCurrentSubst leftT
@@ -816,10 +830,10 @@ inferLambda environment params body = case params of
                 Nothing -> freshVar
             pure (varNameText name, (t, isJust mDefault))
 
-        let attrsT =
-                if variadic == Variadic
-                    then TAttrsOpen (Map.fromList paramTypes)
-                    else TAttrs (Map.fromList paramTypes)
+        attrsT <-
+            if variadic == Variadic
+                then mkOpenRec (Map.fromList paramTypes)
+                else pure (TAttrs (Map.fromList paramTypes))
 
         -- all param names are in scope in the body
         let environment' = foldr (\(n, (t, _)) e -> extendEnv n (Forall [] t) e) environment paramTypes
