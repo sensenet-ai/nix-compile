@@ -1378,36 +1378,39 @@ reformatPreservesMeaning src = case parseNixTextLoc src of
                         ("AST changed under reformat.\n--- in ---\n" <> T.unpack src <> "\n--- out ---\n" <> T.unpack formatted)
                         (zeroExprPos (stripAnnotation ast0) === zeroExprPos (stripAnnotation ast1))
 
--- TRIPWIRE (expectFailure): `Nix.Formatter.formatNixFile` is NOT meaning-preserving
--- today — this property documents the bug the review flagged (#16) and will START
--- FAILING (forcing removal of `expectFailure`) once the reformatter is fixed.
--- Two confirmed defects the round-trip exposes:
---   1. precedence parens are dropped — `[ (ujfvov: null) true (true > null) ]`
---      reformats to `[(ujfvov: null) true true > null]`, which reparses with
---      different structure (or fails to parse).
---   2. indented `''…''` strings gain a trailing blank line (significant whitespace
---      corruption) — see the corpus tripwire below.
--- The fix is a reformatter change (emit precedence parens; print indented strings
--- from their verbatim source slice), tracked in TODO #16.
+-- #16: the reformatter (`Nix.Formatter.formatNixFile`, now a nixfmt-RFC parity
+-- pretty-printer) must be MEANING-PRESERVING: `parse (format (parse src))` equals
+-- `parse src` modulo source position. The rewrite emits precedence parens, so the
+-- generated round-trip now holds (was an expectFailure tripwire).
 prop_reformatter_roundtrip :: Property
-prop_reformatter_roundtrip = expectFailure $ forAll (sized genNixExpr) reformatPreservesMeaning
+prop_reformatter_roundtrip = forAll (sized genNixExpr) reformatPreservesMeaning
 
--- TRIPWIRE (expectFailure): curated corpus the generator never reaches — indented
--- strings (significant whitespace), nested records, inherits, multiline lists.
--- Fails deterministically on the first indented-string case (trailing blank line).
+-- curated corpus the generator never reaches — nested records, inherits, multiline
+-- lists, let. All meaning-preserving under the rewritten formatter.
 prop_reformatter_roundtrip_corpus :: Property
 prop_reformatter_roundtrip_corpus =
+    conjoin (map reformatPreservesMeaning corpus)
+  where
+    corpus =
+        [ "{ a = 1; b = { c = 2; d = { e = 3; }; }; }"
+        , "[ 1 2 3\n  4 5 6 ]"
+        , "let x = 1; y = 2; in x + y"
+        , "{ inherit a b; inherit (pkgs) c d; }"
+        , "rec { a = 1; b = a + 1; }"
+        ]
+
+-- TRIPWIRE (expectFailure): indented `''…''` strings are NOT yet meaning-preserving
+-- (the content's internal newlines/indentation are re-emitted naively, gaining a
+-- trailing blank line). Faithful indented-string rendering — round-trip AND nixfmt
+-- parity — is the remaining formatter gap (TODO #16). Flip to a real test when fixed.
+prop_reformatter_indented_string :: Property
+prop_reformatter_indented_string =
     expectFailure $ conjoin (map reformatPreservesMeaning corpus)
   where
     corpus =
         [ "{ a = ''\n    hello\n      world\n  ''; }"
         , "{ script = ''\n    set -e\n    echo   spaced\n  ''; }"
-        , "{ a = 1; b = { c = 2; d = { e = 3; }; }; }"
-        , "[ 1 2 3\n  4 5 6 ]"
-        , "let x = 1; y = 2; in x + y"
-        , "{ inherit a b; inherit (pkgs) c d; }"
         , "{ a = ''\n    line1\n\n    line3 with two blanks above\n  ''; }"
-        , "rec { a = 1; b = a + 1; }"
         ]
 
 -- #10: positive well-typedness — accepted programs infer the EXPECTED type, not
@@ -4576,6 +4579,7 @@ main = do
             , run "review_format_roundtrip" prop_review_format_roundtrip
             , run "reformatter_roundtrip" prop_reformatter_roundtrip
             , run "reformatter_roundtrip_corpus" prop_reformatter_roundtrip_corpus
+            , run "reformatter_indented_string" prop_reformatter_indented_string
             , run "welltyped_vectors" prop_welltyped_vectors
             , run "review_select_on_var_constrains" (property prop_review_select_on_var_constrains)
             , run "review_select_accumulates" (property prop_review_select_accumulates)
