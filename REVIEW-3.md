@@ -366,6 +366,34 @@ dev shell / nix-capable CI. First run: 35 agree, 2 agree-reject, **0 failures**,
 and it surfaced #20. This is the harness the RC1 row rewrite will be validated
 against (silent `generalize`/`instantiate` bugs only show up here).
 
+## Found by wiring up the dead test modules
+
+`test/Adversarial.hs` (26 props) and `test/NixAdversarial.hs` (32 props) were
+compiled as test `other-modules` but **never imported or run** (only `Psychotic`
+and `ProjectCacheSpec` were wired in). Wiring all 58 in: 50 pass, 8 fail — 6 real
+bugs and 2 bad tests. The 6 bugs are now `expectFailure` tripwires in
+`Props.hs` (flip red when fixed); the 2 bad tests were dropped.
+
+- **#21** config parser accepts `$|` as a variable reference (counterexample `"|"`):
+  `parseConfigAssignment` doesn't validate the var name after `$`.
+- **#22** config var-ref captures `;`/newline (counterexample `"\n; id\n"`) —
+  injection-relevant; same family as the C1 default-injection finding.
+- **#23** `eval` behind a prefix (`command eval …`, `builtin eval …`) is not
+  detected as the `eval` violation — the lint only checks the leading word.
+- **#24** no `ConfigTemplate` fact for a multi-interpolation array config
+  (`config[server]="${HOST:-localhost}:${PORT:-8080}"`).
+- **#25** union membership doesn't flatten nested unions
+  (`unify (TUnion [TUnion [TInt,TBool], TString]) TInt` is rejected though `TInt`
+  is a member). One-line fix in `checkUnionMembership` (flatten before `elem`).
+- **#26** the derivation linter misses `mkDerivation` reached through a deep
+  select chain (`pkgs.llvmPackages.stdenv.mkDerivation { … }`).
+
+**Two bad tests dropped** (asserted wrong behavior; current code is correct):
+`nix_row_empty_open_any` wanted `unify (TAttrsOpen {}) TInt` to *succeed* (unsound
+— a record is not an Int); `bash_lint_eval_store_path` wanted a store-path binary
+literally named `eval` flagged as the `eval` builtin (a different command — false
+positive).
+
 ## Process / trust
 
 ### 13. Tracker docs cited a nonexistent source file — CONFIRMED
