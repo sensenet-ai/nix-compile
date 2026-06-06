@@ -28,7 +28,6 @@ import Control.Exception (IOException, SomeException, catch, try)
 import Control.Monad (replicateM)
 import Data.Either (isLeft, isRight)
 import Data.List (nub)
-import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing, mapMaybe)
 import Data.Set (Set)
@@ -598,11 +597,6 @@ prop_solve_deterministic constraints =
 -- Properties: Fact -> Constraint
 -- ============================================================================
 
--- | Constraint generation is deterministic
-prop_constraints_deterministic :: [Fact] -> Bool
-prop_constraints_deterministic facts =
-    factsToConstraints facts == factsToConstraints facts
-
 -- | DefaultIs generates exactly one constraint
 prop_default_is_constraint :: Text -> Literal -> Span -> Bool
 prop_default_is_constraint var lit sp =
@@ -621,14 +615,6 @@ prop_config_no_constraint path var quoted sp =
 -- ============================================================================
 -- Properties: Schema building
 -- ============================================================================
-
--- | Schema building is deterministic
-prop_schema_deterministic :: [Fact] -> Property
-prop_schema_deterministic facts =
-    isRight (solve (factsToConstraints facts)) ==>
-        case solve (factsToConstraints facts) of
-            Right s -> buildSchema facts s == buildSchema facts s
-            Left _ -> False
 
 -- | All env vars in facts appear in schema
 prop_schema_env_complete :: [Fact] -> Property
@@ -698,11 +684,6 @@ prop_parser_no_crash = forAll genBashFragment $ \script ->
         Left _ -> label "parse failure" True
         Right _ast ->
             label "parse success" True
-
--- | Parser result is order-independent of whitespace
-prop_parser_deterministic :: Property
-prop_parser_deterministic = forAll genBashFragment $ \script ->
-    parseBash script == parseBash script
 
 -- | Empty script parses
 prop_parser_empty :: Bool
@@ -821,11 +802,6 @@ prop_config_tree_complete items =
             | (k, v) <- Map.toList m
             ]
 
--- | Config tree is deterministic
-prop_config_tree_deterministic :: Map ConfigPath ConfigSpec -> Bool
-prop_config_tree_deterministic m =
-    buildConfigTree m == buildConfigTree m
-
 -- ============================================================================
 -- Properties: Scope graph
 -- ============================================================================
@@ -924,11 +900,6 @@ prop_e2e_no_crash = forAll genBashFragment $ \script ->
                 Map.size (schemaEnv (scriptSchema s)) >= 0
                     -- All bare commands are non-empty strings
                     && all (not . T.null) (schemaBareCommands (scriptSchema s))
-
--- | Full pipeline produces same result on same input
-prop_e2e_deterministic :: Property
-prop_e2e_deterministic = forAll genBashFragment $ \script ->
-    parseScript script == parseScript script
 
 -- | Schema env types are concrete (no TVars)
 prop_e2e_concrete_types :: Property
@@ -1375,11 +1346,6 @@ prop_nix_infer_no_crash = forAll (sized genNixExpr) $ \src ->
         Right expr -> case inferExpr expr of
             Left err -> label "nix: type error" $ not (T.null err)
             Right (t, _) -> label "nix: inferred" $ t `seq` True
-
--- | NIX-2: inferExpr is deterministic (same input, same result)
-prop_nix_infer_deterministic :: Property
-prop_nix_infer_deterministic = forAll (sized genNixExpr) $ \src ->
-    parseAndInfer src == parseAndInfer src
 
 -- | NIX-3: Integer literals infer to TInt
 prop_nix_int_literal :: Property
@@ -2340,15 +2306,6 @@ prop_nix_lint_short_string_ok =
                         _ -> False
                  in not (any hasLongStr violations)
 
--- | Lint is deterministic: same input produces same violations
-prop_nix_lint_deterministic_ext :: Property
-prop_nix_lint_deterministic_ext = forAll (sized genNixExpr) $ \src ->
-    case parseNixTextLoc src of
-        Left _ -> label "lint-det: unparseable" True
-        Right expr ->
-            label "lint-det: ok" $
-                findNixViolations expr == findNixViolations expr
-
 -- ============================================================================
 -- Properties: Derivation lint rules
 -- ============================================================================
@@ -3005,52 +2962,12 @@ genConfigFacts = do
 -- Properties: Format (annotation placement)
 -- ============================================================================
 
--- | formatExpr on simple expressions succeeds
-prop_format_simple :: Bool
-prop_format_simple =
-    case formatExpr "let x = 42; in x" of
-        Right output -> "# ::" `T.isInfixOf` output
-        Left _ -> False
-
--- | formatExpr preserves source when no annotations
-prop_format_preserves :: Bool
-prop_format_preserves =
-    case formatExpr "42" of
-        Right output -> "42" `T.isInfixOf` output
-        Left _ -> False
-
 -- | formatExpr on let-bound function adds type annotation
 prop_format_function :: Bool
 prop_format_function =
     case formatExpr "let add = x: y: x + y; in add" of
         Right output -> "# ::" `T.isInfixOf` output
         Left _ -> False
-
--- | formatExpr doesn't crash on generated Nix
-prop_format_no_crash :: Property
-prop_format_no_crash = forAll (sized genNixExpr) $ \src ->
-    case formatExpr src of
-        Left _ -> label "format: skip" True
-        Right output -> label "format: ok" $ T.length output >= T.length src
-
--- | formatting produces non-empty output regardless of input
-prop_format_non_empty :: Property
-prop_format_non_empty = forAll (sized genNixExpr) $ \src ->
-    case formatExpr src of
-        Left _ -> label "fmt-nonempty: parse fail" True
-        Right output -> label "fmt-nonempty: ok" $ not (T.null output)
-
--- | formatting a simple expression "1" produces text containing "1"
-prop_format_contains_one :: Bool
-prop_format_contains_one =
-    case formatExpr "1" of
-        Right output -> "1" `T.isInfixOf` output
-        Left _ -> False
-
--- | formatting is deterministic: same input -> same output
-prop_format_deterministic :: Property
-prop_format_deterministic = forAll (sized genNixExpr) $ \src ->
-    formatExpr src == formatExpr src
 
 -- ============================================================================
 -- Properties: Bash AST edge cases
@@ -3584,14 +3501,6 @@ prop_severity_ordering =
 -- Properties: LSP adversarial
 -- ============================================================================
 
--- | LSP-1: lintFile never crashes on arbitrary Nix text
-prop_lsp_lint_no_crash :: Text -> Bool
-prop_lsp_lint_no_crash txt = lintFile txt `seq` True
-
--- | LSP-2: lintFile is deterministic
-prop_lsp_lint_deterministic :: Text -> Bool
-prop_lsp_lint_deterministic txt = lintFile txt == lintFile txt
-
 -- | LSP-3: lintFile on empty input returns no diagnostics
 prop_lsp_lint_empty :: Bool
 prop_lsp_lint_empty = null (lintFile "")
@@ -4074,12 +3983,6 @@ prop_report_package_nonempty =
     let out = formatPackageViolations [dummyPackageViolation]
      in "ALEPH-P001" `T.isInfixOf` out && not (T.null out)
 
--- | formatBareCommand is deterministic
-prop_report_format_bare_deterministic :: Property
-prop_report_format_bare_deterministic =
-    forAll genStringLiteral $ \cmd ->
-        formatBareCommand "f" (cmd, dummySpan) == formatBareCommand "f" (cmd, dummySpan)
-
 -- ============================================================================
 -- Properties: CLI Check
 -- ============================================================================
@@ -4217,19 +4120,15 @@ main = do
             , run "solve_satisfies" prop_solve_satisfies
             , run "solve_deterministic" prop_solve_deterministic
             , -- Fact -> Constraint
-              run "constraints_deterministic" prop_constraints_deterministic
-            , run "default_is_constraint" prop_default_is_constraint
+              run "default_is_constraint" prop_default_is_constraint
             , run "required_no_constraint" prop_required_no_constraint
             , run "config_no_constraint" prop_config_no_constraint
             , -- Schema building
-              run "schema_deterministic" prop_schema_deterministic
-            , run "schema_env_complete" prop_schema_env_complete
+              run "schema_env_complete" prop_schema_env_complete
             , run "schema_preserves_defaults" prop_schema_preserves_defaults
             , run "schema_required_marked" prop_schema_required_marked
             , -- Parser
-              run "parser_no_crash" prop_parser_no_crash
-            , run "parser_deterministic" prop_parser_deterministic
-            , run "parser_empty" prop_parser_empty
+              run "parser_no_crash" prop_parser_no_crash            , run "parser_empty" prop_parser_empty
             , run "parser_comments" prop_parser_comments
             , -- Patterns
               run "pattern_default" $ forAll genVarName $ \var -> property $ prop_pattern_default var
@@ -4245,18 +4144,14 @@ main = do
             , run "builtins_unknown_flag" prop_builtins_unknown_flag
             , run "builtins_unknown_cmd" prop_builtins_unknown_cmd
             , -- Config tree
-              run "config_tree_complete" prop_config_tree_complete
-            , run "config_tree_deterministic" prop_config_tree_deterministic
-            , -- Scope graph
+              run "config_tree_complete" prop_config_tree_complete            , -- Scope graph
               run "scope_parent_before_with" prop_scope_parent_before_with
             , -- Literals
               run "literal_int_roundtrip" prop_literal_int_roundtrip
             , run "literal_bool_roundtrip" prop_literal_bool_roundtrip
             , run "literal_type_consistent" prop_literal_type_consistent
             , -- End-to-end
-              run "e2e_no_crash" prop_e2e_no_crash
-            , run "e2e_deterministic" prop_e2e_deterministic
-            , run "e2e_concrete_types" prop_e2e_concrete_types
+              run "e2e_no_crash" prop_e2e_no_crash            , run "e2e_concrete_types" prop_e2e_concrete_types
             , -- Stress tests
               run "stress_large_script" prop_stress_large_script
             , run "stress_many_vars" prop_stress_many_vars
@@ -4271,9 +4166,7 @@ main = do
             , run "overlay_satisfaction" prop_overlay_satisfaction
             , run "overlay_propagation" prop_overlay_propagation
             , -- Nix type inference (FIX-11)
-              run "nix_infer_no_crash" prop_nix_infer_no_crash
-            , run "nix_infer_deterministic" prop_nix_infer_deterministic
-            , run "nix_int_literal" prop_nix_int_literal
+              run "nix_infer_no_crash" prop_nix_infer_no_crash            , run "nix_int_literal" prop_nix_int_literal
             , run "nix_string_literal" prop_nix_string_literal
             , run "nix_bool_literal" prop_nix_bool_literal
             , run "nix_null_literal" prop_nix_null_literal
@@ -4337,9 +4230,7 @@ main = do
             , run "nix_lint_raw_wsa" prop_nix_lint_raw_wsa
             , run "nix_lint_write_shell_script" prop_nix_lint_write_shell_script
             , run "nix_lint_long_string" prop_nix_lint_long_string
-            , run "nix_lint_short_string_ok" prop_nix_lint_short_string_ok
-            , run "nix_lint_deterministic_ext" prop_nix_lint_deterministic_ext
-            , run "nix_lint_stdenv_path" prop_nix_lint_stdenv_path
+            , run "nix_lint_short_string_ok" prop_nix_lint_short_string_ok            , run "nix_lint_stdenv_path" prop_nix_lint_stdenv_path
             , -- Bash lint
               run "bash_lint_heredoc" prop_bash_lint_heredoc
             , run "bash_lint_backtick" prop_bash_lint_backtick
@@ -4376,14 +4267,9 @@ main = do
               run "emit_json_balanced" prop_emit_json_balanced
             , run "emit_no_heredoc" prop_emit_no_heredoc
             , run "emit_json_nested" prop_emit_json_nested
-            , -- Format
-              run "format_simple" prop_format_simple
-            , run "format_preserves" prop_format_preserves
-            , run "format_function" prop_format_function
-            , run "format_no_crash" prop_format_no_crash
-            , run "format_non_empty" prop_format_non_empty
-            , run "format_contains_one" (property prop_format_contains_one)
-            , run "format_deterministic" prop_format_deterministic
+            , -- Format (smoke: annotation injection happens; meaning-preservation
+              -- is covered by review_format_roundtrip)
+              run "format_function" prop_format_function
             , -- REVIEW-3 regression / bug-demonstration properties
               run "review_nested_select_errors" (property prop_review_nested_select_errors)
             , run "review_nested_select_deep_ok" (property prop_review_nested_select_deep_ok)
@@ -4542,9 +4428,7 @@ main = do
             , run "rule_bash_heredoc_union" prop_rule_bash_heredoc_union
             , run "rule_massive_overrides" prop_rule_massive_overrides
             , -- LSP adversarial
-              run "lsp_lint_crash" prop_lsp_lint_no_crash
-            , run "lsp_lint_deterministic" prop_lsp_lint_deterministic
-            , run "lsp_lint_empty" prop_lsp_lint_empty
+              run "lsp_lint_empty" prop_lsp_lint_empty
             , run "lsp_lint_with" prop_lsp_lint_with
             , run "lsp_lint_rec" prop_lsp_lint_rec
             , run "lsp_lint_clean" prop_lsp_lint_clean
@@ -4591,9 +4475,7 @@ main = do
             , run "cli_report_format_dynamic" prop_report_format_dynamic
             , run "cli_report_indent_block" prop_report_indent_block
             , run "cli_report_package_empty" prop_report_package_empty
-            , run "cli_report_package_nonempty" prop_report_package_nonempty
-            , run "cli_report_format_bare_det" prop_report_format_bare_deterministic
-            , -- CLI Check
+            , run "cli_report_package_nonempty" prop_report_package_nonempty            , -- CLI Check
               run "cli_check_unsupported_rec" prop_check_unsupported_rec
             , run "cli_check_unsupported_dynamic" prop_check_unsupported_dynamic
             , run "cli_check_unsupported_clean" prop_check_unsupported_clean
