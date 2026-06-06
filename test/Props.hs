@@ -57,7 +57,7 @@ import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Log (Severity (ErrorS), runLog)
 import NixCompile.Nix.Effect
-import NixCompile.Nix.Format (formatExpr)
+import NixCompile.Nix.Annotate (annotateExpr)
 import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (Binding, inferExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
@@ -1328,7 +1328,7 @@ prop_review_tostring_concrete_errors =
 -- roundtrip property; see TODO.
 prop_review_format_roundtrip :: Property
 prop_review_format_roundtrip = forAll (sized genNixExpr) $ \src ->
-    case formatExpr src of
+    case annotateExpr src of
         Left _ -> True -- did not format (e.g. parse failure): vacuous
         Right formatted ->
             let isInjected l = "# ::" `T.isPrefixOf` T.stripStart l
@@ -3143,10 +3143,10 @@ genConfigFacts = do
 -- Properties: Format (annotation placement)
 -- ============================================================================
 
--- | formatExpr on let-bound function adds type annotation
+-- | annotateExpr on let-bound function adds type annotation
 prop_format_function :: Bool
 prop_format_function =
-    case formatExpr "let add = x: y: x + y; in add" of
+    case annotateExpr "let add = x: y: x + y; in add" of
         Right output -> "# ::" `T.isInfixOf` output
         Left _ -> False
 

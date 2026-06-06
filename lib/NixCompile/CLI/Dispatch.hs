@@ -36,7 +36,7 @@ import NixCompile.Config qualified as Config
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Log
-import NixCompile.Nix.Format qualified as NixFmt
+import NixCompile.Nix.Annotate qualified as Annotate
 import NixCompile.Nix.Formatter qualified as Formatter
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
@@ -77,7 +77,7 @@ cmdFmt file = withSafeNix file $ \expr -> do
 
 cmdInfer :: FilePath -> AppM ()
 cmdInfer file = withSafeNix file $ \_expr -> do
-    result <- liftIO $ NixFmt.formatFile file
+    result <- liftIO $ Annotate.annotateFile file
     case result of
         Left err -> do $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure
         Right formatted -> liftIO $ TIO.putStr formatted

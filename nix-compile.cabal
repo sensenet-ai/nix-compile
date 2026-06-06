@@ -77,7 +77,6 @@ library
         NixCompile.Nix.Annotate
         NixCompile.Nix.Effect
         NixCompile.Nix.Flake
-        NixCompile.Nix.Format
         NixCompile.Nix.Infer
         NixCompile.Nix.LayoutConvention
         NixCompile.Nix.Lint
