@@ -21,12 +21,12 @@
 
 module Main (main) where
 
-import Control.DeepSeq (NFData (..))
 import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Bash.Patterns (escapeForParamExpansion)
 import NixCompile.Nix.Infer (builtinEnv, inferExprWithEnv)
+import NixCompile.Nix.Types (prettyType)
 import NixCompile.Nix.LintCombined qualified as LC
 import NixCompile.Nix.Parse (parseNixExpr)
 import NixCompile.Safety qualified as Safety
@@ -84,13 +84,6 @@ parseFixture src = case parseNixExpr src of
     Right e -> e
     Left err -> error ("benchmark fixture failed to parse: " <> T.unpack err)
 
--- ── NFData wrappers (tasty-bench's nf requires it) ─────────────────
-
-newtype Whnf a = Whnf a
-
-instance NFData (Whnf a) where
-    rnf (Whnf _) = ()
-
 -- ── benchmarks ─────────────────────────────────────────────────────
 
 main :: IO ()
@@ -136,14 +129,18 @@ main =
               !astAttr100 = parseFixture (attrSet 100)
               !astMixed10 = parseFixture (mixedWorkload 10)
               !astMixed50 = parseFixture (mixedWorkload 50)
+              !astAttr1000 = parseFixture (attrSet 1000)
+              !astAttr5000 = parseFixture (attrSet 5000)
            in bgroup
                 "inferExprWithEnv"
-                [ bench "let-chain-10" $ nf inferWHNF astLet10
-                , bench "let-chain-50" $ nf inferWHNF astLet50
-                , bench "attrset-10" $ nf inferWHNF astAttr10
-                , bench "attrset-100" $ nf inferWHNF astAttr100
-                , bench "mixed-10" $ nf inferWHNF astMixed10
-                , bench "mixed-50" $ nf inferWHNF astMixed50
+                [ bench "let-chain-10" $ nf inferForced astLet10
+                , bench "let-chain-50" $ nf inferForced astLet50
+                , bench "attrset-10" $ nf inferForced astAttr10
+                , bench "attrset-100" $ nf inferForced astAttr100
+                , bench "mixed-10" $ nf inferForced astMixed10
+                , bench "mixed-50" $ nf inferForced astMixed50
+                , bench "attrset-1000" $ nf inferForced astAttr1000
+                , bench "attrset-5000" $ nf inferForced astAttr5000
                 ]
         , let !astLet10 = parseFixture (letChain 10)
               !astLet50 = parseFixture (letChain 50)
@@ -152,19 +149,19 @@ main =
               !astMixed50 = parseFixture (mixedWorkload 50)
            in bgroup
                 "combinedLintSafe"
-                [ bench "let-chain-10" $ nf lintWHNF astLet10
-                , bench "let-chain-50" $ nf lintWHNF astLet50
-                , bench "attrset-100" $ nf lintWHNF astAttr100
-                , bench "list-1000" $ nf lintWHNF astList1000
-                , bench "mixed-50" $ nf lintWHNF astMixed50
+                [ bench "let-chain-10" $ nf lintForced astLet10
+                , bench "let-chain-50" $ nf lintForced astLet50
+                , bench "attrset-100" $ nf lintForced astAttr100
+                , bench "list-1000" $ nf lintForced astList1000
+                , bench "mixed-50" $ nf lintForced astMixed50
                 ]
         , bgroup
             "safety-pipeline"
             [ -- parse → analyzeDepth → infer end-to-end
-              bench "let-chain-10" $ nf safetyPipelineResult (letChain 10)
-            , bench "let-chain-50" $ nf safetyPipelineResult (letChain 50)
-            , bench "mixed-10" $ nf safetyPipelineResult (mixedWorkload 10)
-            , bench "mixed-50" $ nf safetyPipelineResult (mixedWorkload 50)
+              bench "let-chain-10" $ nf safetyPipelineForced (letChain 10)
+            , bench "let-chain-50" $ nf safetyPipelineForced (letChain 50)
+            , bench "mixed-10" $ nf safetyPipelineForced (mixedWorkload 10)
+            , bench "mixed-50" $ nf safetyPipelineForced (mixedWorkload 50)
             ]
         ]
   where
@@ -176,18 +173,21 @@ main =
         Right _ -> True
         Left _ -> False
 
-    inferWHNF expr = case inferExprWithEnv builtinEnv expr of
-        Right _ -> True
-        Left _ -> False
+    -- Force the inferred type FULLY (via prettyType → Text, which is NFData), so
+    -- `nf` measures result construction — the substitution cost the old
+    -- Bool-returning wrappers hid (REVIEW-3 #18).
+    inferForced expr = case inferExprWithEnv builtinEnv expr of
+        Left err -> err
+        Right (t, _) -> prettyType t
 
-    lintWHNF expr = case LC.combinedLintSafe "<bench>" expr of
-        LC.LintOk _ -> True
-        LC.LintDepthExceeded _ -> False
+    lintForced :: NExprLoc -> Text
+    lintForced expr = case LC.combinedLintSafe "<bench>" expr of
+        LC.LintOk _ -> "ok"
+        LC.LintDepthExceeded _ -> "depth-exceeded"
 
-    safetyPipelineResult src = case parseNixExpr src of
-        Left _ -> False
+    safetyPipelineForced :: Text -> Text
+    safetyPipelineForced src = case parseNixExpr src of
+        Left _ -> "parse-error"
         Right expr -> case Safety.analyzeDepth expr of
-            Left _ -> False
-            Right () -> case inferExprWithEnv builtinEnv expr of
-                Left _ -> False
-                Right _ -> True
+            Left _ -> "depth-error"
+            Right () -> inferForced expr
