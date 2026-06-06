@@ -1341,6 +1341,15 @@ prop_review_select_missing_fails :: Bool
 prop_review_select_missing_fails =
     isLeft (parseAndInfer "(x: x.a) { b = 1; }")
 
+-- #8 (optionality): an OPEN record's optional field absent from the matched
+-- record is fine (unifyRec respects the optional flag). `{ a ? 1, ... }: a`
+-- applied to `{}` must type-check.
+prop_review_optional_open_field_ok :: Bool
+prop_review_optional_open_field_ok =
+    case parseAndInfer "({ a ? 1, ... }: a) { }" of
+        Right (NT.TInt, _) -> True
+        _ -> False
+
 -- RC1 stage 4: `builtins.attrNames` is row-polymorphic (a scheme instantiated at
 -- the selection site, not a monotype baked into the `builtins` record). It
 -- returns [String] on a record and rejects non-records.
@@ -4414,6 +4423,7 @@ main = do
             , run "review_select_accumulates" (property prop_review_select_accumulates)
             , run "review_select_present_ok" (property prop_review_select_present_ok)
             , run "review_select_missing_fails" (property prop_review_select_missing_fails)
+            , run "review_optional_open_field_ok" (property prop_review_optional_open_field_ok)
             , run "review_builtins_attrnames_ok" (property prop_review_builtins_attrnames_ok)
             , run "review_builtins_attrnames_nonrecord_fails" (property prop_review_builtins_attrnames_nonrecord_fails)
             , run "review_builtins_hasattr_ok" (property prop_review_builtins_hasattr_ok)

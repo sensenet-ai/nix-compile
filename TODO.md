@@ -32,10 +32,8 @@ hygiene/process.
 > - #12 `lspSafeParse` — `analyzeDepth` walk moved inside the `try`
 > - #13 stale `app/nix-compile.hs` doc paths — corrected in `HACKING.md`,
 >   `design/pretty-printing.md`
-> - #14 `FlakeOutputs` `Eq` — **deferred**: `Flake` derives `Eq` and needs
->   `Eq FlakeOutputs`; the manual instance avoids the `NExprLoc` fields, implying
->   `Eq NExprLoc` may be absent. Deriving could break the build — verify with a
->   compiler first.
+> - #14 `FlakeOutputs` `Eq` — ✅ FIXED: `Eq NExprLoc` exists, so the instance is
+>   now a lawful `deriving (Eq)` (the hand-rolled one dropped the NExprLoc fields).
 > - #19 **(NEW, found while testing — FIXED)** applying any polymorphic builtin
 >   (`head`/`map`/`filter`/…) hung inference: `instantiate` made a self-map
 >   `{v ↦ TVar v}` and the chasing `applySubst` looped. Fixed in
@@ -94,9 +92,8 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       NOT reproduce — `unify` binds the var to the union (test
       `review_union_var_constrains`). Residual: `checkUnionMembership`
       `TVar _ -> pure ()` edge case + `TStrLit` text ignored. Low priority.
-- [ ] **`unifyAttrsClosedOpen` ignores optionality.** `Infer.hs:384-394` errors
-      on a missing *optional* open-row key. Skip optional keys in
-      `missingInClosed`. (REVIEW-3 #8)
+- [x] **#8 optionality** ✅ fixed by the rows rewrite — `unifyRec`'s `closeAgainst`
+      respects the optional flag. Test `review_optional_open_field_ok`.
 - [ ] **`import` cross-module inference is inert.** `Infer.hs:190,550-567`.
       `extractImportPathLiteral` returns the raw source string and only handles
       bare literals; likely misses canonicalized `envImportTypes` keys. Canonicalize

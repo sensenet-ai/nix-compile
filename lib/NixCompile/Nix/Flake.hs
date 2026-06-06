@@ -84,17 +84,9 @@ data FlakeOutputs = FlakeOutputs
     , outLib :: !(Maybe NExprLoc)
     , outOther :: !(Map Text NExprLoc)
     }
-    deriving (Show)
-
-instance Eq FlakeOutputs where
-    a == b =
-        outPackages a == outPackages b
-            && outDevShells a == outDevShells b
-            && outChecks a == outChecks b
-            && outApps a == outApps b
-            && outOverlays a == outOverlays b
-            && outNixosModules a == outNixosModules b
-            && outNixosConfigurations a == outNixosConfigurations b
+    -- lawful structural Eq (REVIEW-3 #14): the old hand-rolled instance compared
+    -- only outPackages, silently treating structurally distinct flakes as equal.
+    deriving (Eq, Show)
 
 data OutputEntry = OutputEntry
     { entryName :: !Text
