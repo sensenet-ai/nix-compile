@@ -169,14 +169,17 @@ them in surfaced these. Each is an `expectFailure` in Props now — fix flips it
 - [ ] **TOCTOU in file collection.** Canonicalize after listing, not before
       (carried from prior TODO — re-verify in `Module`/`ModuleSystem` before
       acting).
-- [ ] **[RC4] Quadratic substitution — MEASURED, confirmed.** Eager `composeSubst`
-      (`Nix/Types.hs`) + per-`unify` whole-subst re-apply + chasing `applySubst`.
-      The forcing benchmark (`nix-compile-bench -p inferExprWithEnv`, #18) now shows
-      the cliff on wide attrsets: 10f=3µs, 100f=96µs, 1000f=8.6ms, **5000f=291ms**
-      → 1000→5000 is 5× fields / 34× time ≈ **n^2.2** (super-quadratic). `let`-chains
-      are milder (~n^1.3). The fix (still TODO): switch `Subst` to union-find /
-      apply-on-read so a bind is O(1) and you don't re-walk the whole substitution.
-      Last remaining root cause; perf-only (no correctness impact). (REVIEW-3 #17/#18)
+- [x] **[RC4] Inference quadratics — DONE.** Profiling the forcing benchmark
+      (`nix-compile-bench -p inferExprWithEnv`, #18) showed the wide-attrset cliff
+      was THREE O(n²) hot spots, not just substitution:
+      (1) `inferNonRecursiveBinding` `acc ++ [x]` in a foldM → mapM+concat;
+      (2) `desugarNestedBindings.mergeByKey` per-key remainder rescan → two
+      O(n log n) passes;
+      (3) `addSubst` eager `composeSubst` whole-subst rewrite per bind → triangular
+      substitution (plain insert; `applySubst` already chases on read).
+      Result: **attrset-5000 276ms → 5.47ms (50×)**, scaling now ~n^1.25 (inherent
+      `Map` cost). Suite 441/441 (incl. `nixadv_nix_subst_chain`), oracle 41/0.
+      (REVIEW-3 #17/#18, commit 7607cb5)
 
 ## P3 — hygiene & process
 
