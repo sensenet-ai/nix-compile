@@ -148,12 +148,14 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       thunks; the dead `Whnf` newtype (89-92) is the tell. Return the real values,
       delete the `Bool` wrappers and `Whnf`, add pathological inputs
       (`attrSet 5000`/`10000`, deep `let`, wide `//`). (REVIEW-3 #18)
-- [ ] **Generator can't produce `NSelect`.** `genNixExpr` (`Props.hs:1106-1240`)
-      emits no attribute-selection nodes, so #1/#2 are unreachable by QuickCheck.
-      Add select/nested-select generation. (REVIEW-3 #11)
-- [ ] **Add positive well-typedness properties.** Current Nix-infer props assert
-      only no-crash + determinism (`Props.hs:1242,1251`). Add properties that an
-      accepted program has the expected type on a curated vector set. (REVIEW-3 #10)
+- [x] **Generator now produces `NSelect`.** ✅ `genNixSelect` added to `genNixExpr`
+      (three well-formed shapes: direct select, select THROUGH a function param —
+      exercising row constraints — and nested select). The row-polymorphism paths
+      (#1/#2) are now reachable by QuickCheck. (REVIEW-3 #11)
+- [x] **Positive well-typedness properties added.** ✅ `welltyped_vectors` asserts a
+      curated vector set infers the EXACT expected type (atoms, string literals,
+      lists, arithmetic, if/let, application, row-polymorphic select, list concat,
+      `builtins.attrNames`), not merely no-crash. (REVIEW-3 #10)
 
 ## P1.5 — bugs found by wiring up the dead adversarial suites (now expectFailure tripwires)
 

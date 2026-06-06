@@ -1098,6 +1098,7 @@ genNixExpr n =
         , (1, genNixNestedLet n)
         , (1, genNixWith n)
         , (1, genNixRec n)
+        , (2, genNixSelect n)
         ]
 
 genNixAtom :: Gen Text
@@ -1208,6 +1209,22 @@ genNixRec n = do
             pure (firstVal : restVals)
     let bindings = zipWith (\k v -> k <> " = " <> v <> ";") uniqueNames vals
     pure $ "rec { " <> T.unwords bindings <> " }"
+
+-- | attribute selection (#11): the generator previously emitted no NSelect nodes,
+-- leaving the row-polymorphism paths (#1/#2) unreachable by QuickCheck. Three
+-- well-formed shapes that always parse: direct select of a present field, select
+-- THROUGH a function parameter (exercises row constraints), and nested select.
+genNixSelect :: Int -> Gen Text
+genNixSelect n = do
+    k <- genNixIdent
+    v <- genNixExpr (n `div` 2)
+    oneof
+        [ pure $ "({ " <> k <> " = " <> v <> "; })." <> k
+        , pure $ "((arg: arg." <> k <> ") { " <> k <> " = " <> v <> "; })"
+        , do
+            k2 <- genNixIdent
+            pure $ "({ " <> k <> " = { " <> k2 <> " = " <> v <> "; }; })." <> k <> "." <> k2
+        ]
 
 -- | Helper: parse Nix text and run inference
 parseAndInfer :: Text -> Either Text (NT.NixType, [Binding])
@@ -1391,6 +1408,35 @@ prop_reformatter_roundtrip_corpus =
         , "{ inherit a b; inherit (pkgs) c d; }"
         , "{ a = ''\n    line1\n\n    line3 with two blanks above\n  ''; }"
         , "rec { a = 1; b = a + 1; }"
+        ]
+
+-- #10: positive well-typedness — accepted programs infer the EXPECTED type, not
+-- merely "doesn't crash". A curated vector set spanning atoms, string literals,
+-- lists, arithmetic, if/let, application, selection (incl. row-polymorphic select
+-- through a function param), list concat, and a row-polymorphic builtin.
+prop_welltyped_vectors :: Property
+prop_welltyped_vectors = conjoin (map check vectors)
+  where
+    check (src, expected) =
+        counterexample (T.unpack src <> "  ::  expected " <> show expected) $
+            case parseAndInfer src of
+                Right (ty, _) -> ty === expected
+                Left e -> counterexample ("UNEXPECTEDLY REJECTED: " <> T.unpack e) (property False)
+    vectors :: [(Text, NT.NixType)]
+    vectors =
+        [ ("1", NT.TInt)
+        , ("true", NT.TBool)
+        , ("\"hi\"", NT.TStrLit "hi")
+        , ("1 + 2", NT.TInt)
+        , ("[ 1 2 3 ]", NT.TList NT.TInt)
+        , ("if true then 1 else 2", NT.TInt)
+        , ("let x = 5; in x + 1", NT.TInt)
+        , ("(x: x) 3", NT.TInt)
+        , ("({ a = 1; }).a", NT.TInt)
+        , ("(x: x.foo) { foo = 1; bar = 2; }", NT.TInt)
+        , ("(x: [ x.a x.b ]) { a = 1; b = 2; }", NT.TList NT.TInt)
+        , ("[ 1 2 ] ++ [ 3 ]", NT.TList NT.TInt)
+        , ("builtins.attrNames { a = 1; b = 2; }", NT.TList NT.TString)
         ]
 
 -- ── UNFIXED (documented via expectFailure) ──────────────────────────────────
@@ -4530,6 +4576,7 @@ main = do
             , run "review_format_roundtrip" prop_review_format_roundtrip
             , run "reformatter_roundtrip" prop_reformatter_roundtrip
             , run "reformatter_roundtrip_corpus" prop_reformatter_roundtrip_corpus
+            , run "welltyped_vectors" prop_welltyped_vectors
             , run "review_select_on_var_constrains" (property prop_review_select_on_var_constrains)
             , run "review_select_accumulates" (property prop_review_select_accumulates)
             , run "review_select_present_ok" (property prop_review_select_present_ok)
