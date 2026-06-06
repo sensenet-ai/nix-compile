@@ -39,7 +39,7 @@ module NixCompile.Nix.Infer (
 where
 
 import Control.Exception (IOException, try)
-import Control.Monad (foldM, forM, forM_, replicateM, when)
+import Control.Monad (foldM, forM, forM_, replicateM, unless, when)
 import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.Coerce (coerce)
@@ -350,10 +350,7 @@ unify' type1 type2 = case (type1, type2) of
     -- compound types: recurse structurally
     (TList a, TList b) -> unify a b
     (TFun a1 b1, TFun a2 b2) -> unify a1 a2 >> unify b1 b2
-    (TAttrs m1, TAttrs m2) -> unifyAttrs m1 m2
-    (TAttrsOpen m1, TAttrsOpen m2) -> unifyAttrsOpenOpen m1 m2
-    (TAttrs m1, TAttrsOpen m2) -> unifyAttrsClosedOpen m1 m2
-    (TAttrsOpen m1, TAttrs m2) -> unifyAttrsClosedOpen m2 m1
+    (TRec m1 tl1, TRec m2 tl2) -> unifyRec m1 tl1 m2 tl2
     -- union: check membership
     (TUnion ts, t) -> unifyUnion ts t
     (t, TUnion ts) -> unifyUnion ts t
@@ -397,26 +394,50 @@ unifyAttrs m1 m2 = do
             (Nothing, Just (_, False)) -> throwTypeError $ "unexpected field (required in other): " <> k
             _ -> pure ()
 
-{- | unify two open attr sets: only common fields are checked
-extra keys in either side are allowed (open-world assumption)
+{- | Unify two records, row-variable aware (RC1 core).
+
+  * closed/closed: exact — delegated to 'unifyAttrs'.
+  * open/closed: the open side's own required fields must exist in the closed
+    side; the open tail var then absorbs the closed side's extra fields and is
+    bound CLOSED.
+  * open/open: common fields unified, and the two tail vars are bound to a
+    SHARED fresh tail carrying each side's extra fields — so the field UNION is
+    preserved across the unification (the old 'unifyAttrsOpenOpen' discarded it).
+
+  The anonymous sentinel row var ('isAnonRowVar') is never bound, so pure
+  flake/module display types keep their old open-world behavior.
 -}
-unifyAttrsOpenOpen :: Map Text (NixType, Bool) -> Map Text (NixType, Bool) -> Infer ()
-unifyAttrsOpenOpen m1 m2 = do
-    let common = Map.intersectionWith (,) m1 m2
-    mapM_ (\((t1, _), (t2, _)) -> unify t1 t2) (Map.elems common)
+unifyRec :: Map Text (NixType, Bool) -> RowTail -> Map Text (NixType, Bool) -> RowTail -> Infer ()
+unifyRec m1 tl1 m2 tl2 = case (tl1, tl2) of
+    (RClosed, RClosed) -> unifyAttrs m1 m2
+    (ROpen r1, RClosed) -> unifyCommon >> closeAgainst r1 only1 only2
+    (RClosed, ROpen r2) -> unifyCommon >> closeAgainst r2 only2 only1
+    (ROpen r1, ROpen r2)
+        | isAnonRowVar r1 || isAnonRowVar r2 -> unifyCommon
+        | otherwise -> do
+            unifyCommon
+            r3 <- freshTypeVar
+            bindRowVar r1 (TRec only2 (ROpen r3))
+            bindRowVar r2 (TRec only1 (ROpen r3))
+  where
+    only1 = Map.difference m1 m2 -- fields known only on the left
+    only2 = Map.difference m2 m1 -- fields known only on the right
+    unifyCommon =
+        mapM_ (\((t1, _), (t2, _)) -> unify t1 t2) (Map.elems (Map.intersectionWith (,) m1 m2))
+    -- an open record (tail var r, own-only fields `openOnly`) meeting a closed
+    -- side whose extras are `closedExtra`
+    closeAgainst r openOnly closedExtra = do
+        forM_ (Map.toList openOnly) $ \(k, (_, optional)) ->
+            unless optional $
+                throwTypeError ("closed record missing field required by open record: " <> k)
+        unless (isAnonRowVar r) $ bindRowVar r (TRec closedExtra RClosed)
 
--- | unify closed set against open set: closed must have all open's keys
-unifyAttrsClosedOpen :: Map Text (NixType, Bool) -> Map Text (NixType, Bool) -> Infer ()
-unifyAttrsClosedOpen closed open = do
-    let openKeys = Map.keysSet open
-    let closedKeys = Map.keysSet closed
-    let missingInClosed = Set.difference openKeys closedKeys
-
-    if not (Set.null missingInClosed)
-        then throwTypeError $ "closed set missing fields required by open set: " <> T.intercalate ", " (Set.toList missingInClosed)
-        else do
-            let common = Map.intersectionWith (,) closed open
-            mapM_ (\((t1, _), (t2, _)) -> unify t1 t2) (Map.elems common)
+-- | bind a row variable (with row-occurs check; never binds the anon sentinel)
+bindRowVar :: TypeVar -> NixType -> Infer ()
+bindRowVar r t
+    | isAnonRowVar r = pure ()
+    | occursCheck r t = throwTypeError $ "recursive row type: " <> prettyType (TVar r) <> " occurs in " <> prettyType t
+    | otherwise = addSubst r t
 
 {- | unify a union (sum) type against a concrete type
 single-element unions delegate; multi-element checks membership
@@ -623,7 +644,8 @@ inferSelect environment base path hasDefault = do
                 StaticKey k -> Just (varNameText k)
                 DynamicKey _ -> Nothing
         case (t', key) of
-            (TAttrs fields, Just k) -> case Map.lookup k fields of
+            -- closed record: key must be present (unless `or default`)
+            (TRec fields RClosed, Just k) -> case Map.lookup k fields of
                 Just (t, _) -> pure t
                 Nothing
                     | hasDefault -> freshVar
@@ -632,16 +654,31 @@ inferSelect environment base path hasDefault = do
                             "attribute '" <> k <> "' missing on closed attribute set (keys: "
                                 <> T.intercalate ", " (Map.keys fields)
                                 <> ")"
-            (TAttrsOpen fields, Just k) -> case Map.lookup k fields of
+            -- open record: a missing key EXTENDS the row through its tail var, so
+            -- repeated selections accumulate (`x.a` then `x.b` ⟹ `{a,b|ρ}`).
+            (TRec fields (ROpen r), Just k) -> case Map.lookup k fields of
                 Just (t, _) -> pure t
-                Nothing -> freshVar
+                Nothing
+                    | hasDefault || isAnonRowVar r -> freshVar
+                    | otherwise -> do
+                        fieldTy <- freshVar
+                        r' <- freshTypeVar
+                        bindRowVar r (TRec (Map.singleton k (fieldTy, False)) (ROpen r'))
+                        pure fieldTy
+            -- selection on a VARIABLE emits a row constraint α ~ { k : β | ρ }
+            -- (RC1 #2 — was a silent freshVar, so `(x: x.foo) 5` wrongly passed).
+            (TVar _, Just k)
+                | hasDefault -> freshVar
+                | otherwise -> do
+                    fieldTy <- freshVar
+                    r <- freshTypeVar
+                    unify t' (TRec (Map.singleton k (fieldTy, False)) (ROpen r))
+                    pure fieldTy
+            (TAny, Just _) -> freshVar
             -- selecting a static key from a concrete non-attrset is a type error
-            -- (e.g. `x.a.b` where `x.a : Int`). `TVar` stays lenient because row
-            -- variables are not yet modeled (RC1); `TAny` is the escape hatch.
+            -- (e.g. `x.a.b` where `x.a : Int`)
             (_, Just k)
                 | hasDefault -> freshVar
-                | TVar _ <- t' -> freshVar
-                | TAny <- t' -> freshVar
                 | otherwise ->
                     throwTypeError $
                         "cannot select attribute '" <> k <> "' from non-attrset type " <> prettyType t'

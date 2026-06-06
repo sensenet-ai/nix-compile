@@ -51,22 +51,25 @@ hygiene/process.
 *[point]* = standalone fix, correct under either fork. *[RC1]* = only truly fixed
 by real row variables (Fork B); under Fork A, document the limitation instead.
 
-- [ ] **[RC1] Real row variables** — the architectural item the next three depend
-      on. `TAttrsOpen` (`Nix/Types.hs:79`) has no tail var, so a second select
-      can't accumulate fields and `unifyAttrsOpenOpen` forgets the union.
-      Fork-B design: recursive `Row` + lacks-constraints (Gaster–Jones), Expresso
-      (`willtim/Expresso` + `willtim/row-polymorphism`'s
-      `AlgorithmW_ConstrainedRows.hs`) as the reference; **read those first**; do
-      NOT use `unification-fd` (single-sorted, wrong shape); stand up the oracle in
-      the same breath (silent `generalize`/`instantiate` bugs). (REVIEW-3 RC1, Fork B)
+- [~] **[RC1] Real row variables** — landed on `main` (see `design/rows.md`):
+      `TRec (Map Text (NixType,Bool)) RowTail`, `RowTail = RClosed | ROpen TypeVar`;
+      `unifyRec` with open∪open **union accumulation**; selection emits row
+      constraints + extends open records. Validated against the oracle.
+      **Stage 1** (ADT), **2a** (row-var plumbing), **2b** (accumulation),
+      **3** (select) DONE. ☐ Remaining: stage 4 — real row signatures for
+      `getAttr`/`attrValues`/`removeAttrs` + `//` degrade-to-open + `import`
+      returns a record; lacks-constraint store (deferred from 2b — current
+      accumulation stays sound via disjoint field-difference). (REVIEW-3 RC1, Fork B)
 - [x] **[point] Nested attribute selection truncates to one level.** `Infer.hs:792`
       `(attr :| _)` drops the path tail; `x.a.b.c` is typed as `x.a`. Iterate the
       full `NonEmpty` path through `inferSelect`. (REVIEW-3 #1)
       ✅ DONE — `inferSelect` folds the path and errors on selecting from a concrete
       non-attrset. Tests: `review_nested_select_errors`, `review_nested_select_deep_ok`.
-- [ ] **Select on a type variable emits no row constraint.** `Infer.hs:605`
-      falls to `freshVar`; `(x: x.foo) 5` type-checks. Emit `α ~ { foo : β | ρ }`
-      (open-row constraint) instead. (REVIEW-3 #2)
+- [x] **[RC1] Select on a type variable emits no row constraint.** ✅ DONE (rows
+      stage 3). `inferSelect` now emits `α ~ { k : β | ρ }`, and open records
+      accumulate fields across selections via the tail var. `(x: x.foo) 5` now
+      errors. Tests: `review_select_on_var_constrains`, `review_select_accumulates`,
+      `review_select_present_ok`, `review_select_missing_fails`. (REVIEW-3 #2)
 - [x] **`x == null` is a false positive.** `Infer.hs:667-668` unify operands;
       `unify'` has no cross-`TNull` case. `==`/`!=` are total in Nix — they must
       not unify. Type both as `_ -> TBool` (optionally still infer operands for

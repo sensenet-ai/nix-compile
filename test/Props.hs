@@ -1315,12 +1315,31 @@ prop_review_format_roundtrip = forAll (sized genNixExpr) $ \src ->
 
 -- ── UNFIXED (documented via expectFailure) ──────────────────────────────────
 
--- #2 (RC1): selecting a field from a function argument must constrain it to a
--- row containing that field, so `(x: x.foo) 5` is a type error. Currently the
--- variable case adds no constraint and the program is wrongly accepted.
-prop_review_select_on_var_unsound :: Property
-prop_review_select_on_var_unsound =
-    expectFailure $ once $ isLeft (parseAndInfer "(x: x.foo) 5")
+-- #2 (RC1 — FIXED in rows stage 3): selecting a field from a function argument
+-- now emits a row constraint α ~ { foo : β | ρ }, so `(x: x.foo) 5` is a type
+-- error (5 is not a record). Was a silent freshVar.
+prop_review_select_on_var_constrains :: Bool
+prop_review_select_on_var_constrains = isLeft (parseAndInfer "(x: x.foo) 5")
+
+-- RC1 row accumulation: a function selecting two fields constrains its argument
+-- to an open record with BOTH, then unifies cleanly with a record that has them.
+prop_review_select_accumulates :: Bool
+prop_review_select_accumulates =
+    case parseAndInfer "(x: [ x.a x.b ]) { a = 1; b = 2; }" of
+        Right (NT.TList NT.TInt, _) -> True
+        _ -> False
+
+-- RC1: selecting a present field through a variable resolves to its type.
+prop_review_select_present_ok :: Bool
+prop_review_select_present_ok =
+    case parseAndInfer "(x: x.foo) { foo = 1; bar = 2; }" of
+        Right (NT.TInt, _) -> True
+        _ -> False
+
+-- RC1: selecting a field absent from the (closed) argument is a type error.
+prop_review_select_missing_fails :: Bool
+prop_review_select_missing_fails =
+    isLeft (parseAndInfer "(x: x.a) { b = 1; }")
 
 -- #6 (RC2): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`, but the
 -- left fold binds `a := TInt` and then rejects `TInt ~ TBool`. A real solver
@@ -4371,7 +4390,10 @@ main = do
             , run "review_plus_nonaddable_fails" (property prop_review_plus_nonaddable_fails)
             , run "review_tostring_concrete_errors" (property prop_review_tostring_concrete_errors)
             , run "review_format_roundtrip" prop_review_format_roundtrip
-            , run "review_select_on_var_unsound[RC1]" prop_review_select_on_var_unsound
+            , run "review_select_on_var_constrains" (property prop_review_select_on_var_constrains)
+            , run "review_select_accumulates" (property prop_review_select_accumulates)
+            , run "review_select_present_ok" (property prop_review_select_present_ok)
+            , run "review_select_missing_fails" (property prop_review_select_missing_fails)
             , run "review_bash_subtype_incomplete[RC2]" prop_review_bash_subtype_incomplete
             , run "review_union_var_constrains" (property prop_review_union_var_constrains)
             , -- Bash AST edge cases

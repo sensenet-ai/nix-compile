@@ -106,7 +106,7 @@ prop_nix_row_closed_missing_open_req =
     let closed = NT.TAttrs (Map.singleton "a" (NT.TInt, False))
         open = NT.TAttrsOpen (Map.singleton "b" (NT.TBool, False))
      in case Infer.runInfer (Infer.unify closed open) of
-            Left err -> "closed set missing" `T.isInfixOf` err
+            Left err -> "missing field required by open" `T.isInfixOf` err
             Right _ -> False
 
 -- | TAttrsOpen {} unifies with TInt — empty open has no requirements.
