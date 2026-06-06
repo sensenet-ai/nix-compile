@@ -25,7 +25,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Bash.Patterns (escapeForParamExpansion)
-import NixCompile.Nix.Infer (builtinEnv, inferExprWithEnv)
+import NixCompile.Nix.Inference (builtinEnv, inferExprWithEnv)
 import NixCompile.Nix.Types (prettyType)
 import NixCompile.Nix.LintCombined qualified as LC
 import NixCompile.Nix.Parse (parseNixExpr)

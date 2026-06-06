@@ -43,8 +43,8 @@ import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Lint.Forbidden qualified as Forbidden
-import NixCompile.Nix.Infer (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
-import NixCompile.Nix.Infer qualified as Infer
+import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
+import NixCompile.Nix.Inference qualified as Infer
 import NixCompile.Nix.LayoutConvention (straylight)
 import NixCompile.Nix.Lint (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Nix.LintDerivation qualified as Deriv

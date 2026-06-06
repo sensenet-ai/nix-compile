@@ -74,7 +74,7 @@ library
         NixCompile.LSP.Handlers
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
-        NixCompile.Nix.Annotate
+        NixCompile.Nix.Inference
         NixCompile.Nix.Effect
         NixCompile.Nix.Flake
         NixCompile.Nix.Infer

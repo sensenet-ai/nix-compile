@@ -55,7 +55,7 @@ import Nix.Expr.Types hiding (Binding)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils qualified as NixPath
-import NixCompile.Nix.Infer (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
+import NixCompile.Nix.Inference (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
 import NixCompile.Nix.LayoutConvention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types

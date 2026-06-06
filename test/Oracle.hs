@@ -33,7 +33,7 @@ import Control.Monad (forM)
 import Data.Char (isSpace)
 import Data.Text qualified as T
 import Nix.Parser (parseNixTextLoc)
-import NixCompile.Nix.Infer (inferExpr)
+import NixCompile.Nix.Inference (inferExpr)
 import NixCompile.Nix.Types (NixType (..))
 import System.Directory (findExecutable)
 import System.Exit (ExitCode (..), exitFailure, exitSuccess)

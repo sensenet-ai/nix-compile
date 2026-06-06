@@ -48,7 +48,7 @@ import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
-import NixCompile.Nix.Infer (inferExpr)
+import NixCompile.Nix.Inference (inferExpr)
 import NixCompile.Nix.Types
 import NixCompile.Nix.Utils (varNameText)
 import System.Directory (doesFileExist)

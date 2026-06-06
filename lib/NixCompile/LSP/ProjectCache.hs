@@ -79,7 +79,7 @@ import GHC.Conc (getNumCapabilities)
 import Nix.Expr.Types (NExprF (..), Binding (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import Nix.Utils qualified as NixUtils
-import NixCompile.Nix.Infer
+import NixCompile.Nix.Inference
     ( TypeEnv (..)
     , builtinEnv
     , extendImport

@@ -36,7 +36,7 @@ import NixCompile.Config qualified as Config
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Log
-import NixCompile.Nix.Annotate qualified as Annotate
+import NixCompile.Nix.Infer qualified as Annotate
 import NixCompile.Nix.Formatter qualified as Formatter
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope

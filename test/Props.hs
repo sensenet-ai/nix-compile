@@ -57,9 +57,9 @@ import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Log (Severity (ErrorS), runLog)
 import NixCompile.Nix.Effect
-import NixCompile.Nix.Annotate (annotateExpr)
+import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Formatter (formatNixFile)
-import NixCompile.Nix.Infer (Binding, inferExpr)
+import NixCompile.Nix.Inference (Binding, inferExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
 import NixCompile.Nix.Lint
 import NixCompile.Nix.LintDerivation qualified as DerivLint

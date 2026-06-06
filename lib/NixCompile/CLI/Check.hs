@@ -29,7 +29,7 @@ import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
 import NixCompile.Log
-import NixCompile.Nix.Infer qualified
+import NixCompile.Nix.Inference qualified
 import NixCompile.Nix.LintCombined qualified as Combined
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Types qualified
@@ -95,7 +95,7 @@ performTypeCheck :: Config.Config -> NExprLoc -> Bool -> AppM TCResult
 performTypeCheck config expression skipTypeCheck
     | skipTypeCheck = return TCOk
     | otherwise = do
-    result <- liftIO $ try $ case NixCompile.Nix.Infer.inferExpr expression of
+    result <- liftIO $ try $ case NixCompile.Nix.Inference.inferExpr expression of
         Left typeError -> return $ Left typeError
         Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
     case result of
