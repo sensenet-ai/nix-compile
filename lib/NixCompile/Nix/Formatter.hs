@@ -62,6 +62,26 @@ data Src = Src
     , srcDocCommentFlags :: [Bool]
     }
 
+isBlankLine :: Text -> Bool
+isBlankLine t = T.null (T.strip t)
+
+-- | number of blank source lines immediately preceding @target@ (1-based line)
+precedingBlankCount :: Src -> Int -> Int
+precedingBlankCount src target =
+    let ls = take (target - 1) (srcLines src)
+     in length (takeWhileEnd isBlankLine ls)
+
+-- | the source position carried by a binding (NamedVar or Inherit)
+bindingPos :: Binding NExprLoc -> NSourcePos
+bindingPos = \case
+    NamedVar _ _ p -> p
+    Inherit _ _ p -> p
+
+-- | True if a single blank line separated this binding from the previous source
+-- construct — nixfmt preserves exactly one such blank between items.
+hasPrecedingBlank :: Src -> Binding NExprLoc -> Bool
+hasPrecedingBlank src b = precedingBlankCount src (lineNum (bindingPos b)) > 0
+
 precedingComments :: Src -> Int -> [Text]
 precedingComments src target =
     map fst $ takeWhileEnd (\(t, isDoc) -> isCommentLike t isDoc) (take (target - 1) (zip (srcLines src) (srcDocCommentFlags src)))
@@ -209,10 +229,20 @@ fmtSet src i isRec bindings
         let bs = map (fmtBinding src (i + 2)) bindings
             inline = pre <> "{ " <> T.intercalate " " bs <> " }"
          in if length bindings >= 2 || any multiline bs || not (fits i inline)
-                then pre <> "{" <> T.concat (map (\t -> nl (i + 2) <> t) bs) <> nl i <> "}"
+                then expandedSet src i pre bindings
                 else inline
   where
     pre = if isRec then "rec " else ""
+
+-- | render a set's bindings one per line at @i+2@, closing brace at @i@, with a
+-- single blank line preserved between bindings where the source had one.
+expandedSet :: Src -> Int -> Text -> [Binding NExprLoc] -> Text
+expandedSet src i pre bindings =
+    pre <> "{" <> T.concat (zipWith item [0 ..] bindings) <> nl i <> "}"
+  where
+    item :: Int -> Binding NExprLoc -> Text
+    item idx b = blank idx b <> nl (i + 2) <> fmtBinding src (i + 2) b
+    blank idx b = if idx > 0 && hasPrecedingBlank src b then "\n" else ""
 
 -- | a binding rendered as a block starting at column @i@. Preceding comment
 -- lines (if any) are emitted first, each at column @i@.
@@ -240,9 +270,7 @@ fmtBindingValue :: Src -> Int -> NExprLoc -> Text
 fmtBindingValue src i val@(Fix (Compose (AnnUnit _ inner))) = case inner of
     NSet recursive bindings
         | not (null bindings) ->
-            let pre = if recursive == Recursive then "rec " else ""
-                bs = map (fmtBinding src (i + 2)) bindings
-             in pre <> "{" <> T.concat (map (\t -> nl (i + 2) <> t) bs) <> nl i <> "}"
+            expandedSet src i (if recursive == Recursive then "rec " else "") bindings
     _ -> fmtExpr src i val
 
 -- | comment lines that immediately precede a binding, each on its own line at
@@ -258,11 +286,15 @@ commentPrefix src i spos =
 fmtLet :: Src -> Int -> [Binding NExprLoc] -> NExprLoc -> Text
 fmtLet src i bindings body =
     "let"
-        <> T.concat (map (\b -> nl (i + 2) <> fmtBinding src (i + 2) b) bindings)
+        <> T.concat (zipWith item [0 ..] bindings)
         <> nl i
         <> "in"
         <> nl i
         <> fmtExpr src i body
+  where
+    item :: Int -> Binding NExprLoc -> Text
+    item idx b = blank idx b <> nl (i + 2) <> fmtBinding src (i + 2) b
+    blank idx b = if idx > 0 && hasPrecedingBlank src b then "\n" else ""
 
 fmtIf :: Src -> Int -> NExprLoc -> NExprLoc -> NExprLoc -> Text
 fmtIf src i cond then_ else_ =
