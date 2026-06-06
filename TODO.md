@@ -55,11 +55,14 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       `TRec (Map Text (NixType,Bool)) RowTail`, `RowTail = RClosed | ROpen TypeVar`;
       `unifyRec` with open∪open **union accumulation**; selection emits row
       constraints + extends open records. Validated against the oracle.
-      **Stage 1** (ADT), **2a** (row-var plumbing), **2b** (accumulation),
-      **3** (select) DONE. ☐ Remaining: stage 4 — real row signatures for
-      `getAttr`/`attrValues`/`removeAttrs` + `//` degrade-to-open + `import`
-      returns a record; lacks-constraint store (deferred from 2b — current
-      accumulation stays sound via disjoint field-difference). (REVIEW-3 RC1, Fork B)
+      **Stages 1–4 DONE**: ADT, row-var plumbing, open∪open accumulation, select
+      constraints, and `builtins.<name>` row-polymorphic via a scheme table
+      instantiated at the selection site (`attrNames`/`attrValues`/`hasAttr`/
+      `getAttr`/`removeAttrs` + precise list builtins). `//` already degrades to
+      open (closed-merge stays precise). ☐ Remaining: `import` returns a record
+      (#5, cross-module), and an explicit lacks-constraint store (deferred — current
+      accumulation stays sound via disjoint field-difference; needed only for
+      first-class record extension). (REVIEW-3 RC1, Fork B)
 - [x] **[point] Nested attribute selection truncates to one level.** `Infer.hs:792`
       `(attr :| _)` drops the path tail; `x.a.b.c` is typed as `x.a`. Iterate the
       full `NonEmpty` path through `inferSelect`. (REVIEW-3 #1)
