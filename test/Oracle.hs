@@ -119,8 +119,7 @@ expectedKind = \case
     TPath -> Just "path"
     TNull -> Just "null"
     TList _ -> Just "list"
-    TAttrs _ -> Just "set"
-    TAttrsOpen _ -> Just "set"
+    TRec _ _ -> Just "set"
     TFun _ _ -> Just "lambda"
     TDerivation -> Just "set"
     -- no concrete claim: don't assert
