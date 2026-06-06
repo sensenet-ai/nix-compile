@@ -1399,13 +1399,12 @@ prop_reformatter_roundtrip_corpus =
         , "rec { a = 1; b = a + 1; }"
         ]
 
--- TRIPWIRE (expectFailure): indented `''…''` strings are NOT yet meaning-preserving
--- (the content's internal newlines/indentation are re-emitted naively, gaining a
--- trailing blank line). Faithful indented-string rendering — round-trip AND nixfmt
--- parity — is the remaining formatter gap (TODO #16). Flip to a real test when fixed.
+-- Indented `''…''` strings are meaning-preserving now that the reformatter is
+-- backed by vendored nixfmt (which round-trips indentation faithfully). Was an
+-- expectFailure tripwire under the old hand-rolled printer (#16).
 prop_reformatter_indented_string :: Property
 prop_reformatter_indented_string =
-    expectFailure $ conjoin (map reformatPreservesMeaning corpus)
+    conjoin (map reformatPreservesMeaning corpus)
   where
     corpus =
         [ "{ a = ''\n    hello\n      world\n  ''; }"

@@ -129,20 +129,16 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       provides them only under `builtins.`; bare `head xs` is an undefined var at
       eval, yet the checker types it. Split builtinEnv into true-globals vs
       `builtins.*`-only. (REVIEW-3 #20; found by the oracle)
-- [~] **`parse(format(x)) ≅ parse(x)`** property. ✅ DONE for
-      `Format`/`annotateSource` (test `review_format_roundtrip` — meaning-preserving,
-      green). ✅ PROPERTY NOW EXISTS for the reformatter `Formatter.formatNixFile`
-      (`reformatter_roundtrip` + `reformatter_roundtrip_corpus`, compare ASTs modulo
-      source position via `zeroExprPos . stripAnnotation`). It CONFIRMS the review's
-      claim — the reformatter is NOT meaning-preserving, so both are `expectFailure`
-      TRIPWIRES pinning two concrete defects:
-        (a) precedence parens dropped: `[ (f: null) true (true > null) ]` →
-            `[(f: null) true true > null]` (reparses differently / unparseable);
-        (b) indented `''…''` strings gain a trailing blank line (significant
-            whitespace corruption).
-      ☐ REMAINING: fix the reformatter (emit precedence parens; print indented
-      strings from verbatim source slice), then flip both tripwires off
-      `expectFailure`. (REVIEW-3 #16)
+- [x] **`parse(format(x)) ≅ parse(x)`** property + **reformatter = nixfmt parity.**
+      ✅ DONE for `Format`/`annotateSource` (`review_format_roundtrip`). ✅ The
+      reformatter (`Formatter.formatNixFile`) now DELEGATES to deep-vendored nixfmt
+      1.3.1 (RFC 166) under `vendor/nixfmt/` (MPL-2.0, building under our flags) —
+      **byte-exact parity** with the `nixfmt` binary: curated 14/14, real fixtures
+      48/48 (`tools/fmtparity/check.sh`). All three round-trip props pass as real
+      tests (`reformatter_roundtrip` / `_corpus` / `_indented_string`) — meaning-
+      preservation incl. indented strings comes for free from nixfmt. The old
+      hand-rolled printer is retired. Diverge later by editing the vendored modules.
+      (REVIEW-3 #16)
 - [ ] **Make the benchmark force real output.** `bench/Bench.hs:171-193` wrappers
       return `Bool`, so `nf` leaves the AST/`NixType`/`[Binding]`/violation-list as
       thunks; the dead `Whnf` newtype (89-92) is the tell. Return the real values,
