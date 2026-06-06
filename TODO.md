@@ -103,12 +103,12 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
 
 ## P0 — soundness (bash type checker)
 
-- [ ] **[RC2] Subtyping via empty-substitution is order-dependent + incomplete.**
-      `Infer/Unify.hs:36-40,62-69`. `[TInt ~ α, α ~ TBool]` is rejected though
-      `α = TNumeric` satisfies it; reordering changes the result. Needs a real
-      constraint phase (collect, then compute meets/joins) — the same solver that
-      RC2 buys for union-membership and `//`. Or, under Fork A, drop the `TNumeric`
-      supertype. (REVIEW-3 #6, RC2)
+- [x] **[RC2] Subtyping order-dependence** ✅ FIXED. `solve` rewritten as
+      collect-then-join: union-find over vars, each var resolved to the LUB of its
+      concrete constraints in the `{TInt,TBool} <: TNumeric` lattice. `[TInt~a,
+      a~TBool]` now resolves `a=TNumeric` order-independently; bare concrete~concrete
+      stays strict (TInt/TBool disjoint). Test `review_bash_subtype_resolves`.
+      (REVIEW-3 #6, RC2)
 
 ## P1 — test infrastructure (highest leverage — do these first)
 

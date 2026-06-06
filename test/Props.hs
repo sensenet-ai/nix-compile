@@ -1369,14 +1369,18 @@ prop_review_builtins_hasattr_ok =
         Right (NT.TBool, _) -> True
         _ -> False
 
--- #6 (RC2): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`, but the
--- left fold binds `a := TInt` and then rejects `TInt ~ TBool`. A real solver
--- would accept. (Order-dependent + incomplete.)
-prop_review_bash_subtype_incomplete :: Property
-prop_review_bash_subtype_incomplete =
-    expectFailure $
-        once $
-            isRight (solve [TInt :~: TVar (TypeVar "a"), TVar (TypeVar "a") :~: TBool])
+-- #6 (RC2 — FIXED): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`.
+-- The new collect-then-join solver resolves it (the old left fold bound
+-- `a := TInt` then rejected `TInt ~ TBool`). Order-independent + complete.
+prop_review_bash_subtype_resolves :: Bool
+prop_review_bash_subtype_resolves =
+    let a = TVar (TypeVar "a")
+        forward = solve [TInt :~: a, a :~: TBool]
+        reversed = solve [a :~: TBool, TInt :~: a]
+     in isRight forward && isRight reversed && resolvesNumeric forward
+  where
+    resolvesNumeric (Right s) = applySubst s (TVar (TypeVar "a")) == TNumeric
+    resolvesNumeric _ = False
 
 -- #8 CORRECTION (review claim does NOT reproduce): the review said a union
 -- meeting a variable adds no constraint, so `(x: toString x) { a = 1; }` would be
@@ -4427,7 +4431,7 @@ main = do
             , run "review_builtins_attrnames_ok" (property prop_review_builtins_attrnames_ok)
             , run "review_builtins_attrnames_nonrecord_fails" (property prop_review_builtins_attrnames_nonrecord_fails)
             , run "review_builtins_hasattr_ok" (property prop_review_builtins_hasattr_ok)
-            , run "review_bash_subtype_incomplete[RC2]" prop_review_bash_subtype_incomplete
+            , run "review_bash_subtype_resolves" (property prop_review_bash_subtype_resolves)
             , run "review_union_var_constrains" (property prop_review_union_var_constrains)
             , -- Bash AST edge cases
               run "bash_arithmetic" prop_bash_arithmetic
