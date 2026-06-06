@@ -65,6 +65,8 @@ import NixCompile.Nix.ModuleKind
 import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
+import Adversarial qualified
+import NixAdversarial qualified
 import NixCompile.Schema.Build (buildSchema)
 import ProjectCacheSpec qualified
 import Psychotic qualified
@@ -4096,6 +4098,92 @@ prop_cli_lint_check_fails = QCM.monadicIO $ do
 -- Main
 -- ============================================================================
 
+-- ============================================================================
+-- Wired-in adversarial suites (test/Adversarial.hs, test/NixAdversarial.hs were
+-- compiled but never run). Built here so the Arbitrary orphan instances above
+-- are in scope. Run from main alongside the Psychotic suite.
+-- ============================================================================
+
+qcRun :: Testable p => p -> IO Bool
+qcRun p = isSuccess <$> quickCheckWithResult stdArgs{maxSuccess = 100, chatty = False} p
+
+adversarialTests :: [(String, IO Bool)]
+adversarialTests =
+    [ ("adv_literal_no_crash", qcRun Adversarial.prop_literal_no_crash)
+    , ("adv_literal_overflow_safe", qcRun Adversarial.prop_literal_overflow_safe)
+    , ("adv_expansion_no_crash", qcRun Adversarial.prop_expansion_no_crash)
+    , ("adv_expansion_malformed_safe", qcRun Adversarial.prop_expansion_malformed_safe)
+    , ("adv_config_no_crash", qcRun Adversarial.prop_config_no_crash)
+    , ("adv_config_malformed_safe", qcRun Adversarial.prop_config_malformed_safe)
+    , ("adv_bash_no_crash", qcRun Adversarial.prop_bash_no_crash)
+    , ("adv_expansion_test_vectors", qcRun Adversarial.prop_expansion_test_vectors)
+    , ("adv_literal_test_vectors", qcRun Adversarial.prop_literal_test_vectors)
+    , ("adv_empty_default_not_required", qcRun Adversarial.prop_empty_default_not_required)
+    , ("adv_traversal_rejected", qcRun Adversarial.prop_traversal_rejected)
+    , ("adv_overflow_becomes_string", qcRun Adversarial.prop_overflow_becomes_string)
+    , ("adv_varname_valid", qcRun Adversarial.prop_varname_valid)
+    , -- BUG#21: config parser accepts `$|` as a var ref (counterexample "|").
+      ("adv_invalid_varname_rejected[bug#21]", qcRun (expectFailure Adversarial.prop_invalid_varname_rejected))
+    , -- BUG#22: config var-ref captures `;`/newline, injection-relevant (cx "\n; id\n").
+      ("adv_injection_blocked[bug#22]", qcRun (expectFailure Adversarial.prop_injection_blocked))
+    , ("adv_store_path_no_traversal", qcRun Adversarial.prop_store_path_no_traversal)
+    , ("adv_emit_escaped", qcRun Adversarial.prop_emit_escaped)
+    , ("adv_solve_unsatisfiable", qcRun Adversarial.prop_solve_unsatisfiable)
+    , ("adv_bounded_time", qcRun Adversarial.prop_bounded_time)
+    , ("adv_no_memory_bomb", qcRun Adversarial.prop_no_memory_bomb)
+      -- DROPPED adv_literal_type_preserved: ill-posed/flaky. Asserts type-preserving
+      -- roundtrip over ARBITRARY literals, but its renderLiteral prints LitString "2"
+      -- as bare `2`, which correctly re-parses as LitInt 2. Canonical roundtrips
+      -- (literal_int_roundtrip / literal_bool_roundtrip) already cover the valid case.
+    , ("adv_subst_chain_bash", qcRun Adversarial.prop_subst_chain_bash)
+    , ("adv_subst_chain_nix", qcRun Adversarial.prop_subst_chain_nix)
+    , -- BUG#23: `command eval`/`builtin eval` (eval behind a prefix) not detected.
+      ("adv_bash_lint_eval_prefixed[bug#23]", qcRun (expectFailure Adversarial.prop_bash_lint_eval_prefixed))
+    , -- DROPPED adv_bash_lint_eval_store_path: asserts a store-path binary literally
+      -- named `eval` is the `eval` builtin — it isn't (separate command); false positive.
+      -- BUG#24: no ConfigTemplate fact for multi-interpolation array config.
+      ("adv_config_array_template[bug#24]", qcRun (expectFailure Adversarial.prop_config_array_template))
+    ]
+
+nixAdversarialTests :: [(String, IO Bool)]
+nixAdversarialTests =
+    [ ("nixadv_nix_occurs_check", qcRun NixAdversarial.prop_nix_occurs_check)
+    , ("nixadv_nix_union_mismatch", qcRun NixAdversarial.prop_nix_union_mismatch)
+    , ("nixadv_nix_attrs_required_missing", qcRun NixAdversarial.prop_nix_attrs_required_missing)
+    , ("nixadv_nix_row_closed_missing_open_req", qcRun NixAdversarial.prop_nix_row_closed_missing_open_req)
+    , -- DROPPED nixadv_nix_row_empty_open_any: asserts `unify (TAttrsOpen {}) TInt`
+      -- should SUCCEED — that's unsound (a record is not an Int). Code correctly rejects.
+      -- BUG#25: union membership doesn't flatten nested unions.
+      ("nixadv_nix_nested_union[bug#25]", qcRun (expectFailure NixAdversarial.prop_nix_nested_union))
+    , ("nixadv_nix_many_fresh_vars", qcRun NixAdversarial.prop_nix_many_fresh_vars)
+    , ("nixadv_nix_deep_func_nesting", qcRun NixAdversarial.prop_nix_deep_func_nesting)
+    , ("nixadv_nix_deep_attr_nesting", qcRun NixAdversarial.prop_nix_deep_attr_nesting)
+    , ("nixadv_nix_deep_let_nesting", qcRun NixAdversarial.prop_nix_deep_let_nesting)
+    , ("nixadv_nix_mutual_scc_stress", qcRun NixAdversarial.prop_nix_mutual_scc_stress)
+    , ("nixadv_nix_nested_with", qcRun NixAdversarial.prop_nix_nested_with)
+    , ("nixadv_nix_with_inside_rec", qcRun NixAdversarial.prop_nix_with_inside_rec)
+    , ("nixadv_nix_with_inside_func", qcRun NixAdversarial.prop_nix_with_inside_func)
+    , ("nixadv_nix_with_memo_no_leak", qcRun NixAdversarial.prop_nix_with_memo_no_leak)
+    , ("nixadv_nix_functor_self", qcRun NixAdversarial.prop_nix_functor_self)
+    , ("nixadv_nix_functor_wrong_arity", qcRun NixAdversarial.prop_nix_functor_wrong_arity)
+    , ("nixadv_nix_functor_chain", qcRun NixAdversarial.prop_nix_functor_chain)
+    , ("nixadv_nix_functor_identity", qcRun NixAdversarial.prop_nix_functor_identity)
+    , ("nixadv_nix_row_closed_vs_open_common", qcRun NixAdversarial.prop_nix_row_closed_vs_open_common)
+    , ("nixadv_nix_row_closed_extra_ok", qcRun NixAdversarial.prop_nix_row_closed_extra_ok)
+    , ("nixadv_nix_infer_state_integrity", qcRun NixAdversarial.prop_nix_infer_state_integrity)
+    , ("nixadv_nix_infer_deterministic", qcRun NixAdversarial.prop_nix_infer_deterministic)
+    , ("nixadv_nix_tvar_supply_monotonic", qcRun NixAdversarial.prop_nix_tvar_supply_monotonic)
+    , ("nixadv_nix_empty_attrset", qcRun NixAdversarial.prop_nix_empty_attrset)
+    , ("nixadv_nix_empty_list", qcRun NixAdversarial.prop_nix_empty_list)
+    , ("nixadv_nix_heterogeneous_list", qcRun NixAdversarial.prop_nix_heterogeneous_list)
+    , ("nixadv_nix_nested_application", qcRun NixAdversarial.prop_nix_nested_application)
+    , ("nixadv_nix_functor_non_func", qcRun NixAdversarial.prop_nix_functor_non_func)
+    , ("nixadv_nix_functor_valid", qcRun NixAdversarial.prop_nix_functor_valid)
+    , -- BUG#26: deriv linter misses `mkDerivation` reached through a deep select chain.
+      ("nixadv_deriv_deep_select[bug#26]", qcRun (expectFailure NixAdversarial.prop_deriv_deep_select))
+    , ("nixadv_nix_subst_chain", qcRun NixAdversarial.prop_nix_subst_chain)
+    ]
+
 main :: IO ()
 main = do
     putStrLn "nix-compile property tests"
@@ -4515,7 +4603,29 @@ main = do
         ]
 
     putStrLn ""
-    let allResults = results ++ psychoticResults ++ pcResults
+    putStrLn "  -- adversarial (bash/security) --"
+    advResults <- sequence
+        [ do
+            putStr $ "  " ++ name ++ " ... "
+            ok <- action
+            putStrLn (if ok then "OK" else "FAILED")
+            pure ok
+        | (name, action) <- adversarialTests
+        ]
+
+    putStrLn ""
+    putStrLn "  -- nix adversarial (type inference) --"
+    nixAdvResults <- sequence
+        [ do
+            putStr $ "  " ++ name ++ " ... "
+            ok <- action
+            putStrLn (if ok then "OK" else "FAILED")
+            pure ok
+        | (name, action) <- nixAdversarialTests
+        ]
+
+    putStrLn ""
+    let allResults = results ++ psychoticResults ++ pcResults ++ advResults ++ nixAdvResults
     let passed = length (filter id allResults)
     let totalPassed = length allResults
     putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
