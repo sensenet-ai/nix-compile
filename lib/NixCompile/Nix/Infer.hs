@@ -103,6 +103,56 @@ extendImports imports env = env{envImportTypes = Map.union imports (envImportTyp
 lookupImport :: FilePath -> TypeEnv -> Maybe NixType
 lookupImport path env = Map.lookup path (envImportTypes env)
 
+{- | Polymorphic builtins as SCHEMES, instantiated fresh at each use site. They
+cannot be stored in the 'builtins' record as monotypes — that would prematurely
+monomorphize them (every use would share one set of vars). This table backs both
+the bare names and `builtins.<name>` (via 'builtinsFieldScheme').
+-}
+builtinSchemeTable :: Map Text Scheme
+builtinSchemeTable = Map.union polymorphicListBuiltins rowBuiltins
+  where
+    polymorphicListBuiltins =
+        Map.fromList
+            [ ("head", scheme1 (\a -> TFun (TList a) a))
+            , ("tail", scheme1 (\a -> TFun (TList a) (TList a)))
+            , ("length", scheme1 (\a -> TFun (TList a) TInt))
+            , ("elemAt", scheme1 (\a -> TFun (TList a) (TFun TInt a)))
+            , ("filter", scheme1 (\a -> TFun (TFun a TBool) (TFun (TList a) (TList a))))
+            , ("concatLists", scheme1 (\a -> TFun (TList (TList a)) (TList a)))
+            , ("map", scheme2 (\a b -> TFun (TFun a b) (TFun (TList a) (TList b))))
+            , ("concatMap", scheme2 (\a b -> TFun (TFun a (TList b)) (TFun (TList a) (TList b))))
+            , ("foldl'", scheme2 (\a b -> TFun (TFun b (TFun a b)) (TFun b (TFun (TList a) b))))
+            ]
+    -- row-polymorphic attribute-set builtins: reject non-records, return the
+    -- right shape. `getAttr` is value-dependent so its result stays TAny.
+    rowBuiltins =
+        Map.fromList
+            [ ("attrNames", schemeRow (\r -> TFun (openRec r) (TList TString)))
+            , ("attrValues", schemeRow (\r -> TFun (openRec r) (TList TAny)))
+            , ("hasAttr", schemeRow (\r -> TFun TString (TFun (openRec r) TBool)))
+            , ("getAttr", schemeRow (\r -> TFun TString (TFun (openRec r) TAny)))
+            , ("removeAttrs", schemeRow (\r -> TFun (openRec r) (TFun (TList TString) (openRec r))))
+            ]
+    openRec r = TRec Map.empty (ROpen r)
+    scheme1 builder = let a = TypeVar 0 in Forall [a] (builder (TVar a))
+    scheme2 builder = let a = TypeVar 0; b = TypeVar 1 in Forall [a, b] (builder (TVar a) (TVar b))
+    schemeRow builder = let r = TypeVar 0 in Forall [r] (builder r)
+
+{- | If a selection is `builtins.<name>` for a name we model polymorphically,
+return its scheme (to be instantiated fresh). This is what makes
+`builtins.attrNames` row-polymorphic even though the `builtins` record itself
+holds monotypes. n.b. a purely syntactic check on the `builtins` symbol; locally
+shadowing `builtins` (pathological) is not handled.
+-}
+builtinsFieldScheme :: NExprLoc -> NonEmpty (NKeyName NExprLoc) -> Maybe Scheme
+builtinsFieldScheme base (StaticKey k :| [])
+    | isBuiltinsVar base = Map.lookup (varNameText k) builtinSchemeTable
+builtinsFieldScheme _ _ = Nothing
+
+isBuiltinsVar :: NExprLoc -> Bool
+isBuiltinsVar (Fix (Compose (AnnUnit _ (NSym n)))) = varNameText n == "builtins"
+isBuiltinsVar _ = False
+
 builtinEnv :: TypeEnv
 builtinEnv =
     TypeEnv
@@ -119,38 +169,12 @@ builtinEnv =
     -- ── builtins attrset ──────────────────────────────────────────
     -- 'builtins' itself is typed as attrset of all function entries
     builtinsAttr = Map.singleton "builtins" (mono $ TAttrs builtinsTypes)
-    -- n.b. polymorphic builtins (head/tail/length/map/filter etc.) are typed
-    -- as schemes that quantify a single element-var. S1 from review-2: TAny
-    -- previously made these a universal escape hatch — `builtins.length "x"`
-    -- type-checked. Now they are real schemes, so misuse fails.
-    builtinBindings = Map.union builtinsAttr (Map.union polymorphicBuiltins (Map.map (mono . fst) builtinsTypes))
-
-    polymorphicBuiltins :: Map Text Scheme
-    polymorphicBuiltins =
-        Map.fromList
-            [ ("head", scheme1 (\a -> TFun (TList a) a))
-            , ("tail", scheme1 (\a -> TFun (TList a) (TList a)))
-            , ("length", scheme1 (\a -> TFun (TList a) TInt))
-            , ("elemAt", scheme1 (\a -> TFun (TList a) (TFun TInt a)))
-            , ("filter", scheme1 (\a -> TFun (TFun a TBool) (TFun (TList a) (TList a))))
-            , ("concatLists", scheme1 (\a -> TFun (TList (TList a)) (TList a)))
-            , -- higher-order list builtins as real 2-var schemes, so e.g.
-              -- `map (x: x + 1) ["a" "b"]` fails instead of being absorbed by TAny.
-              -- (The `builtins.map` attrset path stays TAny — same pre-existing
-              -- limitation as head/filter; the `builtins` record holds plain types,
-              -- not schemes. Tracked under RC1 in TODO.)
-              ("map", scheme2 (\a b -> TFun (TFun a b) (TFun (TList a) (TList b))))
-            , ("concatMap", scheme2 (\a b -> TFun (TFun a (TList b)) (TFun (TList a) (TList b))))
-            , ("foldl'", scheme2 (\a b -> TFun (TFun b (TFun a b)) (TFun b (TFun (TList a) b))))
-            ]
-      where
-        scheme1 builder =
-            let a = TypeVar 0
-             in Forall [a] (builder (TVar a))
-        scheme2 builder =
-            let a = TypeVar 0
-                b = TypeVar 1
-             in Forall [a, b] (builder (TVar a) (TVar b))
+    -- n.b. polymorphic/row builtins live in the top-level 'builtinSchemeTable'
+    -- as SCHEMES (instantiated fresh per use) — they cannot be baked into the
+    -- 'builtins' record as monotypes without prematurely monomorphizing them.
+    -- The same table backs `builtins.<name>` via selection interception (see
+    -- 'builtinsFieldScheme').
+    builtinBindings = Map.union builtinsAttr (Map.union builtinSchemeTable (Map.map (mono . fst) builtinsTypes))
 
     -- n.b. hand-maintained signatures — must stay in sync with nixpkgs
     builtinsTypes :: Map Text (NixType, Bool)
@@ -451,9 +475,12 @@ unifyUnion ts t = case ts of
         ts' <- mapM applyCurrentSubst ts
         checkUnionMembership t' ts'
   where
+    -- flatten nested unions so membership sees the leaves (REVIEW-3 #25)
+    flatten (TUnion us) = concatMap flatten us
+    flatten x = [x]
     checkUnionMembership t' ts'
         | TVar _ <- t' = pure ()
-        | t' `elem` ts' = pure ()
+        | t' `elem` concatMap flatten ts' = pure ()
         | otherwise = throwTypeError $ "type mismatch: expected one of " <> T.intercalate " | " (map prettyType ts) <> ", got " <> prettyType t'
 
 -- ── type merging (for branches / polymorphic result combination) ──
@@ -903,7 +930,9 @@ infer environment (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp
     NAssert cond body -> inferAssert environment cond body
     NAbs params body -> inferLambda environment params body
     NApp func arg -> inferAppWithImport environment func arg
-    NSelect mDef base path -> inferSelect environment base path (isJust mDef)
+    NSelect mDef base path -> case builtinsFieldScheme base path of
+        Just scheme -> instantiate scheme -- `builtins.<name>`: fresh polymorphic instance
+        Nothing -> inferSelect environment base path (isJust mDef)
     NHasAttr base attr -> inferHasAttr environment base attr
     NUnary op e -> inferUnary environment op e
     NBinary op left right -> inferBinary environment op left right

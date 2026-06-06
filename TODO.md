@@ -151,8 +151,8 @@ them in surfaced these. Each is an `expectFailure` in Props now — fix flips it
 - [ ] **#23** `eval` behind `command`/`builtin`/prefix not detected — lint only
       checks the leading word.
 - [ ] **#24** no `ConfigTemplate` fact for multi-interpolation array config.
-- [ ] **#25** union membership doesn't flatten nested unions — one-liner in
-      `checkUnionMembership` (flatten before `elem`). Easy win.
+- [x] **#25** union membership now flattens nested unions (`checkUnionMembership`).
+      Test `nixadv_nix_nested_union` (was an expectFailure tripwire). ✅ DONE
 - [ ] **#26** deriv linter misses `mkDerivation` via a deep select chain.
 
 ## P2 — robustness & correctness

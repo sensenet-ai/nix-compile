@@ -1341,6 +1341,25 @@ prop_review_select_missing_fails :: Bool
 prop_review_select_missing_fails =
     isLeft (parseAndInfer "(x: x.a) { b = 1; }")
 
+-- RC1 stage 4: `builtins.attrNames` is row-polymorphic (a scheme instantiated at
+-- the selection site, not a monotype baked into the `builtins` record). It
+-- returns [String] on a record and rejects non-records.
+prop_review_builtins_attrnames_ok :: Bool
+prop_review_builtins_attrnames_ok =
+    case parseAndInfer "builtins.attrNames { a = 1; b = 2; }" of
+        Right (NT.TList NT.TString, _) -> True
+        _ -> False
+
+prop_review_builtins_attrnames_nonrecord_fails :: Bool
+prop_review_builtins_attrnames_nonrecord_fails =
+    isLeft (parseAndInfer "builtins.attrNames 5")
+
+prop_review_builtins_hasattr_ok :: Bool
+prop_review_builtins_hasattr_ok =
+    case parseAndInfer "builtins.hasAttr \"a\" { a = 1; }" of
+        Right (NT.TBool, _) -> True
+        _ -> False
+
 -- #6 (RC2): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`, but the
 -- left fold binds `a := TInt` and then rejects `TInt ~ TBool`. A real solver
 -- would accept. (Order-dependent + incomplete.)
@@ -4173,7 +4192,7 @@ nixAdversarialTests =
     , -- DROPPED nixadv_nix_row_empty_open_any: asserts `unify (TAttrsOpen {}) TInt`
       -- should SUCCEED — that's unsound (a record is not an Int). Code correctly rejects.
       -- BUG#25: union membership doesn't flatten nested unions.
-      ("nixadv_nix_nested_union[bug#25]", qcRun (expectFailure NixAdversarial.prop_nix_nested_union))
+      ("nixadv_nix_nested_union", qcRun NixAdversarial.prop_nix_nested_union)
     , ("nixadv_nix_many_fresh_vars", qcRun NixAdversarial.prop_nix_many_fresh_vars)
     , ("nixadv_nix_deep_func_nesting", qcRun NixAdversarial.prop_nix_deep_func_nesting)
     , ("nixadv_nix_deep_attr_nesting", qcRun NixAdversarial.prop_nix_deep_attr_nesting)
@@ -4394,6 +4413,9 @@ main = do
             , run "review_select_accumulates" (property prop_review_select_accumulates)
             , run "review_select_present_ok" (property prop_review_select_present_ok)
             , run "review_select_missing_fails" (property prop_review_select_missing_fails)
+            , run "review_builtins_attrnames_ok" (property prop_review_builtins_attrnames_ok)
+            , run "review_builtins_attrnames_nonrecord_fails" (property prop_review_builtins_attrnames_nonrecord_fails)
+            , run "review_builtins_hasattr_ok" (property prop_review_builtins_hasattr_ok)
             , run "review_bash_subtype_incomplete[RC2]" prop_review_bash_subtype_incomplete
             , run "review_union_var_constrains" (property prop_review_union_var_constrains)
             , -- Bash AST edge cases

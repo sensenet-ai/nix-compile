@@ -95,6 +95,10 @@ corpus =
     , "builtins.elemAt [ 10 20 ] 1"
     , "builtins.filter (x: x) [ true false ]"
     , "builtins.foldl' (a: b: a + b) 0 [ 1 2 3 ]"
+    , -- row-polymorphic attribute builtins (RC1 stage 4)
+      "builtins.attrNames { a = 1; b = 2; }"
+    , "builtins.attrValues { a = 1; }"
+    , "builtins.hasAttr \"a\" { a = 1; }"
     , -- bare non-global builtin: checker accepts, Nix rejects (undefined var).
       -- Documents the #20 scope discrepancy; shows up as 'incomplete'/typed-noeval.
       "head [ 1 2 ]"
