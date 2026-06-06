@@ -136,6 +136,22 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       only no-crash + determinism (`Props.hs:1242,1251`). Add properties that an
       accepted program has the expected type on a curated vector set. (REVIEW-3 #10)
 
+## P1.5 — bugs found by wiring up the dead adversarial suites (now expectFailure tripwires)
+
+`Adversarial.hs`/`NixAdversarial.hs` (58 props) were compiled but never run; wiring
+them in surfaced these. Each is an `expectFailure` in Props now — fix flips it green.
+
+- [ ] **#21** `parseConfigAssignment` accepts `$|` as a var ref — validate the var
+      name after `$` (and `${…}`).
+- [ ] **#22** config var-ref captures `;`/newline (injection-relevant) — same family
+      as the C1 default-injection finding; sanitize the captured ref.
+- [ ] **#23** `eval` behind `command`/`builtin`/prefix not detected — lint only
+      checks the leading word.
+- [ ] **#24** no `ConfigTemplate` fact for multi-interpolation array config.
+- [ ] **#25** union membership doesn't flatten nested unions — one-liner in
+      `checkUnionMembership` (flatten before `elem`). Easy win.
+- [ ] **#26** deriv linter misses `mkDerivation` via a deep select chain.
+
 ## P2 — robustness & correctness
 
 - [ ] **`lspSafeParse` only catches WHNF failures.** `LSP/Handlers.hs:98-105`
