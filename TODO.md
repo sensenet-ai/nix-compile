@@ -147,16 +147,13 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
 `Adversarial.hs`/`NixAdversarial.hs` (58 props) were compiled but never run; wiring
 them in surfaced these. Each is an `expectFailure` in Props now — fix flips it green.
 
-- [ ] **#21** `parseConfigAssignment` accepts `$|` as a var ref — validate the var
-      name after `$` (and `${…}`).
-- [ ] **#22** config var-ref captures `;`/newline (injection-relevant) — same family
-      as the C1 default-injection finding; sanitize the captured ref.
-- [ ] **#23** `eval` behind `command`/`builtin`/prefix not detected — lint only
-      checks the leading word.
-- [ ] **#24** no `ConfigTemplate` fact for multi-interpolation array config.
+- [x] **#21** ✅ `parseConfigValue` validates the var name after `$`/`"$`.
+- [x] **#22** ✅ a non-name (`$|`, `$\n; id`) is a literal, not a captured var ref.
+- [x] **#23** ✅ `isEvalInvocation` skips command modifiers (command/builtin/…) before checking for `eval`.
+- [x] **#24** ✅ array-subscript LHS reconstructed + arith subscript tokens rendered + `parseConfigTemplate` counts all var parts.
 - [x] **#25** union membership now flattens nested unions (`checkUnionMembership`).
       Test `nixadv_nix_nested_union` (was an expectFailure tripwire). ✅ DONE
-- [ ] **#26** deriv linter misses `mkDerivation` via a deep select chain.
+- [x] **#26** ✅ `isMkDerivationCall` checks the last key of the select path.
 
 ## P2 — robustness & correctness
 
