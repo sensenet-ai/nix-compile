@@ -96,11 +96,19 @@ crashing the whole server.
 -}
 lspSafeParse :: Text -> Maybe NExprLoc
 lspSafeParse txt = unsafePerformIO $ do
-    r <- try (Exc.evaluate (parseNixTextLoc txt))
+    -- `evaluate` only forces to WHNF, so a bottom buried in the lazy hnix AST used
+    -- to escape this `try` and detonate later when a handler (or `analyzeDepth`,
+    -- which ran OUTSIDE the try) forced it. Run the depth walk — which traverses
+    -- the whole tree — INSIDE the evaluated thunk so any such bottom is forced, and
+    -- therefore caught, here.
+    r <- try (Exc.evaluate (parseAndCheck txt))
     pure $ case r of
         Left (_ :: SomeException) -> Nothing
-        Right (Left _) -> Nothing
-        Right (Right e) -> case Safety.analyzeDepth e of
+        Right res -> res
+  where
+    parseAndCheck t = case parseNixTextLoc t of
+        Left _ -> Nothing
+        Right e -> case Safety.analyzeDepth e of
             Left _ -> Nothing
             Right () -> Just e
 

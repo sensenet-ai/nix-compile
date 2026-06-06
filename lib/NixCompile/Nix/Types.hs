@@ -122,6 +122,12 @@ applySubst s = go
   where
     go = \case
         TVar v -> case Map.lookup v s of
+            -- a self-map {v ↦ TVar v} is the identity; returning it (instead of
+            -- chasing) avoids an infinite loop. `instantiate` produces such maps
+            -- whenever a fresh var collides with a scheme's quantified var index
+            -- (both draw from 0,1,…), which is why applying ANY polymorphic builtin
+            -- (head/map/filter/…) to an argument used to hang inference.
+            Just (TVar v') | v' == v -> TVar v
             Just t -> go t
             Nothing -> TVar v
         TList t -> TList (go t)

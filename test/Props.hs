@@ -1237,6 +1237,136 @@ parseAndInfer src = case parseNixTextLoc src of
     Left _err -> Left "parse error"
     Right expr -> inferExpr expr
 
+-- ============================================================================
+-- REVIEW-3 regression / bug-demonstration properties
+--
+-- One property per review finding. FIXED findings assert the corrected behavior
+-- and are green now. UNFIXED architectural findings (RC1 = no row variables,
+-- RC2 = no constraint solver) are wrapped in `expectFailure`: each encodes the
+-- CORRECT behavior, currently fails, and will flip RED the moment the root cause
+-- is fixed — turning these into "did we actually fix it?" tripwires. See
+-- REVIEW-3.md §"Root causes & the fork".
+-- ============================================================================
+
+-- #1 (FIXED): nested selection is no longer truncated, and selecting a field
+-- from a concrete non-attrset (`x.a : Int`, then `.b`) is a type error.
+prop_review_nested_select_errors :: Bool
+prop_review_nested_select_errors =
+    isLeft (parseAndInfer "let x = { a = 1; }; in x.a.b")
+
+-- #1 (FIXED): a valid deep path through closed attrsets resolves to the leaf.
+prop_review_nested_select_deep_ok :: Bool
+prop_review_nested_select_deep_ok =
+    case parseAndInfer "let x = { a = { b = { c = 1; }; }; }; in x.a.b.c" of
+        Right (NT.TInt, _) -> True
+        _ -> False
+
+-- #3 (FIXED): `==`/`!=` are total in Nix; `x == null` must type-check.
+prop_review_eq_null_ok :: Bool
+prop_review_eq_null_ok =
+    case parseAndInfer "1 == null" of
+        Right (NT.TBool, _) -> True
+        _ -> False
+
+prop_review_eq_heterogeneous_ok :: Property
+prop_review_eq_heterogeneous_ok =
+    forAll (elements ["null", "\"s\"", "1", "true", "[ ]"]) $ \rhs ->
+        case parseAndInfer ("1 == " <> rhs) of
+            Right (NT.TBool, _) -> True
+            _ -> False
+
+-- #4 (FIXED): `map` is a real scheme — valid use is `[b]`, misuse fails.
+prop_review_map_ok :: Bool
+prop_review_map_ok =
+    case parseAndInfer "map (x: x + 1) [ 1 ]" of
+        Right (NT.TList NT.TInt, _) -> True
+        _ -> False
+
+prop_review_map_misuse_fails :: Bool
+prop_review_map_misuse_fails =
+    isLeft (parseAndInfer "map (x: x + 1) [ \"a\" ]")
+
+-- #19 (FIXED): applying a polymorphic builtin to an argument must TERMINATE.
+-- `instantiate` could produce a self-map {v ↦ TVar v} that the chasing
+-- `applySubst` looped on forever, so `head [ 1 ]` (and map/filter/…) hung
+-- inference. This regression test forces the result type so a re-introduced loop
+-- fails fast instead of hanging. (Latent for the whole `polymorphicBuiltins` set;
+-- never caught because the suite never applied one and forced the output.)
+prop_review_poly_builtin_terminates :: Bool
+prop_review_poly_builtin_terminates =
+    case parseAndInfer "head [ 1 ]" of
+        Right (NT.TInt, _) -> True
+        _ -> False
+
+-- #7 (FIXED): heterogeneous `+` (Int+Float = Float, Path+String = Path),
+-- while non-addable combinations still fail.
+prop_review_plus_int_float :: Bool
+prop_review_plus_int_float =
+    case parseAndInfer "1 + 1.5" of
+        Right (NT.TFloat, _) -> True
+        _ -> False
+
+prop_review_plus_path_string :: Bool
+prop_review_plus_path_string =
+    case parseAndInfer "./foo + \"bar\"" of
+        Right (NT.TPath, _) -> True
+        _ -> False
+
+prop_review_plus_nonaddable_fails :: Bool
+prop_review_plus_nonaddable_fails =
+    isLeft (parseAndInfer "true + false")
+
+-- #8 boundary (FIXED): union membership rejects a concrete non-member.
+prop_review_tostring_concrete_errors :: Bool
+prop_review_tostring_concrete_errors =
+    isLeft (parseAndInfer "toString { a = 1; }")
+
+-- #16 (NEW PROPERTY, was missing): the comment-injecting formatter must be
+-- meaning-preserving. `annotateSource` only INSERTS `# ::` comment lines and never
+-- edits code, so stripping the injected lines from the output must recover the
+-- original lines exactly. (A structural AST compare is the wrong check here:
+-- `stripAnnotation` does not normalise the `NSourcePos` stored inside `NamedVar`,
+-- which legitimately shifts when comment lines are added.)
+-- NOTE: this guards `Nix.Format`/`annotateSource` only. The separate reformatter
+-- `Nix.Formatter.formatNixFile` — which the review faults for collapsing
+-- significant whitespace in indented strings (#16) — still needs its own
+-- roundtrip property; see TODO.
+prop_review_format_roundtrip :: Property
+prop_review_format_roundtrip = forAll (sized genNixExpr) $ \src ->
+    case formatExpr src of
+        Left _ -> True -- did not format (e.g. parse failure): vacuous
+        Right formatted ->
+            let isInjected l = "# ::" `T.isPrefixOf` T.stripStart l
+                kept = filter (not . isInjected) (T.lines formatted)
+             in kept == T.lines src
+
+-- ── UNFIXED (documented via expectFailure) ──────────────────────────────────
+
+-- #2 (RC1): selecting a field from a function argument must constrain it to a
+-- row containing that field, so `(x: x.foo) 5` is a type error. Currently the
+-- variable case adds no constraint and the program is wrongly accepted.
+prop_review_select_on_var_unsound :: Property
+prop_review_select_on_var_unsound =
+    expectFailure $ once $ isLeft (parseAndInfer "(x: x.foo) 5")
+
+-- #6 (RC2): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`, but the
+-- left fold binds `a := TInt` and then rejects `TInt ~ TBool`. A real solver
+-- would accept. (Order-dependent + incomplete.)
+prop_review_bash_subtype_incomplete :: Property
+prop_review_bash_subtype_incomplete =
+    expectFailure $
+        once $
+            isRight (solve [TInt :~: TVar (TypeVar "a"), TVar (TypeVar "a") :~: TBool])
+
+-- #8 CORRECTION (review claim does NOT reproduce): the review said a union
+-- meeting a variable adds no constraint, so `(x: toString x) { a = 1; }` would be
+-- wrongly accepted. In fact `unify` binds the variable to the union via its
+-- var-binding arm, so the attrset is correctly rejected. Like #14, the reviewer
+-- overstated this against the current tree. We assert the CORRECT behavior.
+prop_review_union_var_constrains :: Bool
+prop_review_union_var_constrains =
+    isLeft (parseAndInfer "(x: toString x) { a = 1; }")
+
 -- | NIX-1: inferExpr on parseable expressions returns a type or a meaningful error
 prop_nix_infer_no_crash :: Property
 prop_nix_infer_no_crash = forAll (sized genNixExpr) $ \src ->
@@ -4254,6 +4384,22 @@ main = do
             , run "format_non_empty" prop_format_non_empty
             , run "format_contains_one" (property prop_format_contains_one)
             , run "format_deterministic" prop_format_deterministic
+            , -- REVIEW-3 regression / bug-demonstration properties
+              run "review_nested_select_errors" (property prop_review_nested_select_errors)
+            , run "review_nested_select_deep_ok" (property prop_review_nested_select_deep_ok)
+            , run "review_eq_null_ok" (property prop_review_eq_null_ok)
+            , run "review_eq_heterogeneous_ok" prop_review_eq_heterogeneous_ok
+            , run "review_map_ok" (property prop_review_map_ok)
+            , run "review_map_misuse_fails" (property prop_review_map_misuse_fails)
+            , run "review_poly_builtin_terminates" (property prop_review_poly_builtin_terminates)
+            , run "review_plus_int_float" (property prop_review_plus_int_float)
+            , run "review_plus_path_string" (property prop_review_plus_path_string)
+            , run "review_plus_nonaddable_fails" (property prop_review_plus_nonaddable_fails)
+            , run "review_tostring_concrete_errors" (property prop_review_tostring_concrete_errors)
+            , run "review_format_roundtrip" prop_review_format_roundtrip
+            , run "review_select_on_var_unsound[RC1]" prop_review_select_on_var_unsound
+            , run "review_bash_subtype_incomplete[RC2]" prop_review_bash_subtype_incomplete
+            , run "review_union_var_constrains" (property prop_review_union_var_constrains)
             , -- Bash AST edge cases
               run "bash_arithmetic" prop_bash_arithmetic
             , run "bash_subshell" prop_bash_subshell

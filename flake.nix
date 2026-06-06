@@ -73,7 +73,16 @@
               buildInputs = [
                 pkgs.ghc
                 pkgs.cabal-install
+                # nixpkgs HLS ships only `haskell-language-server-<ghcver>` and
+                # `haskell-language-server-wrapper` — no plain `haskell-language-server`.
+                # Keep both, and add a plain symlink to the wrapper for clients/users
+                # that invoke the unversioned name.
                 pkgs.haskell-language-server
+                (pkgs.runCommand "haskell-language-server-plain" { } ''
+                  mkdir -p "$out/bin"
+                  ln -s ${pkgs.haskell-language-server}/bin/haskell-language-server-wrapper \
+                    "$out/bin/haskell-language-server"
+                '')
                 pkgs.hlint
                 pkgs.jq
                 pkgs.mdbook
