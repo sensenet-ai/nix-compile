@@ -3,6 +3,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                        // nix // types
@@ -19,6 +20,9 @@
 module NixCompile.Nix.Types (
     -- * Types
     NixType (..),
+    RowTail (..),
+    pattern TAttrs,
+    pattern TAttrsOpen,
     TypeVar (..),
 
     -- * Type schemes (polymorphic types)
@@ -72,8 +76,8 @@ data NixType
     | TPath
     | TNull
     | TList !NixType
-    | TAttrs !(Map Text (NixType, Bool))
-    | TAttrsOpen !(Map Text (NixType, Bool))
+    | -- | records: known fields (type, isOptional) + a row tail
+      TRec !(Map Text (NixType, Bool)) !RowTail
     | TFun !NixType !NixType
     | TDerivation
     | TUnion ![NixType]
@@ -83,6 +87,45 @@ data NixType
 instance FromJSON NixType
 
 instance ToJSON NixType
+
+{- | A record's row tail: closed (exactly the known fields) or open (at least
+them). Stage 1 keeps the tail nullary — semantically identical to the old
+@TAttrs@/@TAttrsOpen@. RC1 stage 2 will carry a row variable + lacks-constraints
+in 'ROpen' so open records can accumulate fields across unifications.
+-}
+data RowTail = RClosed | ROpen
+    deriving stock (Eq, Ord, Show, Generic)
+
+instance FromJSON RowTail
+
+instance ToJSON RowTail
+
+{- | Back-compat views over 'TRec'. The rest of the codebase keeps matching and
+building @TAttrs@/@TAttrsOpen@ while the representation moves to 'TRec'.
+-}
+pattern TAttrs :: Map Text (NixType, Bool) -> NixType
+pattern TAttrs fields = TRec fields RClosed
+
+pattern TAttrsOpen :: Map Text (NixType, Bool) -> NixType
+pattern TAttrsOpen fields = TRec fields ROpen
+
+{-# COMPLETE
+    TVar
+    , TInt
+    , TFloat
+    , TBool
+    , TString
+    , TStrLit
+    , TPath
+    , TNull
+    , TList
+    , TAttrs
+    , TAttrsOpen
+    , TFun
+    , TDerivation
+    , TUnion
+    , TAny
+    #-}
 
 data Scheme = Forall ![TypeVar] !NixType
     deriving stock (Eq, Show, Generic)
