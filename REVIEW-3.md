@@ -40,6 +40,7 @@ external review's specifics diverge from this tree, that is called out.
 | 17 | Inference is naive-`Map` HM: eager `composeSubst` + chase + per-`unify` re-apply → quadratic on wide attrsets / long chains | `Nix/Types.hs:116-126`, `Infer.hs:270-304` | **CONFIRMED** |
 | 18 | Benchmark forces only `Bool` (results stay thunks); dead `Whnf`; inputs too narrow to hit the cliff | `bench/Bench.hs:89-92,171-193` | **CONFIRMED** |
 | 19 | **Applying ANY polymorphic builtin hangs inference** — `instantiate` self-map + chasing `applySubst` → ∞ loop | `Nix/Types.hs:122-126`, `Infer.hs:480-484` | **NEW — found while testing; FIXED** |
+| 20 | Checker exposes `head`/`filter`/`foldl'`/`elemAt`/… as GLOBAL names; Nix only provides them under `builtins.` (bare `head` is an undefined var at eval) | `Infer.hs:128-137` (`polymorphicBuiltins`) | **NEW — found by the oracle; open** |
 
 Net: 16 confirmed as stated, 1 confirmed against the current tree where the
 external review described older behavior (#7), 2 partial where the external
@@ -337,6 +338,33 @@ can only convert a former hang into termination). Regression test
 fast. The deeper smell — scheme-quantified vars and inference fresh vars sharing
 one `Int` namespace — remains and should be closed in the RC1 rewrite (give rows /
 schemes a disjoint var supply).
+
+### 20. Non-global builtins exposed as global names — NEW (from the oracle), open
+
+The differential oracle (below) flagged `head [ 1 2 ]` as *typed-but-doesn't-eval*:
+the checker accepts it (the `polymorphicBuiltins` map and the `builtinsTypes` map are
+folded into the top-level `builtinBindings`, so `head`/`tail`/`filter`/`foldl'`/
+`elemAt`/`length`/`concatLists`/`concatMap`/`stringLength`/… are in scope as bare
+names), but Nix's *global* scope contains only a small set (`map`, `toString`,
+`import`, `throw`, `abort`, `removeAttrs`, `isNull`, `baseNameOf`, `dirOf`,
+`derivation`, …). Bare `head xs` is `error: undefined variable 'head'` at eval.
+
+So the checker over-accepts: it types programs that don't evaluate. Not a *type*
+unsoundness (it's a scope error), but a real accept/reject divergence from Nix.
+Fix: split the builtin env into the true globals vs. the `builtins.*`-only set, and
+only put the globals in the top-level scope. (Found on the oracle's first run —
+exactly what it's for.)
+
+## The differential oracle (REVIEW-3 #9 — now built)
+
+`test/Oracle.hs` (`cabal test nix-compile-oracle`) compares each inferred type
+against `nix-instantiate --eval` via `builtins.typeOf`. MISMATCH (claimed kind ≠
+runtime kind) and CHECKER-HANG are failures; conservative rejections and
+runtime-error-but-typed are tallied, not failed. It SKIPS cleanly (exit 0) when
+`nix-instantiate` is absent (the sandboxed flake check), and does real work in the
+dev shell / nix-capable CI. First run: 35 agree, 2 agree-reject, **0 failures**,
+and it surfaced #20. This is the harness the RC1 row rewrite will be validated
+against (silent `generalize`/`instantiate` bugs only show up here).
 
 ## Process / trust
 

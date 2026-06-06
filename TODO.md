@@ -109,10 +109,17 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
 
 ## P1 — test infrastructure (highest leverage — do these first)
 
-- [ ] **Differential oracle.** Generated/corpus Nix: `accept ⟹ nix-instantiate
-      --eval has no type error; reject ⟹ it errors`. Bash: schema round-trip.
-      Catches most P0s automatically. (REVIEW-3 #9) — `process` dep already
-      present (used by `bench/`).
+- [~] **Differential oracle.** ✅ v1 DONE — `test/Oracle.hs`
+      (`cabal test nix-compile-oracle`) compares inferred type vs
+      `nix-instantiate`'s `builtins.typeOf` over a closed-expression corpus;
+      MISMATCH/CHECKER-HANG = failure; skips cleanly without nix. First run: 35
+      agree, 0 failures; surfaced #20. ☐ NEXT: generated closed terms (not just a
+      corpus), and a bash schema round-trip. (REVIEW-3 #9)
+- [ ] **#20 Non-global builtins exposed as global names.** `head`/`filter`/
+      `foldl'`/`elemAt`/`length`/… are in the checker's top-level scope but Nix
+      provides them only under `builtins.`; bare `head xs` is an undefined var at
+      eval, yet the checker types it. Split builtinEnv into true-globals vs
+      `builtins.*`-only. (REVIEW-3 #20; found by the oracle)
 - [~] **`parse(format(x)) ≅ parse(x)`** property. ✅ DONE for
       `Format`/`annotateSource` (test `review_format_roundtrip` — meaning-preserving,
       green). ☐ STILL OPEN for the reformatter `Formatter.formatNixFile` (the one
