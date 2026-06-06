@@ -57,8 +57,8 @@ factFromInnerToken :: SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Posi
 factFromInnerToken shellCheckId innerToken = do
     sourceSpan <- mkSpan shellCheckId
     case innerToken of
-        SA.Inner_T_Assignment _ name _ value ->
-            pure $ factFromAssignment sourceSpan (T.pack name) value
+        SA.Inner_T_Assignment _ name indices value ->
+            pure $ factFromAssignment sourceSpan (assignmentLhs name indices) value
         SA.Inner_T_SimpleCommand assigns commandWords ->
             factFromCommand sourceSpan assigns commandWords
         SA.Inner_T_Pipeline _ _ -> factFromPipeline sourceSpan
@@ -71,6 +71,18 @@ factFromInnerToken shellCheckId innerToken = do
 -- ── assignment facts ─────────────────────────────────────────────
 
 -- | facts from a single variable assignment (config.* or regular env var)
+{- | Reconstruct the assignment LHS. ShellCheck keeps an array subscript in a
+separate indices field, so @config[server]=…@ arrives as name=@config@,
+indices=@[server]@. We rebuild @config[server]@ so it routes to the config-array
+path (only for the @config@ namespace — ordinary bash arrays are left as the bare
+name, preserving prior behavior). (REVIEW-3 #24)
+-}
+assignmentLhs :: String -> [SA.Token] -> Text
+assignmentLhs name indices
+    | name == "config", not (null indices) =
+        T.pack name <> "[" <> T.intercalate "." (map tokenToText indices) <> "]"
+    | otherwise = T.pack name
+
 factFromAssignment :: Span -> Text -> SA.Token -> [Fact]
 factFromAssignment sourceSpan variableName valueToken =
     case parseConfigArrayAssign variableName of
@@ -425,8 +437,14 @@ parseConfigTemplate sourceText =
     let parts = parseParts sourceText
      in if any isVarPart parts then Just (mergeTextParts parts) else Nothing
   where
+    -- any part that carries a variable counts — not just bare $VAR. Without the
+    -- default/required/alternate cases, a template built entirely of
+    -- `${VAR:-default}` parts was misclassified as a plain literal. (REVIEW-3 #24)
     isVarPart (ConfigVar _) = True
-    isVarPart _ = False
+    isVarPart (ConfigVarDefault _ _) = True
+    isVarPart (ConfigVarRequired _) = True
+    isVarPart (ConfigVarAlternate _ _) = True
+    isVarPart (ConfigText _) = False
 
     -- ── main parser: dispatch on first character ──
     parseParts remainingText
@@ -655,6 +673,10 @@ innerToText = \case
     SA.Inner_T_DollarBraced _ token -> "${" <> tokenToText token <> "}"
     SA.Inner_T_DollarSingleQuoted content -> T.pack content
     SA.Inner_T_BraceExpansion parts -> T.concat (map tokenToText parts)
+    -- arithmetic-context tokens — used for array subscripts like `config[server]`
+    -- (the key parses as a TA_Variable inside a TA_Sequence). (REVIEW-3 #24)
+    SA.Inner_TA_Variable name _ -> T.pack name
+    SA.Inner_TA_Sequence parts -> T.concat (map tokenToText parts)
     _ -> ""
 
 -- ── span construction ────────────────────────────────────────────

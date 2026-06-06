@@ -4179,8 +4179,9 @@ adversarialTests =
       ("adv_bash_lint_eval_prefixed", qcRun Adversarial.prop_bash_lint_eval_prefixed)
     , -- DROPPED adv_bash_lint_eval_store_path: asserts a store-path binary literally
       -- named `eval` is the `eval` builtin — it isn't (separate command); false positive.
-      -- BUG#24: no ConfigTemplate fact for multi-interpolation array config.
-      ("adv_config_array_template[bug#24]", qcRun (expectFailure Adversarial.prop_config_array_template))
+      -- #24 FIXED: array-subscript assignments (`config[k]=…`) reconstruct the
+      -- LHS from ShellCheck's indices field, so multi-interp values become ConfigTemplate.
+      ("adv_config_array_template", qcRun Adversarial.prop_config_array_template)
     ]
 
 nixAdversarialTests :: [(String, IO Bool)]
@@ -4218,7 +4219,7 @@ nixAdversarialTests =
     , ("nixadv_nix_functor_non_func", qcRun NixAdversarial.prop_nix_functor_non_func)
     , ("nixadv_nix_functor_valid", qcRun NixAdversarial.prop_nix_functor_valid)
     , -- BUG#26: deriv linter misses `mkDerivation` reached through a deep select chain.
-      ("nixadv_deriv_deep_select[bug#26]", qcRun (expectFailure NixAdversarial.prop_deriv_deep_select))
+      ("nixadv_deriv_deep_select", qcRun NixAdversarial.prop_deriv_deep_select)
     , ("nixadv_nix_subst_chain", qcRun NixAdversarial.prop_nix_subst_chain)
     ]
 

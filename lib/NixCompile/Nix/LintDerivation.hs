@@ -26,6 +26,7 @@ import Data.Fix (Fix (..))
 import Data.Functor.Compose (Compose (..))
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types
@@ -93,8 +94,12 @@ checkDerivCall filePath sourceSpan function argument
 isMkDerivationCall :: NExprLoc -> Bool
 isMkDerivationCall (Fix (Compose (AnnUnit _ (NSym name)))) =
     varNameText name == "mkDerivation"
-isMkDerivationCall (Fix (Compose (AnnUnit _ (NSelect _ _ (StaticKey key :| []))))) =
-    varNameText key == "mkDerivation"
+-- the FINAL key of the path is what's applied, so `a.b.c.mkDerivation` counts —
+-- not just a single-key `x.mkDerivation` (REVIEW-3 #26)
+isMkDerivationCall (Fix (Compose (AnnUnit _ (NSelect _ _ path)))) =
+    case NE.last path of
+        StaticKey key -> varNameText key == "mkDerivation"
+        _ -> False
 isMkDerivationCall _ = False
 
 -- ── argument inspection ────────────────────────────────────────────
