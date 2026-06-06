@@ -90,7 +90,6 @@ library
         NixCompile.Nix.ModuleSystem
         NixCompile.Nix.Naming
         NixCompile.Nix.Parse
-        NixCompile.Nix.Pretty
         NixCompile.Nix.Formatter
         NixCompile.Nix.Scope
         NixCompile.Nix.Types

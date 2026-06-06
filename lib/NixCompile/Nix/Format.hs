@@ -26,7 +26,7 @@ import Data.Text (Text)
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Nix.Infer (InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
 import NixCompile.Nix.Parse (parseNix, parseNixFile)
-import NixCompile.Nix.Pretty (annotateSource)
+import NixCompile.Nix.Annotate (annotateSource)
 import NixCompile.Safety qualified as Safety
 
 -- ═════════════════════════════════════════════════════════════════════════════
