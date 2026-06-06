@@ -131,8 +131,18 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       `builtins.*`-only. (REVIEW-3 #20; found by the oracle)
 - [~] **`parse(format(x)) ≅ parse(x)`** property. ✅ DONE for
       `Format`/`annotateSource` (test `review_format_roundtrip` — meaning-preserving,
-      green). ☐ STILL OPEN for the reformatter `Formatter.formatNixFile` (the one
-      the review faults for collapsing significant whitespace). (REVIEW-3 #16)
+      green). ✅ PROPERTY NOW EXISTS for the reformatter `Formatter.formatNixFile`
+      (`reformatter_roundtrip` + `reformatter_roundtrip_corpus`, compare ASTs modulo
+      source position via `zeroExprPos . stripAnnotation`). It CONFIRMS the review's
+      claim — the reformatter is NOT meaning-preserving, so both are `expectFailure`
+      TRIPWIRES pinning two concrete defects:
+        (a) precedence parens dropped: `[ (f: null) true (true > null) ]` →
+            `[(f: null) true true > null]` (reparses differently / unparseable);
+        (b) indented `''…''` strings gain a trailing blank line (significant
+            whitespace corruption).
+      ☐ REMAINING: fix the reformatter (emit precedence parens; print indented
+      strings from verbatim source slice), then flip both tripwires off
+      `expectFailure`. (REVIEW-3 #16)
 - [ ] **Make the benchmark force real output.** `bench/Bench.hs:171-193` wrappers
       return `Bool`, so `nf` leaves the AST/`NixType`/`[Binding]`/violation-list as
       thunks; the dead `Whnf` newtype (89-92) is the tell. Return the real values,

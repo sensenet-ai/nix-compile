@@ -36,6 +36,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Language.LSP.Protocol.Types (Diagnostic (..), DiagnosticSeverity (..), Position (..), Range (..))
+import Data.Fix (Fix (..), foldFix)
+import Nix.Expr.Types qualified as NixE
+import Nix.Expr.Types.Annotated (SrcSpan (..), nullSpan, stripAnnotation)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
@@ -55,6 +58,7 @@ import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolat
 import NixCompile.Log (Severity (ErrorS), runLog)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Format (formatExpr)
+import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (Binding, inferExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
 import NixCompile.Nix.Lint
@@ -1313,6 +1317,81 @@ prop_review_format_roundtrip = forAll (sized genNixExpr) $ \src ->
             let isInjected l = "# ::" `T.isPrefixOf` T.stripStart l
                 kept = filter (not . isInjected) (T.lines formatted)
              in kept == T.lines src
+
+-- #16: the REFORMATTER (`Nix.Formatter.formatNixFile`) must be MEANING-PRESERVING
+-- — reformatting may change layout, but `parse (format (parse src))` must yield
+-- the same AST as `parse src` (modulo source positions). This is the property the
+-- review flagged as missing, faulting the reformatter for collapsing significant
+-- whitespace (esp. inside indented `''…''` strings, where indentation is
+-- semantic). A line-equality check (as in 'prop_review_format_roundtrip') is wrong
+-- here because the reformatter deliberately rewrites layout; we compare normalised
+-- ASTs instead.
+
+-- | canonical source position (from hnix's null span) used to erase positions
+canonSourcePos :: NixE.NSourcePos
+canonSourcePos = getSpanBegin nullSpan
+
+-- | erase source positions so two ASTs compare equal modulo layout. Only
+-- @Binding@ nodes (NamedVar/Inherit) carry an 'NixE.NSourcePos' inside the
+-- unannotated 'NixE.NExpr' (the outer 'SrcSpan' is already gone via
+-- 'stripAnnotation'); the parser also normalises indented-string indentation, so a
+-- whitespace-collapse bug in the reformatter shows up as a differing 'NStr' here.
+zeroExprPos :: NixE.NExpr -> NixE.NExpr
+zeroExprPos = foldFix (Fix . go)
+  where
+    go (NixE.NSet recur bs) = NixE.NSet recur (map zb bs)
+    go (NixE.NLet bs body) = NixE.NLet (map zb bs) body
+    go other = other
+    zb (NixE.NamedVar p v _) = NixE.NamedVar p v canonSourcePos
+    zb (NixE.Inherit ms ks _) = NixE.Inherit ms ks canonSourcePos
+
+-- | reformat a source string and confirm the AST survives modulo positions.
+reformatPreservesMeaning :: Text -> Property
+reformatPreservesMeaning src = case parseNixTextLoc src of
+    Left _ -> property True -- unparseable input: vacuous
+    Right ast0 ->
+        let formatted = formatNixFile src "<test>" ast0
+         in case parseNixTextLoc formatted of
+                Left e ->
+                    counterexample
+                        ("reformatted output does not parse:\n" <> T.unpack formatted <> "\nerror: " <> show e)
+                        (property False)
+                Right ast1 ->
+                    counterexample
+                        ("AST changed under reformat.\n--- in ---\n" <> T.unpack src <> "\n--- out ---\n" <> T.unpack formatted)
+                        (zeroExprPos (stripAnnotation ast0) === zeroExprPos (stripAnnotation ast1))
+
+-- TRIPWIRE (expectFailure): `Nix.Formatter.formatNixFile` is NOT meaning-preserving
+-- today — this property documents the bug the review flagged (#16) and will START
+-- FAILING (forcing removal of `expectFailure`) once the reformatter is fixed.
+-- Two confirmed defects the round-trip exposes:
+--   1. precedence parens are dropped — `[ (ujfvov: null) true (true > null) ]`
+--      reformats to `[(ujfvov: null) true true > null]`, which reparses with
+--      different structure (or fails to parse).
+--   2. indented `''…''` strings gain a trailing blank line (significant whitespace
+--      corruption) — see the corpus tripwire below.
+-- The fix is a reformatter change (emit precedence parens; print indented strings
+-- from their verbatim source slice), tracked in TODO #16.
+prop_reformatter_roundtrip :: Property
+prop_reformatter_roundtrip = expectFailure $ forAll (sized genNixExpr) reformatPreservesMeaning
+
+-- TRIPWIRE (expectFailure): curated corpus the generator never reaches — indented
+-- strings (significant whitespace), nested records, inherits, multiline lists.
+-- Fails deterministically on the first indented-string case (trailing blank line).
+prop_reformatter_roundtrip_corpus :: Property
+prop_reformatter_roundtrip_corpus =
+    expectFailure $ conjoin (map reformatPreservesMeaning corpus)
+  where
+    corpus =
+        [ "{ a = ''\n    hello\n      world\n  ''; }"
+        , "{ script = ''\n    set -e\n    echo   spaced\n  ''; }"
+        , "{ a = 1; b = { c = 2; d = { e = 3; }; }; }"
+        , "[ 1 2 3\n  4 5 6 ]"
+        , "let x = 1; y = 2; in x + y"
+        , "{ inherit a b; inherit (pkgs) c d; }"
+        , "{ a = ''\n    line1\n\n    line3 with two blanks above\n  ''; }"
+        , "rec { a = 1; b = a + 1; }"
+        ]
 
 -- ── UNFIXED (documented via expectFailure) ──────────────────────────────────
 
@@ -4449,6 +4528,8 @@ main = do
             , run "review_plus_nonaddable_fails" (property prop_review_plus_nonaddable_fails)
             , run "review_tostring_concrete_errors" (property prop_review_tostring_concrete_errors)
             , run "review_format_roundtrip" prop_review_format_roundtrip
+            , run "reformatter_roundtrip" prop_reformatter_roundtrip
+            , run "reformatter_roundtrip_corpus" prop_reformatter_roundtrip_corpus
             , run "review_select_on_var_constrains" (property prop_review_select_on_var_constrains)
             , run "review_select_accumulates" (property prop_review_select_accumulates)
             , run "review_select_present_ok" (property prop_review_select_present_ok)
