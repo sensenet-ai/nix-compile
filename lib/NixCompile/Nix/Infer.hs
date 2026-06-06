@@ -314,10 +314,23 @@ applyCurrentSubst t = do
     s <- gets inferSubst
     pure $ applySubst s t
 
--- ── extend the current substitution (composes on top) ──
+{- | Extend the current substitution with @v ↦ t@.
+
+We keep a TRIANGULAR substitution (a plain insert) rather than eagerly
+composing. The old @composeSubst@ form re-walked and rewrote the entire
+accumulated substitution on every bind — O(n) per bind, O(n²) over a program
+with n unifications (RC4). 'applySubst' already chases transitively (the @TVar@
+case recurses through bound vars), so resolution still fully normalises on read.
+
+Soundness invariant: every caller binds @v@ to a @t@ that has already been
+resolved against the current substitution ('applyCurrentSubst' in 'unify' /
+'mergeTypes' / 'unifyRec'), and 'bindVar'/'bindRowVar' run the occurs check on
+that resolved @t@. So @v@ is unbound and @t@ is ground w.r.t. current bindings at
+insert time — the substitution stays acyclic and the on-read chase terminates.
+-}
 addSubst :: TypeVar -> NixType -> Infer ()
 addSubst v t = modify $ \s ->
-    s{inferSubst = composeSubst (singleSubst v t) (inferSubst s)}
+    s{inferSubst = Map.insert v t (inferSubst s)}
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- unification
@@ -1014,15 +1027,18 @@ inferRecursiveBindings environment bindings'' = do
     pure $ concat inferredBindings
 
 -- | infer a single non-recursive binding and accumulate results
-inferNonRecursiveBinding :: TypeEnv -> [(Text, NixType)] -> Nix.Binding NExprLoc -> Infer [(Text, NixType)]
-inferNonRecursiveBinding environment accumulatedBindings (Nix.NamedVar (StaticKey name :| []) expr pos) = do
+-- n.b. bindings in a non-recursive set are independent (each sees only
+-- @environment@), so this is a plain per-binding map — the caller concats the
+-- results. The old accumulator-with-@++@ form was O(n²) on wide attrsets.
+inferNonRecursiveBinding :: TypeEnv -> Nix.Binding NExprLoc -> Infer [(Text, NixType)]
+inferNonRecursiveBinding environment (Nix.NamedVar (StaticKey name :| []) expr pos) = do
     let bindingName = varNameText name
     t <- infer environment expr
     t' <- applyCurrentSubst t
     emitBinding bindingName t' (posToSpan pos)
-    pure $ accumulatedBindings ++ [(bindingName, t)]
-inferNonRecursiveBinding environment accumulatedBindings (Nix.Inherit maybeScope keys _) = do
-    additionalBindings <- forM keys $ \key -> do
+    pure [(bindingName, t)]
+inferNonRecursiveBinding environment (Nix.Inherit maybeScope keys _) =
+    forM keys $ \key -> do
         let keyName = varNameText key
         t <- case maybeScope of
             Just scope ->
@@ -1032,14 +1048,13 @@ inferNonRecursiveBinding environment accumulatedBindings (Nix.Inherit maybeScope
                 Just scheme -> instantiate scheme
                 Nothing -> freshVar
         pure (keyName, t)
-    pure $ accumulatedBindings ++ additionalBindings
-inferNonRecursiveBinding _ accumulatedBindings _ = pure accumulatedBindings
+inferNonRecursiveBinding _ _ = pure []
 
 -- | dispatch to recursive or non-recursive binding inference
 inferBindings :: Bool -> TypeEnv -> [Nix.Binding NExprLoc] -> Infer [(Text, NixType)]
 inferBindings recursive environment bindings
     | recursive = inferRecursiveBindings environment bindings
-    | otherwise = foldM (inferNonRecursiveBinding environment) [] (desugarNestedBindings bindings)
+    | otherwise = concat <$> mapM (inferNonRecursiveBinding environment) (desugarNestedBindings bindings)
 
 {- | Desugar nested-path bindings into top-level bindings whose value is a
 synthesised attrset. Closes S5 from review-2: previously @{ a.b = 1; }@ was
@@ -1055,21 +1070,30 @@ desugarNestedBindings = mergeByKey . map desugar1
          in Nix.NamedVar (StaticKey k :| []) inner pos
     desugar1 b = b
 
-    mergeByKey [] = []
-    mergeByKey (Nix.NamedVar (StaticKey k :| []) val pos : rest) =
-        let (mergeable, others) = partitionByKey (varNameText k) rest
-            merged = foldr addAttrs val (map fst mergeable)
-         in Nix.NamedVar (StaticKey k :| []) merged pos : mergeByKey others
-    mergeByKey (b : rest) = b : mergeByKey rest
-
-    partitionByKey k =
-        foldr
-            ( \binding (mergeable, others) -> case binding of
-                Nix.NamedVar (StaticKey k' :| []) v p
-                    | varNameText k' == k -> ((v, p) : mergeable, others)
-                _ -> (mergeable, binding : others)
-            )
-            ([], [])
+    -- Merge bindings sharing a top-level static key (e.g. desugared @a.b@/@a.c@)
+    -- into one. Two O(n log n) passes: collect each key's later values, then
+    -- emit each key's first occurrence merged with them (later occurrences are
+    -- dropped, non-static bindings pass through in place). The old per-key
+    -- partition scan was O(n²) on wide attrsets.
+    mergeByKey bs =
+        let (_, outRev) = foldl' emit (Set.empty, []) bs
+         in reverse outRev
+      where
+        collectExtra acc b = case b of
+            Nix.NamedVar (StaticKey k :| []) v _
+                | Map.member (varNameText k) acc -> Map.insertWith (flip (++)) (varNameText k) [v] acc
+                | otherwise -> Map.insert (varNameText k) [] acc
+            _ -> acc
+        extras = foldl' collectExtra Map.empty bs
+        emit (seen, out) b = case b of
+            Nix.NamedVar kp@(StaticKey k :| []) val pos ->
+                let kt = varNameText k
+                 in if kt `Set.member` seen
+                        then (seen, out)
+                        else
+                            let merged = foldr addAttrs val (Map.findWithDefault [] kt extras)
+                             in (Set.insert kt seen, Nix.NamedVar kp merged pos : out)
+            _ -> (seen, b : out)
 
     addAttrs (Fix (Compose (AnnUnit s (NSet r bs1)))) (Fix (Compose (AnnUnit _ (NSet _ bs2)))) =
         Fix (Compose (AnnUnit s (NSet r (bs2 ++ bs1))))
