@@ -41,7 +41,7 @@ module NixCompile.Bash.Patterns (
 where
 
 import Control.Monad (guard)
-import Data.Char (isDigit)
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Types
@@ -205,6 +205,15 @@ isSafeConfigChar character = character == '_' || character == '-' || (character 
 {- | parse the RHS of a config assignment into (variable-name or literal, quoting)
 handles quoted "${...}", "$VAR", plain strings, and ${...} expansions
 -}
+-- | valid bash variable name: @^[A-Za-z_][A-Za-z0-9_]*$@ (ASCII only)
+isValidVarName :: Text -> Bool
+isValidVarName text = case T.uncons text of
+    Just (c, rest) -> startChar c && T.all varChar rest
+    Nothing -> False
+  where
+    startChar c = isAsciiUpper c || isAsciiLower c || c == '_'
+    varChar c = startChar c || isDigit c
+
 parseConfigValue :: Text -> Maybe (Either Text Literal, Quoted)
 parseConfigValue text
     | "\"${" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
@@ -215,7 +224,12 @@ parseConfigValue text
                     Nothing -> Just (Right (parseLiteralValue inner), Quoted)
                 else Just (Right (parseLiteralValue inner), Quoted)
     | "\"$" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
-        Just (Left (T.dropEnd 1 (T.drop 2 text)), Quoted)
+        -- "$VAR" — only a var ref if VAR is a valid name (#21/#22: `"$|"` must
+        -- NOT be extracted as a variable). Otherwise it's a quoted literal.
+        let varName = T.dropEnd 1 (T.drop 2 text)
+         in if isValidVarName varName
+                then Just (Left varName, Quoted)
+                else Just (Right (LitString (T.dropEnd 1 (T.drop 1 text))), Quoted)
     | "\"" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
         Just (Right (LitString (T.dropEnd 1 (T.drop 1 text))), Quoted)
     | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
@@ -223,7 +237,11 @@ parseConfigValue text
             Just paramExpansion -> Just (leftVar paramExpansion, Unquoted)
             Nothing -> Just (Right (parseLiteralValue text), Unquoted)
     | "$" `T.isPrefixOf` text =
-        Just (Left (T.drop 1 text), Unquoted)
+        -- $VAR — validate the name; a non-name (`$|`, `$\n; id`, …) is a literal
+        let varName = T.drop 1 text
+         in if isValidVarName varName
+                then Just (Left varName, Unquoted)
+                else Just (Right (parseLiteralValue text), Unquoted)
     | otherwise =
         Just (Right (parseLiteralValue text), Unquoted)
   where

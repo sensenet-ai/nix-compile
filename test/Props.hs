@@ -4160,10 +4160,10 @@ adversarialTests =
     , ("adv_traversal_rejected", qcRun Adversarial.prop_traversal_rejected)
     , ("adv_overflow_becomes_string", qcRun Adversarial.prop_overflow_becomes_string)
     , ("adv_varname_valid", qcRun Adversarial.prop_varname_valid)
-    , -- BUG#21: config parser accepts `$|` as a var ref (counterexample "|").
-      ("adv_invalid_varname_rejected[bug#21]", qcRun (expectFailure Adversarial.prop_invalid_varname_rejected))
-    , -- BUG#22: config var-ref captures `;`/newline, injection-relevant (cx "\n; id\n").
-      ("adv_injection_blocked[bug#22]", qcRun (expectFailure Adversarial.prop_injection_blocked))
+    , -- #21 FIXED: config parser validates the var name after `$`/`"$`.
+      ("adv_invalid_varname_rejected", qcRun Adversarial.prop_invalid_varname_rejected)
+    , -- #22 FIXED: a non-name (`$|`, `$\n; id`) is a literal, not a captured var ref.
+      ("adv_injection_blocked", qcRun Adversarial.prop_injection_blocked)
     , ("adv_store_path_no_traversal", qcRun Adversarial.prop_store_path_no_traversal)
     , ("adv_emit_escaped", qcRun Adversarial.prop_emit_escaped)
     , ("adv_solve_unsatisfiable", qcRun Adversarial.prop_solve_unsatisfiable)
@@ -4175,8 +4175,8 @@ adversarialTests =
       -- (literal_int_roundtrip / literal_bool_roundtrip) already cover the valid case.
     , ("adv_subst_chain_bash", qcRun Adversarial.prop_subst_chain_bash)
     , ("adv_subst_chain_nix", qcRun Adversarial.prop_subst_chain_nix)
-    , -- BUG#23: `command eval`/`builtin eval` (eval behind a prefix) not detected.
-      ("adv_bash_lint_eval_prefixed[bug#23]", qcRun (expectFailure Adversarial.prop_bash_lint_eval_prefixed))
+    , -- #23 FIXED: `eval` behind a command modifier (`command`/`builtin`/…) detected.
+      ("adv_bash_lint_eval_prefixed", qcRun Adversarial.prop_bash_lint_eval_prefixed)
     , -- DROPPED adv_bash_lint_eval_store_path: asserts a store-path binary literally
       -- named `eval` is the `eval` builtin — it isn't (separate command); false positive.
       -- BUG#24: no ConfigTemplate fact for multi-interpolation array config.

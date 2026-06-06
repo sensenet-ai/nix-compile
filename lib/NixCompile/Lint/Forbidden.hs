@@ -86,9 +86,19 @@ checkForEval tokenId commandWords
         pure [Violation VEval violationSpan "eval"]
     | otherwise = pure []
 
+-- | Detect an `eval` invocation, including `eval` hidden behind a command
+-- modifier (`command eval …`, `builtin eval …`, `time`/`nice`/`sudo`/…).
+-- `echo eval` is NOT flagged (eval is just an argument there). (REVIEW-3 #23)
 isEvalInvocation :: [SA.Token] -> Bool
-isEvalInvocation [] = False
-isEvalInvocation (cmd : _) = tokenToText cmd == "eval"
+isEvalInvocation = scan . map tokenToText
+  where
+    scan (w : _) | w == "eval" = True
+    scan (w : rest) | w `elem` evalModifiers = scan rest
+    scan _ = False
+    -- words that run their remaining arguments as a command
+    evalModifiers :: [Text]
+    evalModifiers =
+        ["command", "builtin", "exec", "env", "time", "nice", "ionice", "sudo", "nohup", "setsid", "stdbuf"]
 
 tokenToText :: SA.Token -> Text
 tokenToText (SA.OuterToken _ inner) = innerToText inner
