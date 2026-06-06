@@ -205,7 +205,7 @@ Mapping back to Nix:
 | `Nix.Parse` | `extractPartsWithInterps` — generates placeholders |
 | `Nix.Parse` | `Interpolation` type with `intIndex` field |
 | `Schema.Build` | `extractInterpTypes` — finds typed placeholders |
-| `app/nix-compile.hs` | `mapInterpTypesToNix` — maps back to Nix exprs |
+| `app/Main.hs` (dispatch in `CLI/Dispatch.hs`) | `mapInterpTypesToNix` — maps back to Nix exprs (n.b. symbol not found in current source; verify/rename) |
 
 
 # ══════════════════════════════════════════════════════════════════════════════

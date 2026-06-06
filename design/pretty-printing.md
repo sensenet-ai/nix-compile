@@ -159,5 +159,5 @@ emitConfigFunction schema =
 6.  **Implement Doc Extractor**: Create `Docs` modules to extract comments and types.
 7.  **Implement Search**: Add `search` command using the extracted index.
 8.  **Implement LSP**: Create basic LSP server that delegates to existing modules (Lint, Check, Format).
-9.  **Update CLI**: Update `app/nix-compile.hs` to include new commands (`search`, `docs`, `lsp`).
+9.  **Update CLI**: Update the CLI dispatch (`lib/NixCompile/CLI/Dispatch.hs`; entry point `app/Main.hs`) to include new commands (`search`, `docs`, `lsp`).
 

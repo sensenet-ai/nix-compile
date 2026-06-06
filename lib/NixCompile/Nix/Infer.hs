@@ -134,11 +134,23 @@ builtinEnv =
             , ("elemAt", scheme1 (\a -> TFun (TList a) (TFun TInt a)))
             , ("filter", scheme1 (\a -> TFun (TFun a TBool) (TFun (TList a) (TList a))))
             , ("concatLists", scheme1 (\a -> TFun (TList (TList a)) (TList a)))
+            , -- higher-order list builtins as real 2-var schemes, so e.g.
+              -- `map (x: x + 1) ["a" "b"]` fails instead of being absorbed by TAny.
+              -- (The `builtins.map` attrset path stays TAny — same pre-existing
+              -- limitation as head/filter; the `builtins` record holds plain types,
+              -- not schemes. Tracked under RC1 in TODO.)
+              ("map", scheme2 (\a b -> TFun (TFun a b) (TFun (TList a) (TList b))))
+            , ("concatMap", scheme2 (\a b -> TFun (TFun a (TList b)) (TFun (TList a) (TList b))))
+            , ("foldl'", scheme2 (\a b -> TFun (TFun b (TFun a b)) (TFun b (TFun (TList a) b))))
             ]
       where
         scheme1 builder =
             let a = TypeVar 0
              in Forall [a] (builder (TVar a))
+        scheme2 builder =
+            let a = TypeVar 0
+                b = TypeVar 1
+             in Forall [a, b] (builder (TVar a) (TVar b))
 
     -- n.b. hand-maintained signatures — must stay in sync with nixpkgs
     builtinsTypes :: Map Text (NixType, Bool)
@@ -582,27 +594,45 @@ just a fresh polymorphic var.
 The 'hasDefault' parameter (from @attrs.x or default@) suppresses the error,
 because the source has explicitly declared "ok if missing".
 -}
-inferSelect :: TypeEnv -> NExprLoc -> NKeyName NExprLoc -> Bool -> Infer NixType
-inferSelect environment base attr hasDefault = do
+inferSelect :: TypeEnv -> NExprLoc -> NonEmpty (NKeyName NExprLoc) -> Bool -> Infer NixType
+inferSelect environment base path hasDefault = do
     baseT <- infer environment base
-    t' <- applyCurrentSubst baseT
-    let key = case attr of
-            StaticKey k -> Just (varNameText k)
-            DynamicKey _ -> Nothing
-    case (t', key) of
-        (TAttrs fields, Just k) -> case Map.lookup k fields of
-            Just (t, _) -> pure t
-            Nothing
+    -- Fold the WHOLE dotted path, not just the first key. The dispatch used to
+    -- match `(attr :| _)`, silently dropping `b.c` from `x.a.b.c` (so the genuine
+    -- "cannot select b from an Int" error was never produced). `expr or default`
+    -- suppresses the missing-key error at every level, matching Nix semantics.
+    foldM selectStep baseT path
+  where
+    selectStep baseTy attr = do
+        t' <- applyCurrentSubst baseTy
+        let key = case attr of
+                StaticKey k -> Just (varNameText k)
+                DynamicKey _ -> Nothing
+        case (t', key) of
+            (TAttrs fields, Just k) -> case Map.lookup k fields of
+                Just (t, _) -> pure t
+                Nothing
+                    | hasDefault -> freshVar
+                    | otherwise ->
+                        throwTypeError $
+                            "attribute '" <> k <> "' missing on closed attribute set (keys: "
+                                <> T.intercalate ", " (Map.keys fields)
+                                <> ")"
+            (TAttrsOpen fields, Just k) -> case Map.lookup k fields of
+                Just (t, _) -> pure t
+                Nothing -> freshVar
+            -- selecting a static key from a concrete non-attrset is a type error
+            -- (e.g. `x.a.b` where `x.a : Int`). `TVar` stays lenient because row
+            -- variables are not yet modeled (RC1); `TAny` is the escape hatch.
+            (_, Just k)
                 | hasDefault -> freshVar
+                | TVar _ <- t' -> freshVar
+                | TAny <- t' -> freshVar
                 | otherwise ->
                     throwTypeError $
-                        "attribute '" <> k <> "' missing on closed attribute set (keys: "
-                            <> T.intercalate ", " (Map.keys fields)
-                            <> ")"
-        (TAttrsOpen fields, Just k) -> case Map.lookup k fields of
-            Just (t, _) -> pure t
-            Nothing -> freshVar
-        _ -> freshVar
+                        "cannot select attribute '" <> k <> "' from non-attrset type " <> prettyType t'
+            -- dynamic key (`x.${e}`): not statically resolvable
+            _ -> freshVar
 
 {- | @e ? attr@: returns Bool. We additionally check that any dynamic-key
 antiquotations type-check correctly (S4 from review-2 — previously the path
@@ -663,9 +693,12 @@ inferBinary environment op left right = do
     leftT <- infer environment left
     rightT <- infer environment right
     case op of
-        -- comparison: both sides same type, result is Bool
-        NEq -> unify leftT rightT >> pure TBool
-        NNEq -> unify leftT rightT >> pure TBool
+        -- comparison: `==`/`!=` are TOTAL in Nix and never type-error, so we must
+        -- NOT unify the operands — `x == null` with `x : Int` is legal and idiomatic.
+        -- Operands are still inferred above (for their own checking); we just don't
+        -- relate them. (Previously `unify leftT rightT` false-positived on `x == null`.)
+        NEq -> pure TBool
+        NNEq -> pure TBool
         -- numeric comparison
         NLt -> unify leftT TInt >> unify rightT TInt >> pure TBool
         NLte -> unify leftT TInt >> unify rightT TInt >> pure TBool
@@ -675,21 +708,51 @@ inferBinary environment op left right = do
         NAnd -> unify leftT TBool >> unify rightT TBool >> pure TBool
         NOr -> unify leftT TBool >> unify rightT TBool >> pure TBool
         NImpl -> unify leftT TBool >> unify rightT TBool >> pure TBool
-        -- n.b. nix `+` works on Int/Float (numeric add), String (concat), and Path
-        -- (path-string concat). S6 from review-2: previously accepted any (t, t)
-        -- — including null+null and true+true. We now require an addable type.
+        -- nix `+` is heterogeneous: Int/Float numeric add (Int+Float = Float),
+        -- String concat, and Path concat (Path+String = Path, String+Path = String).
+        -- When one side is still a variable we unify to PROPAGATE (`x + 1 ⟹ x:Int`);
+        -- when both are concrete we use the +-lattice instead of demanding equality.
+        -- The old `unify leftT rightT` wrongly rejected `1 + 1.5` and `./a + "b"`.
         NPlus -> do
-            unify leftT rightT
-            resolved <- applyCurrentSubst leftT
-            case resolved of
-                TInt -> pure TInt
-                TFloat -> pure TFloat
-                TString -> pure TString
-                TStrLit _ -> pure TString
-                TPath -> pure TPath
-                TVar _ -> pure resolved -- polymorphic — leave as-is
-                TAny -> pure TAny
-                _ -> throwTypeError $ "operator `+` expects Int, Float, String, or Path; got " <> prettyType resolved
+            l <- applyCurrentSubst leftT
+            r <- applyCurrentSubst rightT
+            case (l, r) of
+                (TAny, _) -> pure TAny
+                (_, TAny) -> pure TAny
+                (TVar _, _) -> unifyPlus
+                (_, TVar _) -> unifyPlus
+                _ -> case plusConcrete l r of
+                    Just ty -> pure ty
+                    Nothing ->
+                        throwTypeError $
+                            "operator `+` cannot combine " <> prettyType l <> " and " <> prettyType r
+          where
+            -- at least one operand is a variable: unify to propagate the known side
+            unifyPlus = do
+                unify leftT rightT
+                resolved <- applyCurrentSubst leftT
+                case resolved of
+                    TInt -> pure TInt
+                    TFloat -> pure TFloat
+                    TString -> pure TString
+                    TStrLit _ -> pure TString
+                    TPath -> pure TPath
+                    TVar _ -> pure resolved
+                    TAny -> pure TAny
+                    _ -> throwTypeError $ "operator `+` expects Int, Float, String, or Path; got " <> prettyType resolved
+            -- both operands concrete: the legal +-combinations (TStrLit ≈ TString)
+            plusConcrete a b = case (norm a, norm b) of
+                (TInt, TInt) -> Just TInt
+                (TInt, TFloat) -> Just TFloat
+                (TFloat, TInt) -> Just TFloat
+                (TFloat, TFloat) -> Just TFloat
+                (TString, TString) -> Just TString
+                (TString, TPath) -> Just TString
+                (TPath, TString) -> Just TPath
+                (TPath, TPath) -> Just TPath
+                _ -> Nothing
+            norm (TStrLit _) = TString
+            norm t = t
         -- arithmetic (int-only in our model)
         NMinus -> unify leftT TInt >> unify rightT TInt >> pure TInt
         NMult -> unify leftT TInt >> unify rightT TInt >> pure TInt
@@ -789,7 +852,7 @@ infer environment (Fix (Compose (AnnUnit sp expr))) = withSpan (srcSpanToSpan sp
     NAssert cond body -> inferAssert environment cond body
     NAbs params body -> inferLambda environment params body
     NApp func arg -> inferAppWithImport environment func arg
-    NSelect mDef base (attr :| _) -> inferSelect environment base attr (isJust mDef)
+    NSelect mDef base path -> inferSelect environment base path (isJust mDef)
     NHasAttr base attr -> inferHasAttr environment base attr
     NUnary op e -> inferUnary environment op e
     NBinary op left right -> inferBinary environment op left right
