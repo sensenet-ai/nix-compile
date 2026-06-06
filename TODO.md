@@ -94,12 +94,18 @@ by real row variables (Fork B); under Fork A, document the limitation instead.
       `TVar _ -> pure ()` edge case + `TStrLit` text ignored. Low priority.
 - [x] **#8 optionality** ✅ fixed by the rows rewrite — `unifyRec`'s `closeAgainst`
       respects the optional flag. Test `review_optional_open_field_ok`.
-- [ ] **`import` cross-module inference is inert.** `Infer.hs:190,550-567`.
-      `extractImportPathLiteral` returns the raw source string and only handles
-      bare literals; likely misses canonicalized `envImportTypes` keys. Canonicalize
-      the lookup key and handle non-literal import args. **First write the failing
-      differential test** (two files, importer consumes an imported type error).
-      (REVIEW-3 #5)
+- [x] **`import` cross-module inference — static paths CONFIRMED WORKING.** The
+      reviewer's open worry (#5b: canonicalized-key mismatch) does not bite: the
+      driver (`Module.inferModuleTypes`) already extends the env with BOTH raw and
+      resolved/canonical keys, and the scanner (`findImports`) walks into `NSelect`
+      bases. New differential test `review_import_cross_module` proves it end-to-end:
+      `lib.nix = { x = 1; }`, `main.nix = (import ./lib.nix).x` infers **TInt**, not
+      `TAny`. **Remaining (deferred, narrow):** non-static import args
+      (`import ./${x}.nix`, `import (./. + "/f.nix")`, `let p = …; in import p`) are
+      unresolved in BOTH scanner and `extractImportPathLiteral` — they never enter
+      the module graph, so the type can't flow. These are largely undecidable at this
+      layer (need evaluation); fold-literal concatenation is the only tractable
+      extension. (REVIEW-3 #5)
 
 ## P0 — soundness (bash type checker)
 

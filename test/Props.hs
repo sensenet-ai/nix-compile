@@ -70,7 +70,8 @@ import NixAdversarial qualified
 import NixCompile.Schema.Build (buildSchema)
 import ProjectCacheSpec qualified
 import Psychotic qualified
-import System.Directory (removeFile)
+import NixCompile.Nix.Module (buildModuleGraph, moduleTypes)
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
 import Test.QuickCheck.Monadic qualified as QCM
@@ -3324,6 +3325,31 @@ prop_config_glob_regex_chars =
             && isIgnored cfg "[a-z]"
             && isIgnored cfg "\\d"
 
+-- | REVIEW-3 #5: a statically-resolvable cross-module import carries the
+-- imported module's REAL type across the module graph. @main.nix@ =
+-- @(import ./lib.nix).x@ where @lib.nix@ = @{ x = 1; }@ must infer to TInt — if
+-- the import type did not flow, @import@ would fall back to its @TPath → TAny@
+-- builtin and the select would not be TInt. This is the end-to-end check the
+-- reviewer could not run (they had no GHC); it confirms the literal-path half of
+-- cross-module inference is wired correctly (scanner → topo order → dual-keyed
+-- env → select).
+prop_import_cross_module_type_flows :: Property
+prop_import_cross_module_type_flows = QCM.monadicIO $ do
+    let dir = "/tmp/nix-compile-test-import-z7x9w2v5"
+        libPath = dir <> "/lib.nix"
+        mainPath = dir <> "/main.nix"
+    types <- QCM.run $ do
+        createDirectoryIfMissing True dir
+        TIO.writeFile libPath "{ x = 1; }"
+        TIO.writeFile mainPath "(import ./lib.nix).x"
+        egraph <- buildModuleGraph LC.straylight mainPath
+        removeDirectoryRecursive dir `catch` (\(_ :: IOException) -> pure ())
+        pure $ case egraph of
+            Left _ -> []
+            Right g -> Map.elems (moduleTypes g)
+    -- main's inferred type is TInt; lib's is the record. TInt present ⇒ flow works.
+    QCM.assert (NT.TInt `elem` types)
+
 -- | CONFIG-6: Empty ignore patterns -- nothing ignored
 prop_config_empty_ignores :: Bool
 prop_config_empty_ignores =
@@ -4526,6 +4552,7 @@ main = do
             , run "adv_scope_dhall_export" prop_scope_dhall_export
             , run "adv_scope_dhall_special_chars" prop_scope_dhall_special_chars
             , run "adv_scope_dhall_empty" prop_scope_dhall_empty
+            , run "review_import_cross_module" prop_import_cross_module_type_flows
             , -- Config loading adversarial
               run "adv_config_no_file" prop_config_no_file
             , run "adv_config_malformed" prop_config_malformed_dhall
