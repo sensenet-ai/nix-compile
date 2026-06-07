@@ -17,6 +17,7 @@ module NixCompile.Nix.Lint (
     ViolationType (..),
     findNixViolations,
     formatNixViolations,
+    nixViolationDiagnostic,
 )
 where
 
@@ -25,10 +26,33 @@ import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as T
+import Katip (Severity (ErrorS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
+import NixCompile.Diagnostic (Diagnostic (..))
 import NixCompile.Types (Loc (..), Span (..))
+
+-- | A lint violation as a unified 'Diagnostic': the rule code, a one-line
+-- summary, the span, and the suggestion line as @= help:@. The verbose
+-- explanation from 'formatNixNote' is condensed to its final (suggestion) line.
+nixViolationDiagnostic :: NixViolation -> Diagnostic
+nixViolationDiagnostic v =
+    Diagnostic
+        { diagSeverity = ErrorS
+        , diagCode = if T.null code then Nothing else Just code
+        , diagSpan = Just (nvSpan v)
+        , diagSummary = desc
+        , diagHelp = lastLine (formatNixNote (nvType v))
+        , diagSnippet = Nothing
+        }
+  where
+    (code, desc) = case T.breakOn ": " (formatNixErrorCode (nvType v)) of
+        (c, r) | not (T.null r) -> (c, T.drop 2 r)
+        _ -> ("", formatNixErrorCode (nvType v))
+    lastLine note = case reverse (filter (not . T.null) (map T.strip (T.lines note))) of
+        (l : _) -> [l]
+        [] -> []
 
 data ViolationType
     = VWith

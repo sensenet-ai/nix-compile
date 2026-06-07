@@ -18,6 +18,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (MonadIO (..))
+import Data.Either (fromRight)
 import Data.Fix (Fix (..))
 import Data.Functor.Compose (Compose (..))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -31,7 +32,10 @@ import NixCompile.Config qualified as Config
 import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Log
 import NixCompile.Nix.Inference qualified
+import NixCompile.Nix.Lint qualified as Lint
 import NixCompile.Nix.LintCombined qualified as Combined
+import NixCompile.Nix.LintDerivation qualified as Derivation
+import NixCompile.Nix.LintPatterns qualified as Patterns
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Types qualified
 import NixCompile.Safety qualified as Safety
@@ -74,9 +78,13 @@ checkWithViolations config file expression skipTypeCheck = do
     let (_, activeDerivViolations) = partitionDerivViolations config (Combined.lbDeriv bundle)
     let (_, activePatternViolations) = partitionPatternViolations config (Combined.lbPattern bundle)
 
-    reportNixLintViolations file activeNixViolations
-    reportDerivViolations file activeDerivViolations
-    reportPatternViolations file activePatternViolations
+    -- read the source once so lint diagnostics can show the offending line + caret
+    srcResult <- liftIO (Safety.safeReadFile file)
+    let src = fromRight "" srcResult
+        emitAll toDiag = mapM_ (emitDiagnostic . attachSnippet src . toDiag)
+    emitAll Lint.nixViolationDiagnostic activeNixViolations
+    emitAll Derivation.derivViolationDiagnostic activeDerivViolations
+    emitAll Patterns.patternViolationDiagnostic activePatternViolations
 
     typeCheckResult <- performTypeCheck config file expression skipTypeCheck
     case typeCheckResult of

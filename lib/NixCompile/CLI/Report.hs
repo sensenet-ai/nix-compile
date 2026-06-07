@@ -14,9 +14,6 @@ module NixCompile.CLI.Report (
     reportBareCommands,
     reportDynamicCommands,
     printCheckResult,
-    reportNixLintViolations,
-    reportDerivViolations,
-    reportPatternViolations,
     emitDiagnostic,
     typeDiagnostic,
     attachSnippet,
@@ -31,7 +28,6 @@ import System.Exit (exitFailure, exitSuccess)
 import System.IO (hIsTerminalDevice, stderr)
 import Text.Read (readMaybe)
 
-import NixCompile.CLI.Types
 import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Config qualified as Config
 import NixCompile.Lint.Forbidden (Violation (..))
@@ -190,47 +186,3 @@ printCheckResult file totalErrors
         $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
         liftIO exitSuccess
 
-reportNixLintViolations :: FilePath -> [Lint.NixViolation] -> AppM ()
-reportNixLintViolations file violations
-    | null violations = pure ()
-    | otherwise = do
-        $(logTM) ErrorS $
-            logStr $
-                T.unlines
-                    [ ""
-                    , "━━━ " <> crossMarker <> " " <> T.pack file <> " ━━━"
-                    , ""
-                    , "  NIX LINT VIOLATIONS:"
-                    , ""
-                    ]
-        $(logTM) ErrorS $ logStr $ Lint.formatNixViolations violations
-
-reportDerivViolations :: FilePath -> [Derivation.DerivViolation] -> AppM ()
-reportDerivViolations file violations
-    | null violations = pure ()
-    | otherwise = do
-        $(logTM) WarningS $
-            logStr $
-                T.unlines
-                    [ ""
-                    , "━━━ " <> crossMarker <> " " <> T.pack file <> " ━━━"
-                    , ""
-                    , "  DERIVATION QUALITY VIOLATIONS:"
-                    , ""
-                    ]
-        $(logTM) WarningS $ logStr $ Derivation.formatDerivViolations violations
-
-reportPatternViolations :: FilePath -> [LintPatterns.PatternViolation] -> AppM ()
-reportPatternViolations file violations
-    | null violations = pure ()
-    | otherwise = do
-        $(logTM) WarningS $
-            logStr $
-                T.unlines
-                    [ ""
-                    , "━━━ " <> crossMarker <> " " <> T.pack file <> " ━━━"
-                    , ""
-                    , "  PATTERN VIOLATIONS:"
-                    , ""
-                    ]
-        $(logTM) WarningS $ logStr $ LintPatterns.formatPatternViolations violations

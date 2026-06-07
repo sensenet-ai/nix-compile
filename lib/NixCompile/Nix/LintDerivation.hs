@@ -18,6 +18,7 @@ module NixCompile.Nix.LintDerivation (
     DerivViolation (..),
     findDerivViolations,
     formatDerivViolations,
+    derivViolationDiagnostic,
     derivRuleId,
 )
 where
@@ -29,10 +30,31 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
 import Data.Text qualified as T
+import Katip (Severity (WarningS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, SrcSpan)
+import NixCompile.Diagnostic (Diagnostic (..))
 import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
 import NixCompile.Types (Loc (..), Span (..))
+
+-- | Derivation-quality violation as a unified 'Diagnostic' (a warning).
+derivViolationDiagnostic :: DerivViolation -> Diagnostic
+derivViolationDiagnostic dv =
+    Diagnostic
+        { diagSeverity = WarningS
+        , diagCode = if T.null code then Nothing else Just code
+        , diagSpan = Just (dvSpan dv)
+        , diagSummary = desc
+        , diagHelp = lastLine (formatDerivNote (dvType dv))
+        , diagSnippet = Nothing
+        }
+  where
+    (code, desc) = case T.breakOn ": " (formatDerivErrorCode (dvType dv)) of
+        (c, r) | not (T.null r) -> (c, T.drop 2 r)
+        _ -> ("", formatDerivErrorCode (dvType dv))
+    lastLine note = case reverse (filter (not . T.null) (map T.strip (T.lines note))) of
+        (l : _) -> [l]
+        [] -> []
 
 data DerivViolationType
     = VMissingMeta

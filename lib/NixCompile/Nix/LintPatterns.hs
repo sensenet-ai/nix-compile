@@ -18,6 +18,7 @@ module NixCompile.Nix.LintPatterns (
     PatternViolation (..),
     findPatternViolations,
     formatPatternViolations,
+    patternViolationDiagnostic,
 )
 where
 
@@ -27,11 +28,32 @@ import Data.List.NonEmpty qualified as NE
 import Data.Maybe (maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Katip (Severity (WarningS))
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
+import NixCompile.Diagnostic (Diagnostic (..))
 import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
 import NixCompile.Types (Loc (..), Span (..))
+
+-- | Pattern (heuristic) violation as a unified 'Diagnostic' (a warning).
+patternViolationDiagnostic :: PatternViolation -> Diagnostic
+patternViolationDiagnostic pv =
+    Diagnostic
+        { diagSeverity = WarningS
+        , diagCode = if T.null code then Nothing else Just code
+        , diagSpan = Just (pvSpan pv)
+        , diagSummary = desc
+        , diagHelp = lastLine (formatPatternNote (pvType pv))
+        , diagSnippet = Nothing
+        }
+  where
+    (code, desc) = case T.breakOn ": " (formatPatternErrorCode (pvType pv)) of
+        (c, r) | not (T.null r) -> (c, T.drop 2 r)
+        _ -> ("", formatPatternErrorCode (pvType pv))
+    lastLine note = case reverse (filter (not . T.null) (map T.strip (T.lines note))) of
+        (l : _) -> [l]
+        [] -> []
 
 data PatternViolationType
     = VOrNullFallback
