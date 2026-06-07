@@ -28,6 +28,7 @@ module NixCompile.Lint.Forbidden (
     formatViolations,
     formatViolationAt,
     formatViolationsAt,
+    violationDiagnostic,
 )
 where
 
@@ -37,7 +38,9 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Katip (Severity (ErrorS))
 import NixCompile.Bash.Parse (BashAST (..))
+import NixCompile.Diagnostic (Diagnostic (..))
 import NixCompile.Types (Loc (..), Span (..))
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (Position (..))
@@ -131,6 +134,18 @@ lookupPosition tokenId positionMap
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                           // output formatting
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-- | A forbidden-construct violation as a unified 'Diagnostic'.
+violationDiagnostic :: Violation -> Diagnostic
+violationDiagnostic Violation{..} =
+    Diagnostic
+        { diagSeverity = ErrorS
+        , diagCode = Just (forbiddenErrorCode vType)
+        , diagSpan = Just vSpan
+        , diagSummary = forbiddenTypeLabel vType <> " not allowed"
+        , diagHelp = take 1 (filter (not . T.null) (map T.strip (T.lines (forbiddenSuggestion vType))))
+        , diagSnippet = Nothing
+        }
 
 formatViolationAt :: Text -> Violation -> Text
 formatViolationAt src Violation{..} =

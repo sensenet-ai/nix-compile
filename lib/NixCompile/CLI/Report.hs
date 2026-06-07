@@ -11,8 +11,8 @@ module NixCompile.CLI.Report (
     formatDynamicCommand,
     indentBlock,
     formatPackageViolations,
-    reportBareCommands,
-    reportDynamicCommands,
+    bareDiagnostic,
+    dynamicDiagnostic,
     printCheckResult,
     emitDiagnostic,
     typeDiagnostic,
@@ -157,32 +157,32 @@ formatPackageViolations violations =
         ]
         <> T.unlines (map (\violation -> "  " <> T.pack (LintPackages.pvPath violation)) violations)
 
--- n.b. diagnostics go to stderr via katip (the stdout/stderr contract); only a
--- command's product (formatted source, scope JSON, …) is allowed on stdout.
-reportBareCommands :: FilePath -> [(Text, Span)] -> AppM ()
-reportBareCommands file bareFacts
-    | null bareFacts = pure ()
-    | otherwise =
-        $(logTM) ErrorS $
-            logStr $
-                "\nBare commands (external commands must use store paths; shell builtins allowed):\n"
-                    <> T.concat (map (formatBareCommand (T.pack file)) bareFacts)
+-- | A bare-command fact as a unified 'Diagnostic'.
+bareDiagnostic :: (Text, Span) -> Diag.Diagnostic
+bareDiagnostic (cmd, sp) =
+    Diag.Diagnostic
+        { Diag.diagSeverity = ErrorS
+        , Diag.diagCode = Just "ALEPH-B005"
+        , Diag.diagSpan = Just sp
+        , Diag.diagSummary = "bare command not allowed: " <> cmd
+        , Diag.diagHelp = ["use an explicit store path for external commands"]
+        , Diag.diagSnippet = Nothing
+        }
 
-reportDynamicCommands :: FilePath -> [(Text, Span)] -> AppM ()
-reportDynamicCommands file dynFacts
-    | null dynFacts = pure ()
-    | otherwise =
-        $(logTM) ErrorS $
-            logStr $
-                "\nDynamic commands (cannot analyze):\n"
-                    <> T.concat (map (formatDynamicCommand (T.pack file)) dynFacts)
+-- | A dynamic-command fact as a unified 'Diagnostic'.
+dynamicDiagnostic :: (Text, Span) -> Diag.Diagnostic
+dynamicDiagnostic (var, sp) =
+    Diag.Diagnostic
+        { Diag.diagSeverity = ErrorS
+        , Diag.diagCode = Just "ALEPH-B006"
+        , Diag.diagSpan = Just sp
+        , Diag.diagSummary = "dynamic command not allowed: $" <> var
+        , Diag.diagHelp = ["use a known store path or a case statement over a small allowlist"]
+        , Diag.diagSnippet = Nothing
+        }
 
 printCheckResult :: FilePath -> Int -> AppM ()
-printCheckResult file totalErrors
-    | totalErrors > 0 = do
-        $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " error(s) in " ++ file
-        liftIO exitFailure
-    | otherwise = do
-        $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
-        liftIO exitSuccess
+printCheckResult _file totalErrors
+    | totalErrors > 0 = liftIO exitFailure
+    | otherwise = liftIO exitSuccess
 

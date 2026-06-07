@@ -28,7 +28,7 @@ import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
-import NixCompile.Lint.Forbidden (findViolations, formatViolationsAt)
+import NixCompile.Lint.Forbidden (findViolations, violationDiagnostic)
 import NixCompile.Log
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Schema.Build (validateConfigPaths)
@@ -49,7 +49,7 @@ checkBashFile config file = do
                 let allViolations = findViolations ast
                 let (_suppressed, violations) = partitionViolations config allViolations
                 unless (null violations) $
-                    $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
+                    mapM_ (emitDiagnostic . attachSnippet sourceText . violationDiagnostic) violations
 
                 let facts = extractFacts ast :: [Fact]
                 case validateConfigPaths facts of
@@ -70,8 +70,8 @@ checkBashFile config file = do
                 let dynCount = length dynFacts
                 let violationCount = length violations
 
-                reportBareCommands file bareFacts
-                reportDynamicCommands file dynFacts
+                mapM_ (emitDiagnostic . attachSnippet sourceText . bareDiagnostic) bareFacts
+                mapM_ (emitDiagnostic . attachSnippet sourceText . dynamicDiagnostic) dynFacts
 
                 printCheckResult file (violationCount + bareCount + dynCount)
 
@@ -110,7 +110,7 @@ reportNixResults file totalErrors
         liftIO exitSuccess
 
 checkScript :: Config.Config -> FilePath -> Nix.BashScript -> AppM Int
-checkScript configuration file bs = do
+checkScript configuration _file bs = do
     $(logTM) DebugS $ logStr $ "\n=== " <> Nix.bsName bs <> " ==="
     case parseBash (Nix.bsContent bs) of
         Left err -> do
@@ -119,9 +119,8 @@ checkScript configuration file bs = do
         Right ast -> do
             let allViolations = findViolations ast
             let (_, violations) = partitionViolations configuration allViolations
-            unless (null violations) $ do
-                let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-                $(logTM) ErrorS $ logStr $ formatViolationsAt srcLabel violations
+            unless (null violations) $
+                mapM_ (emitDiagnostic . attachSnippet (Nix.bsContent bs) . violationDiagnostic) violations
 
             let badInterps = filter (not . Nix.intIsStorePath) (Nix.bsInterpolations bs)
             unless (null badInterps) $
@@ -148,23 +147,10 @@ checkScript configuration file bs = do
             let bareCount = length bareFacts
             let dynCount = length dynFacts
 
-            let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-            unless (null bareFacts) $
-                $(logTM) ErrorS $
-                    logStr $
-                        "  Bare commands (external commands must use store paths; shell builtins allowed):\n"
-                            <> T.concat (map (indentBlock "  " . formatBareCommand srcLabel) bareFacts)
-
-            unless (null dynFacts) $
-                $(logTM) ErrorS $
-                    logStr $
-                        "  Dynamic commands (cannot analyze):\n"
-                            <> T.concat (map (indentBlock "  " . formatDynamicCommand srcLabel) dynFacts)
+            mapM_ (emitDiagnostic . attachSnippet (Nix.bsContent bs) . bareDiagnostic) bareFacts
+            mapM_ (emitDiagnostic . attachSnippet (Nix.bsContent bs) . dynamicDiagnostic) dynFacts
 
             let errorCount = length violations + bareCount + dynCount + typeErrors + configErrors
-            if errorCount == 0
-                then $(logTM) DebugS "  OK"
-                else $(logTM) ErrorS $ logStr $ T.pack $ "  " ++ show errorCount ++ " error(s)"
             return errorCount
 
 safeReadFile :: FilePath -> IO (Either Text Text)
