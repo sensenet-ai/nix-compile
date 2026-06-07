@@ -114,13 +114,15 @@ performTypeCheck config file expression skipTypeCheck
             Right (Left typeError) ->
                 case Config.effectiveSeverity config Config.typeCheckRuleId of
                     Just Config.SevOff -> return TCOk
-                    Just Config.SevWarning -> do
-                        emitDiagnostic (typeDiagnostic WarningS file typeError)
-                        return TCOk
-                    _ -> do
-                        emitDiagnostic (typeDiagnostic ErrorS file typeError)
-                        return TCFail
+                    Just Config.SevWarning -> emitType WarningS typeError >> return TCOk
+                    _ -> emitType ErrorS typeError >> return TCFail
             Right (Right _) -> return TCOk
+  where
+    -- build a TYPE diagnostic and attach the source line/caret from the file
+    emitType sev typeError = do
+        srcResult <- liftIO (Safety.safeReadFile file)
+        let base = typeDiagnostic sev file typeError
+        emitDiagnostic (either (const base) (`attachSnippet` base) srcResult)
 
 formatTypeError :: T.Text -> T.Text
 formatTypeError errorText =

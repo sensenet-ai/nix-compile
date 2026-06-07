@@ -19,13 +19,16 @@ module NixCompile.CLI.Report (
     reportPatternViolations,
     emitDiagnostic,
     typeDiagnostic,
+    attachSnippet,
 )
 where
 
 import Control.Monad.IO.Class (MonadIO (..))
+import Data.Maybe (isNothing)
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Exit (exitFailure, exitSuccess)
+import System.IO (hIsTerminalDevice, stderr)
 import Text.Read (readMaybe)
 
 import NixCompile.CLI.Types
@@ -40,9 +43,31 @@ import NixCompile.Nix.LintPatterns qualified as LintPatterns
 import NixCompile.Types (Loc (..), Span (..))
 
 -- | Render a diagnostic in the unified clippy layout and log it at its own
--- severity (to stderr, per the stdout/stderr contract).
+-- severity (to stderr, per the stdout/stderr contract). Colour is enabled when
+-- stderr is a terminal; a trailing newline separates consecutive diagnostics.
 emitDiagnostic :: Diag.Diagnostic -> AppM ()
-emitDiagnostic d = $(logTM) (Diag.diagSeverity d) $ logStr (Diag.renderDiagnostic d)
+emitDiagnostic d = do
+    color <- liftIO (hIsTerminalDevice stderr)
+    $(logTM) (Diag.diagSeverity d) $ logStr (Diag.renderDiagnostic color d <> "\n")
+
+-- | Fill in a diagnostic's source snippet (line text + caret range) from the
+-- file's text, when it has a span but no snippet yet.
+attachSnippet :: Text -> Diag.Diagnostic -> Diag.Diagnostic
+attachSnippet src d = case Diag.diagSpan d of
+    Just sp
+        | isNothing (Diag.diagSnippet d)
+        , (l : _) <- drop (locLine (spanStart sp) - 1) (T.lines src) ->
+            d
+                { Diag.diagSnippet =
+                    Just
+                        Diag.Snippet
+                            { Diag.snLine = locLine (spanStart sp)
+                            , Diag.snText = l
+                            , Diag.snCol = locCol (spanStart sp)
+                            , Diag.snWidth = max 1 (locCol (spanEnd sp) - locCol (spanStart sp))
+                            }
+                }
+    _ -> d
 
 -- | Build a TYPE diagnostic from an engine error string, parsing a leading
 -- @"line:col: "@ prefix into a span when present.

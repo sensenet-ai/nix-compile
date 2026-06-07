@@ -1426,7 +1426,7 @@ prop_reformatter_indented_string =
 prop_diagnostic_render :: Bool
 prop_diagnostic_render = full && minimal
   where
-    full = Diag.renderDiagnostic d == expected
+    full = Diag.renderDiagnostic False d == expected
     d =
         Diag.Diagnostic
             { Diag.diagSeverity = ErrorS
@@ -1447,7 +1447,7 @@ prop_diagnostic_render = full && minimal
             , "   = help: use `inherit (pkgs) git;` instead"
             ]
     minimal =
-        Diag.renderDiagnostic (Diag.Diagnostic WarningS Nothing Nothing "something off" [] Nothing)
+        Diag.renderDiagnostic False (Diag.Diagnostic WarningS Nothing Nothing "something off" [] Nothing)
             == "warning: something off"
 
 prop_pretty_strlit_truncated :: Bool

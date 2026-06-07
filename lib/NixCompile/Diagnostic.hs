@@ -21,6 +21,7 @@ module NixCompile.Diagnostic (
 )
 where
 
+import Data.List (stripPrefix)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -63,7 +64,10 @@ severityWord = \case
 tshow :: Int -> Text
 tshow = T.pack . show
 
-{- | Render a diagnostic in the rustc/clippy idiom, e.g.
+{- | Render a diagnostic in the rustc/clippy idiom. With @color@ on, the severity
+tag is bold-coloured, the gutter/arrow/@=@ are blue, and the carets take the
+severity colour (selective styling, like rustc — not a single flat colour). With
+@color@ off the output is plain (and byte-identical to the golden test), e.g.
 
 @
 error[ALEPH-N001]: `with` expression is not allowed
@@ -74,11 +78,24 @@ error[ALEPH-N001]: `with` expression is not allowed
    = help: use `inherit (pkgs) git;` instead
 @
 -}
-renderDiagnostic :: Diagnostic -> Text
-renderDiagnostic d =
+renderDiagnostic :: Bool -> Diagnostic -> Text
+renderDiagnostic color d =
     T.intercalate "\n" (header : locLines <> snippetBlock <> helpLines)
   where
-    header = severityWord (diagSeverity d) <> codePart <> ": " <> diagSummary d
+    sty :: Text -> Text -> Text
+    sty codes t
+        | color = "\ESC[" <> codes <> "m" <> t <> "\ESC[0m"
+        | otherwise = t
+    sevCodes = case diagSeverity d of
+        ErrorS -> "1;31" -- bold red
+        WarningS -> "1;33" -- bold yellow
+        DebugS -> "1;36" -- bold cyan
+        _ -> "1;36"
+    sev = sty sevCodes
+    bold = sty "1"
+    blue = sty "1;34" -- gutter / arrow / `=`
+
+    header = sev (severityWord (diagSeverity d) <> codePart) <> bold (": " <> diagSummary d)
     codePart = maybe "" (\c -> "[" <> c <> "]") (diagCode d)
 
     gutterW = case diagSnippet d of
@@ -87,26 +104,27 @@ renderDiagnostic d =
             Just sp -> T.length (tshow (locLine (spanStart sp)))
             Nothing -> 1
     pad n = T.replicate (max 0 n) " "
-    bar = pad gutterW <> " |"
+    bar = blue (pad gutterW <> " |")
 
     locLines = case diagSpan d of
         Nothing -> []
         Just sp ->
             [ pad gutterW
-                <> "--> "
-                <> T.pack (fromMaybe "<input>" (spanFile sp))
+                <> blue "--> "
+                <> T.pack (stripDot (fromMaybe "<input>" (spanFile sp)))
                 <> ":"
                 <> tshow (locLine (spanStart sp))
                 <> ":"
                 <> tshow (locCol (spanStart sp))
             ]
+    stripDot p = fromMaybe p (stripPrefix "./" p)
 
     snippetBlock = case diagSnippet d of
         Nothing -> []
         Just s ->
             [ bar
-            , T.justifyRight gutterW ' ' (tshow (snLine s)) <> " | " <> snText s
-            , bar <> " " <> pad (snCol s - 1) <> T.replicate (max 1 (snWidth s)) "^"
+            , blue (T.justifyRight gutterW ' ' (tshow (snLine s)) <> " |") <> " " <> snText s
+            , bar <> " " <> pad (snCol s - 1) <> sev (T.replicate (max 1 (snWidth s)) "^")
             ]
 
-    helpLines = map (\h -> pad gutterW <> " = help: " <> h) (diagHelp d)
+    helpLines = map (\h -> blue (pad gutterW <> " =") <> " " <> bold "help:" <> " " <> h) (diagHelp d)
