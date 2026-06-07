@@ -205,6 +205,7 @@ isSafeConfigChar character = character == '_' || character == '-' || (character 
 {- | parse the RHS of a config assignment into (variable-name or literal, quoting)
 handles quoted "${...}", "$VAR", plain strings, and ${...} expansions
 -}
+
 -- | valid bash variable name: @^[A-Za-z_][A-Za-z0-9_]*$@ (ASCII only)
 isValidVarName :: Text -> Bool
 isValidVarName text = case T.uncons text of
@@ -237,7 +238,7 @@ parseConfigValue text
             Just paramExpansion -> Just (leftVar paramExpansion, Unquoted)
             Nothing -> Just (Right (parseLiteralValue text), Unquoted)
     | "$" `T.isPrefixOf` text =
-        -- $VAR — validate the name; a non-name (`$|`, `$\n; id`, …) is a literal
+        -- \$VAR — validate the name; a non-name (`$|`, `$\n; id`, …) is a literal
         let varName = T.drop 1 text
          in if isValidVarName varName
                 then Just (Left varName, Unquoted)

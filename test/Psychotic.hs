@@ -27,11 +27,11 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile (parseScriptFile, scriptSchema)
-import NixCompile.Bash.Patterns
-    ( escapeForParamExpansion
-    , escapeForSingleQuoted
-    , isSafeDefaultValue
-    )
+import NixCompile.Bash.Patterns (
+    escapeForParamExpansion,
+    escapeForSingleQuoted,
+    isSafeDefaultValue,
+ )
 import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, inferExprWithEnv)
@@ -91,10 +91,11 @@ prop_c1_default_value_payloads_escaped = all check c1Payloads
             | c == target = True
             | otherwise = scan False rest
 
--- | escaping is safe under repeated application — the dangerous metacharacters
--- never re-appear unescaped.
--- | Repeated escaping is harmless: $( in the original becomes \$( on the
--- first pass and \\\$( on the second; bash still treats the $ as literal.
+{- | escaping is safe under repeated application — the dangerous metacharacters
+never re-appear unescaped.
+| Repeated escaping is harmless: $( in the original becomes \$( on the
+first pass and \\\$( on the second; bash still treats the $ as literal.
+-}
 prop_c1_escape_idempotent :: Bool
 prop_c1_escape_idempotent =
     let first = escapeForParamExpansion "$(touch /tmp/pwn)"
@@ -111,8 +112,9 @@ prop_c1_safe_defaults_pass_through = all check safeValues
     safeValues = ["localhost", "127.0.0.1", "8080", "/etc/nix-compile/conf", "true", "false"]
     check v = isSafeDefaultValue v && escapeForParamExpansion v == v
 
--- | newlines in defaults become spaces (they can't be embedded in single-line
--- printf format strings without breaking the JSON output).
+{- | newlines in defaults become spaces (they can't be embedded in single-line
+printf format strings without breaking the JSON output).
+-}
 prop_c1_newlines_neutralized :: Bool
 prop_c1_newlines_neutralized =
     not ("\n" `T.isInfixOf` escapeForParamExpansion "foo\nbar")
@@ -124,8 +126,9 @@ prop_c1_single_quote_escape =
     escapeForSingleQuoted "it's" == "it'\\''s"
         && escapeForSingleQuoted "no-quote" == "no-quote"
 
--- | end-to-end: feed a malicious bash script through parseScriptFile and
--- verify the emitted config bash is safe.
+{- | end-to-end: feed a malicious bash script through parseScriptFile and
+verify the emitted config bash is safe.
+-}
 prop_c1_end_to_end_injection_neutralized :: Property
 prop_c1_end_to_end_injection_neutralized = QCM.monadicIO $ do
     result <- QCM.run $ withSystemTempDirectory "nix-compile-c1-e2e" $ \tmp -> do
@@ -165,16 +168,18 @@ prop_c2_with_chain_no_crash = case parseNixExpr (nestedWith 250) of
     Left _ -> True
     Right _ -> True
 
--- | A long static-attribute path parses as one NSelect with a multi-element
--- NAttrPath (no structural depth). The test just confirms that the parser
--- doesn't crash; depth-bypass via this shape isn't possible.
+{- | A long static-attribute path parses as one NSelect with a multi-element
+NAttrPath (no structural depth). The test just confirms that the parser
+doesn't crash; depth-bypass via this shape isn't possible.
+-}
 prop_c2_select_chain_no_crash :: Bool
 prop_c2_select_chain_no_crash = case parseNixExpr (nestedSelect 300) of
     Left _ -> True
     Right _ -> True
 
--- | Deeply-nested-function-application bombs are a real bypass vector:
--- each NApp adds one depth level.
+{- | Deeply-nested-function-application bombs are a real bypass vector:
+each NApp adds one depth level.
+-}
 nestedApp :: Int -> Text
 nestedApp n = T.replicate n "f (" <> "0" <> T.replicate n ")"
 

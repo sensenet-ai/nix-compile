@@ -26,16 +26,16 @@ import System.IO.Temp (withSystemTempDirectory)
 
 -- ── helpers ────────────────────────────────────────────────────────
 
--- | Block until either the predicate holds or the timeout (μs) elapses.
--- Returns True on success, False on timeout. Polling is the right pattern for
--- "wait for an async worker to finish" — we deliberately don't expose a
--- "join the workers" API on ProjectCache because real LSP code can't block.
+{- | Block until either the predicate holds or the timeout (μs) elapses.
+Returns True on success, False on timeout. Polling is the right pattern for
+"wait for an async worker to finish" — we deliberately don't expose a
+"join the workers" API on ProjectCache because real LSP code can't block.
+-}
 waitFor :: Int -> IO Bool -> IO Bool
 waitFor totalMicros predicate = go 0
   where
     pollIntervalMicros :: Int
     pollIntervalMicros = 10_000 -- 10 ms
-
     go elapsed
         | elapsed >= totalMicros = pure False
         | otherwise = do
@@ -85,14 +85,15 @@ testSingleFileEnqueueAndLookup =
                 PC.stopWorkers pc
                 pure (case lookup' of Just _ -> True; Nothing -> False)
 
--- | Editing a file (re-enqueuing with new content) replaces the cached entry
--- and changes the hash; content-identical re-enqueues are no-ops at the
--- worker level (hash short-circuits the recompute).
--- | Two-shot property:
---   (a) re-enqueuing an unchanged Fresh file is a no-op (hash stable).
---   (b) after content changes, 'invalidateFile' triggers a recompute
---       and the new hash is different.
--- This is the real LSP idiom: didSave calls invalidateFile, not bare enqueue.
+{- | Editing a file (re-enqueuing with new content) replaces the cached entry
+and changes the hash; content-identical re-enqueues are no-ops at the
+worker level (hash short-circuits the recompute).
+| Two-shot property:
+  (a) re-enqueuing an unchanged Fresh file is a no-op (hash stable).
+  (b) after content changes, 'invalidateFile' triggers a recompute
+      and the new hash is different.
+This is the real LSP idiom: didSave calls invalidateFile, not bare enqueue.
+-}
 testContentHashShortCircuit :: IO Bool
 testContentHashShortCircuit =
     withSystemTempDirectory "pc-hash" $ \tmp -> do
@@ -118,17 +119,20 @@ testContentHashShortCircuit =
         PC.invalidateFile pc path
         _ <- waitFor 1_000_000 $ do
             now <- PC.lookupFile pc path
-            pure (case now of
+            pure
+                ( case now of
                     Just e -> PC.feHash e /= maybe mempty PC.feHash firstLookup
-                    Nothing -> False)
+                    Nothing -> False
+                )
         thirdLookup <- PC.lookupFile pc path
         let thirdHash = fmap PC.feHash thirdLookup
 
         PC.stopWorkers pc
         pure (firstHash == secondHash && thirdHash /= firstHash && thirdHash /= Nothing)
 
--- | An import edge A → B makes A appear in reverseDeps[B]; marking B stale
--- cascades the Stale status onto A.
+{- | An import edge A → B makes A appear in reverseDeps[B]; marking B stale
+cascades the Stale status onto A.
+-}
 testReverseDepCascade :: IO Bool
 testReverseDepCascade =
     withSystemTempDirectory "pc-rev" $ \tmp -> do
@@ -160,9 +164,10 @@ testReverseDepCascade =
         PC.stopWorkers pc
         pure (aStale && bStale)
 
--- | Concurrent enqueues of the same file don't double-process: even with
--- many enqueues, the worker only writes one entry. (Smoke test for the
--- 'pcInflight' tracking.)
+{- | Concurrent enqueues of the same file don't double-process: even with
+many enqueues, the worker only writes one entry. (Smoke test for the
+'pcInflight' tracking.)
+-}
 testConcurrentEnqueueDedup :: IO Bool
 testConcurrentEnqueueDedup =
     withSystemTempDirectory "pc-dedup" $ \tmp -> do
@@ -179,8 +184,9 @@ testConcurrentEnqueueDedup =
         -- Even with 50 enqueues, we end up with exactly one entry.
         pure (PC.pcsFiles stats == 1)
 
--- | Looking up a stale entry returns Nothing (consumers fall back to
--- single-file inference).
+{- | Looking up a stale entry returns Nothing (consumers fall back to
+single-file inference).
+-}
 testLookupOfStaleReturnsNothing :: IO Bool
 testLookupOfStaleReturnsNothing =
     withSystemTempDirectory "pc-stale" $ \tmp -> do

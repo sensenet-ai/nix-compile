@@ -36,10 +36,10 @@ import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import GHC.Conc (getNumCapabilities)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Safety qualified as Safety
-import System.Directory
-    ( doesDirectoryExist
-    , getHomeDirectory
-    )
+import System.Directory (
+    doesDirectoryExist,
+    getHomeDirectory,
+ )
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
@@ -115,9 +115,10 @@ main = do
 
 -- ───────────────────────── enumeration ─────────────────────────────
 
--- | Enumerate .nix files under root via /usr/bin/find. ~10x faster than
--- crawling with doesDirectoryExist/doesFileExist for large trees because find
--- uses readdir's d_type instead of separate stat syscalls.
+{- | Enumerate .nix files under root via /usr/bin/find. ~10x faster than
+crawling with doesDirectoryExist/doesFileExist for large trees because find
+uses readdir's d_type instead of separate stat syscalls.
+-}
 enumerateNixFiles :: FilePath -> IO [FilePath]
 enumerateNixFiles root = do
     out <-
@@ -125,17 +126,33 @@ enumerateNixFiles root = do
             "find"
             [ root
             , "("
-            , "-name", ".git", "-o"
-            , "-name", "result", "-o"
-            , "-name", "result-*", "-o"
-            , "-name", "node_modules", "-o"
-            , "-name", ".direnv", "-o"
-            , "-name", "_build", "-o"
-            , "-name", "target"
+            , "-name"
+            , ".git"
+            , "-o"
+            , "-name"
+            , "result"
+            , "-o"
+            , "-name"
+            , "result-*"
+            , "-o"
+            , "-name"
+            , "node_modules"
+            , "-o"
+            , "-name"
+            , ".direnv"
+            , "-o"
+            , "-name"
+            , "_build"
+            , "-o"
+            , "-name"
+            , "target"
             , ")"
-            , "-prune", "-o"
-            , "-name", "*.nix"
-            , "-type", "f"
+            , "-prune"
+            , "-o"
+            , "-name"
+            , "*.nix"
+            , "-type"
+            , "f"
             , "-print"
             ]
             ""
@@ -191,7 +208,8 @@ reportParseStats s = do
     printf "  files:        %d (%d ok, %d failed)\n" (psSamples s) (psSuccesses s) (psFailures s)
     printf "  total:        %.2fs\n" (psTotalMicros s / 1_000_000)
     printf "  throughput:   %.0f files/sec\n" (fromIntegral (psSamples s) / (psTotalMicros s / 1_000_000) :: Double)
-    printf "  per-file:     min=%.0fμs  p50=%.0fμs  p95=%.0fμs  p99=%.0fμs  max=%.0fμs\n"
+    printf
+        "  per-file:     min=%.0fμs  p50=%.0fμs  p95=%.0fμs  p99=%.0fμs  max=%.0fμs\n"
         (psMinMicros s)
         (psP50Micros s)
         (psP95Micros s)
@@ -243,10 +261,12 @@ pipelineSample files = do
 reportPipelineStats :: PipelineStats -> IO ()
 reportPipelineStats s = do
     printf "  total:        %d\n" (plsTotal s)
-    printf "  parse:        %.2fs  (%.0f files/sec)\n"
+    printf
+        "  parse:        %.2fs  (%.0f files/sec)\n"
         (plsParseMicros s / 1_000_000)
         (fromIntegral (plsTotal s) / (plsParseMicros s / 1_000_000) :: Double)
-    printf "  analyzeDepth: %.2fs  (%.0f files/sec)\n"
+    printf
+        "  analyzeDepth: %.2fs  (%.0f files/sec)\n"
         (plsAnalyzeMicros s / 1_000_000)
         (fromIntegral (plsTotal s) / (plsAnalyzeMicros s / 1_000_000) :: Double)
     printf "  parse-failed: %d\n" (plsParseFailed s)
@@ -254,9 +274,10 @@ reportPipelineStats s = do
 
 -- ───────────────────────── single-file warm ───────────────────────
 
--- | The LSP-realistic measurement: enqueue ONE file (the "just-opened" file)
--- and time until that file becomes Fresh, then time until its imports
--- become Fresh, then time until the BFS frontier stops expanding.
+{- | The LSP-realistic measurement: enqueue ONE file (the "just-opened" file)
+and time until that file becomes Fresh, then time until its imports
+become Fresh, then time until the BFS frontier stops expanding.
+-}
 data WarmStats = WarmStats
     { wsTimeToFirstFresh :: !Double -- seconds until the target file is Fresh
     , wsTimeToImportsFresh :: !Double -- + until immediate imports
@@ -383,7 +404,8 @@ fillProjectCache files = do
             stats <- PC.statsOf pc
             now <- getCurrentTime
             let elapsed = realToFrac (diffUTCTime now fillStart) :: Double
-            printf "    t=%.1fs  files=%d  fresh=%d  inflight=%d\n"
+            printf
+                "    t=%.1fs  files=%d  fresh=%d  inflight=%d\n"
                 elapsed
                 (PC.pcsFiles stats)
                 (PC.pcsFresh stats)
@@ -426,13 +448,15 @@ reportFillStats fs corpusSize = do
     printf "  enqueue:    %.2fs\n" (fsEnqueueTime fs)
     printf "  drain:      %.2fs\n" (fsFillTime fs)
     printf "  corpus:     %d files\n" corpusSize
-    printf "  cached:     %d (fresh=%d, stale=%d)\n"
+    printf
+        "  cached:     %d (fresh=%d, stale=%d)\n"
         (PC.pcsFiles s)
         (PC.pcsFresh s)
         (PC.pcsStale s)
     printf "  coverage:   %.1f%%\n" (100 * fromIntegral (PC.pcsFresh s) / fromIntegral corpusSize :: Double)
     when (fsFillTime fs > 0) $
-        printf "  throughput: %.0f files/sec (workers=%d)\n"
+        printf
+            "  throughput: %.0f files/sec (workers=%d)\n"
             (fromIntegral (PC.pcsFresh s) / fsFillTime fs :: Double)
             (PC.pcsWorkers s)
 

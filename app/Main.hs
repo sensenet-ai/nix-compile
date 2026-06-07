@@ -8,9 +8,9 @@ module Main (main) where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Text qualified as T
+import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import System.Directory (doesFileExist)
 
 import NixCompile.CLI.Dispatch
 import NixCompile.Config qualified as Config

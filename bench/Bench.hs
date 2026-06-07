@@ -26,9 +26,9 @@ import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Bash.Patterns (escapeForParamExpansion)
 import NixCompile.Nix.Inference (builtinEnv, inferExprWithEnv)
-import NixCompile.Nix.Types (prettyType)
 import NixCompile.Nix.LintCombined qualified as LC
 import NixCompile.Nix.Parse (parseNixExpr)
+import NixCompile.Nix.Types (prettyType)
 import NixCompile.Safety qualified as Safety
 import Test.Tasty.Bench
 
@@ -77,8 +77,9 @@ mixedWorkload n =
 
 -- ── pre-parse helpers ──────────────────────────────────────────────
 
--- | Pre-parse benchmark input once; force the AST so the timing measures
--- only the function under test, not parsing.
+{- | Pre-parse benchmark input once; force the AST so the timing measures
+only the function under test, not parsing.
+-}
 parseFixture :: Text -> NExprLoc
 parseFixture src = case parseNixExpr src of
     Right e -> e

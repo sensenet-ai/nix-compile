@@ -65,8 +65,8 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_, replicateM, unless)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as BS
-import Data.Functor.Compose (Compose (..))
 import Data.Fix (Fix (..))
+import Data.Functor.Compose (Compose (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -76,15 +76,15 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import GHC.Conc (getNumCapabilities)
-import Nix.Expr.Types (NExprF (..), Binding (..), NKeyName (..))
+import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import Nix.Utils qualified as NixUtils
-import NixCompile.Nix.Inference
-    ( TypeEnv (..)
-    , builtinEnv
-    , extendImport
-    , inferExprWithEnv
-    )
+import NixCompile.Nix.Inference (
+    TypeEnv (..),
+    builtinEnv,
+    extendImport,
+    inferExprWithEnv,
+ )
 import NixCompile.Nix.Types (NixType (..))
 import NixCompile.Nix.Utils (varNameText)
 import NixCompile.Safety qualified as Safety
@@ -211,8 +211,9 @@ processFile pc fp = do
                 let h = SHA256.hash (TE.encodeUtf8 src)
                 existing <- atomically $ Map.lookup fp <$> readTVar (pcFiles pc)
                 case existing of
-                    Just e | feStatus e == Fresh && feHash e == h ->
-                        pure () -- already have a fresh entry for this content
+                    Just e
+                        | feStatus e == Fresh && feHash e == h ->
+                            pure () -- already have a fresh entry for this content
                     _ -> recompute pc fp src h
   where
     recompute pcArg fpArg src h = do
@@ -262,9 +263,10 @@ updateCache pc fp entry = atomically $ do
 
     modifyTVar' (pcFiles pc) (Map.insert fp entry)
 
--- | Build a TypeEnv that includes whatever cached import types we have. Missing
--- imports default to TAny (they'll be filled in when the worker processes
--- them, but we don't block waiting).
+{- | Build a TypeEnv that includes whatever cached import types we have. Missing
+imports default to TAny (they'll be filled in when the worker processes
+them, but we don't block waiting).
+-}
 envFromImports :: ProjectCache -> [FilePath] -> IO TypeEnv
 envFromImports pc imports = do
     files <- atomically (readTVar (pcFiles pc))
@@ -356,8 +358,9 @@ markStale pc fp = do
                 files
                 closure
 
--- | The transitive closure of reverse-deps reachable from a starting file,
--- including the file itself. Pure (TVar reads only, no recursion in STM).
+{- | The transitive closure of reverse-deps reachable from a starting file,
+including the file itself. Pure (TVar reads only, no recursion in STM).
+-}
 reverseClosure :: Map FilePath (Set FilePath) -> FilePath -> Set FilePath
 reverseClosure rev start = go (Set.singleton start) [start]
   where
@@ -368,9 +371,10 @@ reverseClosure rev start = go (Set.singleton start) [start]
             acc' = Set.union acc new
          in go acc' (Set.toList new ++ xs)
 
--- | Invalidate a single file: mark it + reverse-deps stale, then enqueue the
--- file itself for immediate recompute. The reverse-deps recompute lazily on
--- their next access.
+{- | Invalidate a single file: mark it + reverse-deps stale, then enqueue the
+file itself for immediate recompute. The reverse-deps recompute lazily on
+their next access.
+-}
 invalidateFile :: ProjectCache -> FilePath -> IO ()
 invalidateFile pc fp = do
     markStale pc fp

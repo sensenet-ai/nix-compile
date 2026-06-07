@@ -41,8 +41,9 @@ data Snippet = Snippet
     }
     deriving (Eq, Show)
 
--- | A finding from any checker. @diagSpan@ drives the @file:line:col@ location
--- line; @diagSnippet@ (optional) adds the source line + caret block.
+{- | A finding from any checker. @diagSpan@ drives the @file:line:col@ location
+line; @diagSnippet@ (optional) adds the source line + caret block.
+-}
 data Diagnostic = Diagnostic
     { diagSeverity :: !Severity
     , diagCode :: !(Maybe Text)
@@ -94,7 +95,6 @@ renderDiagnostic color d =
     sev = sty sevCodes
     bold = sty "1"
     blue = sty "1;34" -- gutter / arrow / `=`
-
     header = sev (severityWord (diagSeverity d) <> codePart) <> bold (": " <> diagSummary d)
     codePart = maybe "" (\c -> "[" <> c <> "]") (diagCode d)
 

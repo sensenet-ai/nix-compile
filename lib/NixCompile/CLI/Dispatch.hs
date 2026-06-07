@@ -36,8 +36,8 @@ import NixCompile.Config qualified as Config
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Log
-import NixCompile.Nix.Infer qualified as Annotate
 import NixCompile.Nix.Formatter qualified as Formatter
+import NixCompile.Nix.Infer qualified as Annotate
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Safety qualified as Safety
@@ -108,11 +108,12 @@ cmdScopeDhall file = withSafeNix file $ \expr -> do
     let scopeGraph = Scope.fromNixFile file expr
     liftIO $ TIO.putStrLn $ Scope.toDhall scopeGraph
 
--- | Report a failure from the safe-parse/depth gate and exit. The message is
--- already categorized by 'Safety.renderSafetyError' (e.g. "parse error: …",
--- "I/O error: …", "depth limit exceeded …"), so we emit it as-is — prefixing it
--- with "Parse error:" mislabeled I/O and depth failures and double-printed
--- "parse error:" for real parse failures.
+{- | Report a failure from the safe-parse/depth gate and exit. The message is
+already categorized by 'Safety.renderSafetyError' (e.g. "parse error: …",
+"I/O error: …", "depth limit exceeded …"), so we emit it as-is — prefixing it
+with "Parse error:" mislabeled I/O and depth failures and double-printed
+"parse error:" for real parse failures.
+-}
 failSafety :: Text -> AppM a
 failSafety err = do $(logTM) ErrorS $ logStr err; liftIO exitFailure
 

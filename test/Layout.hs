@@ -14,15 +14,15 @@
 module Main (main) where
 
 import Control.Monad (forM)
-import NixCompile.Nix.LayoutConvention
-    ( Convention
-    , allFlakeModule
-    , flakeParts
-    , nixosConfig
-    , nixpkgsByName
-    , straylight
-    , validateFileFromExpr
-    )
+import NixCompile.Nix.LayoutConvention (
+    Convention,
+    allFlakeModule,
+    flakeParts,
+    nixosConfig,
+    nixpkgsByName,
+    straylight,
+    validateFileFromExpr,
+ )
 import NixCompile.Nix.Parse (parseNixFile)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.Exit (exitFailure, exitSuccess)

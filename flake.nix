@@ -62,6 +62,10 @@
             treefmt = {
               projectRootFile = "flake.nix";
               programs.fourmolu.enable = true;
+              # Keep the deep-vendored nixfmt (vendor/) byte-faithful to upstream
+              # so it stays diff-able against the nixfmt release it tracks; we
+              # diverge by deliberate edits, not by reflowing every line.
+              settings.global.excludes = [ "vendor/**" ];
             };
 
             devShells.default = pkgs.mkShell {

@@ -111,8 +111,9 @@ corpus =
     , "1 + true"
     ]
 
--- | Map an inferred type to the runtime kind string `builtins.typeOf` reports,
--- or Nothing when the checker made no concrete claim (so nothing to assert).
+{- | Map an inferred type to the runtime kind string `builtins.typeOf` reports,
+or Nothing when the checker made no concrete claim (so nothing to assert).
+-}
 expectedKind :: NixType -> Maybe String
 expectedKind = \case
     TInt -> Just "int"
@@ -149,16 +150,19 @@ runChecker e = case parseNixTextLoc (T.pack e) of
         Right (t, _) -> expectedKind t `seq` Accepted t
 
 -- ── oracle side ──
--- | runtime kind via `nix-instantiate --eval -E 'builtins.typeOf (EXPR)'`,
--- or Nothing if it errors / times out (did not evaluate to a value).
+
+{- | runtime kind via `nix-instantiate --eval -E 'builtins.typeOf (EXPR)'`,
+or Nothing if it errors / times out (did not evaluate to a value).
+-}
 nixTypeOf :: String -> IO (Maybe String)
 nixTypeOf e = do
     let arg = "builtins.typeOf (" ++ e ++ ")"
     res <-
         timeout
             timeoutMicros
-            (try (readProcessWithExitCode "nix-instantiate" ["--eval", "-E", arg] "")
-                :: IO (Either SomeException (ExitCode, String, String)))
+            ( try (readProcessWithExitCode "nix-instantiate" ["--eval", "-E", arg] "") ::
+                IO (Either SomeException (ExitCode, String, String))
+            )
     pure $ case res of
         Just (Right (ExitSuccess, out, _)) -> Just (cleanKind out)
         _ -> Nothing

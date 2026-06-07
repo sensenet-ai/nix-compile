@@ -72,9 +72,10 @@ data TypeEnv = TypeEnv
     , envWith :: Maybe NixType
     , envImportTypes :: Map FilePath NixType
     , envLenient :: Bool
-    -- ^ when True, treat unbound names as fresh polymorphic vars instead of
-    -- errors. Used for backwards compatibility with libraries that mention
-    -- builtins we don't yet model. Default: False (strict).
+    {- ^ when True, treat unbound names as fresh polymorphic vars instead of
+    errors. Used for backwards compatibility with libraries that mention
+    builtins we don't yet model. Default: False (strict).
+    -}
     }
     deriving (Eq, Show)
 
@@ -691,7 +692,9 @@ inferSelect environment base path hasDefault = do
                     | hasDefault -> freshVar
                     | otherwise ->
                         throwTypeError $
-                            "attribute '" <> k <> "' missing on closed attribute set (keys: "
+                            "attribute '"
+                                <> k
+                                <> "' missing on closed attribute set (keys: "
                                 <> T.intercalate ", " (Map.keys fields)
                                 <> ")"
             -- open record: a missing key EXTENDS the row through its tail var, so
@@ -1002,9 +1005,10 @@ inferRecBinding extendedEnv (Nix.Inherit maybeScope keys _) typeVarList = do
         Nothing -> freshVar
 inferRecBinding _ _ _ = pure []
 
--- | infer all bindings in a recursive set: pre-allocate vars, then unify each.
--- n.b. desugars nested-path bindings (S5 from review-2) so @{ a.b = 1; }@ is
--- treated as @{ a = { b = 1; }; }@ before inference begins.
+{- | infer all bindings in a recursive set: pre-allocate vars, then unify each.
+n.b. desugars nested-path bindings (S5 from review-2) so @{ a.b = 1; }@ is
+treated as @{ a = { b = 1; }; }@ before inference begins.
+-}
 inferRecursiveBindings :: TypeEnv -> [Nix.Binding NExprLoc] -> Infer [(Text, NixType)]
 inferRecursiveBindings environment bindings'' = do
     let bindings' = desugarNestedBindings bindings''
@@ -1026,10 +1030,11 @@ inferRecursiveBindings environment bindings'' = do
         $ "infinite type: rec bindings " <> T.intercalate ", " names <> " have no concrete constraint"
     pure $ concat inferredBindings
 
--- | infer a single non-recursive binding and accumulate results
--- n.b. bindings in a non-recursive set are independent (each sees only
--- @environment@), so this is a plain per-binding map — the caller concats the
--- results. The old accumulator-with-@++@ form was O(n²) on wide attrsets.
+{- | infer a single non-recursive binding and accumulate results
+n.b. bindings in a non-recursive set are independent (each sees only
+@environment@), so this is a plain per-binding map — the caller concats the
+results. The old accumulator-with-@++@ form was O(n²) on wide attrsets.
+-}
 inferNonRecursiveBinding :: TypeEnv -> Nix.Binding NExprLoc -> Infer [(Text, NixType)]
 inferNonRecursiveBinding environment (Nix.NamedVar (StaticKey name :| []) expr pos) = do
     let bindingName = varNameText name

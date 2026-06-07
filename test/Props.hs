@@ -24,9 +24,11 @@
 
 module Main (main) where
 
+import Adversarial qualified
 import Control.Exception (IOException, SomeException, catch, try)
 import Control.Monad (replicateM)
 import Data.Either (isLeft, isRight)
+import Data.Fix (Fix (..), foldFix)
 import Data.List (nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing, mapMaybe)
@@ -36,10 +38,10 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Language.LSP.Protocol.Types (Diagnostic (..), DiagnosticSeverity (..), Position (..), Range (..))
-import Data.Fix (Fix (..), foldFix)
 import Nix.Expr.Types qualified as NixE
 import Nix.Expr.Types.Annotated (SrcSpan (..), nullSpan, stripAnnotation)
 import Nix.Parser (parseNixTextLoc)
+import NixAdversarial qualified
 import NixCompile
 import NixCompile.Bash.Builtins (builtins, lookupArgType)
 import NixCompile.Bash.Facts (extractFacts)
@@ -50,33 +52,31 @@ import NixCompile.CLI.Check (checkWithViolations, detectUnsupportedConstruct, fo
 import NixCompile.CLI.Report (formatBareCommand, formatDynamicCommand, formatPackageViolations, indentBlock, partitionViolations)
 import NixCompile.CLI.Types (CICounts (..), TCResult (..), crossMarker, emptyCICounts, okMarker, unsupMarker)
 import NixCompile.Config qualified as Cfg
+import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
-import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Nix.Effect
-import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Formatter (formatNixFile)
+import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Inference (Binding, inferExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
 import NixCompile.Nix.Lint
 import NixCompile.Nix.LintDerivation qualified as DerivLint
 import NixCompile.Nix.LintPackages qualified as PackageLint
 import NixCompile.Nix.LintPatterns qualified as PatternLint
+import NixCompile.Nix.Module (buildModuleGraph, moduleTypes)
 import NixCompile.Nix.ModuleKind
 import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Safety qualified as Safety
-import Adversarial qualified
-import NixAdversarial qualified
 import NixCompile.Schema.Build (buildSchema)
 import ProjectCacheSpec qualified
 import Psychotic qualified
-import NixCompile.Nix.Module (buildModuleGraph, moduleTypes)
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
@@ -1212,10 +1212,11 @@ genNixRec n = do
     let bindings = zipWith (\k v -> k <> " = " <> v <> ";") uniqueNames vals
     pure $ "rec { " <> T.unwords bindings <> " }"
 
--- | attribute selection (#11): the generator previously emitted no NSelect nodes,
--- leaving the row-polymorphism paths (#1/#2) unreachable by QuickCheck. Three
--- well-formed shapes that always parse: direct select of a present field, select
--- THROUGH a function parameter (exercises row constraints), and nested select.
+{- | attribute selection (#11): the generator previously emitted no NSelect nodes,
+leaving the row-polymorphism paths (#1/#2) unreachable by QuickCheck. Three
+well-formed shapes that always parse: direct select of a present field, select
+THROUGH a function parameter (exercises row constraints), and nested select.
+-}
 genNixSelect :: Int -> Gen Text
 genNixSelect n = do
     k <- genNixIdent
@@ -1350,11 +1351,12 @@ prop_review_format_roundtrip = forAll (sized genNixExpr) $ \src ->
 canonSourcePos :: NixE.NSourcePos
 canonSourcePos = getSpanBegin nullSpan
 
--- | erase source positions so two ASTs compare equal modulo layout. Only
--- @Binding@ nodes (NamedVar/Inherit) carry an 'NixE.NSourcePos' inside the
--- unannotated 'NixE.NExpr' (the outer 'SrcSpan' is already gone via
--- 'stripAnnotation'); the parser also normalises indented-string indentation, so a
--- whitespace-collapse bug in the reformatter shows up as a differing 'NStr' here.
+{- | erase source positions so two ASTs compare equal modulo layout. Only
+@Binding@ nodes (NamedVar/Inherit) carry an 'NixE.NSourcePos' inside the
+unannotated 'NixE.NExpr' (the outer 'SrcSpan' is already gone via
+'stripAnnotation'); the parser also normalises indented-string indentation, so a
+whitespace-collapse bug in the reformatter shows up as a differing 'NStr' here.
+-}
 zeroExprPos :: NixE.NExpr -> NixE.NExpr
 zeroExprPos = foldFix (Fix . go)
   where
@@ -1956,8 +1958,9 @@ prop_layout_filename_kebab =
      in null violations
             && not (null $ LC.validateLayout LC.straylight "/" [("nix/modules/flake/snake_name.nix", Detection FlakeModule 100 [])])
 
--- | validateFlakeModReq with convRequireFlakeMod = True: flake modules and
--- package leaves are permitted; any other recognized kind is rejected (E006).
+{- | validateFlakeModReq with convRequireFlakeMod = True: flake modules and
+package leaves are permitted; any other recognized kind is rejected (E006).
+-}
 prop_layout_flake_mod_required :: Bool
 prop_layout_flake_mod_required =
     let strictConv = LC.straylight{LC.convRequireFlakeMod = True}
@@ -3505,14 +3508,15 @@ prop_config_glob_regex_chars =
             && isIgnored cfg "[a-z]"
             && isIgnored cfg "\\d"
 
--- | REVIEW-3 #5: a statically-resolvable cross-module import carries the
--- imported module's REAL type across the module graph. @main.nix@ =
--- @(import ./lib.nix).x@ where @lib.nix@ = @{ x = 1; }@ must infer to TInt — if
--- the import type did not flow, @import@ would fall back to its @TPath → TAny@
--- builtin and the select would not be TInt. This is the end-to-end check the
--- reviewer could not run (they had no GHC); it confirms the literal-path half of
--- cross-module inference is wired correctly (scanner → topo order → dual-keyed
--- env → select).
+{- | REVIEW-3 #5: a statically-resolvable cross-module import carries the
+imported module's REAL type across the module graph. @main.nix@ =
+@(import ./lib.nix).x@ where @lib.nix@ = @{ x = 1; }@ must infer to TInt — if
+the import type did not flow, @import@ would fall back to its @TPath → TAny@
+builtin and the select would not be TInt. This is the end-to-end check the
+reviewer could not run (they had no GHC); it confirms the literal-path half of
+cross-module inference is wired correctly (scanner → topo order → dual-keyed
+env → select).
+-}
 prop_import_cross_module_type_flows :: Property
 prop_import_cross_module_type_flows = QCM.monadicIO $ do
     let dir = "/tmp/nix-compile-test-import-z7x9w2v5"
@@ -4361,7 +4365,7 @@ prop_cli_lint_check_fails = QCM.monadicIO $ do
 -- are in scope. Run from main alongside the Psychotic suite.
 -- ============================================================================
 
-qcRun :: Testable p => p -> IO Bool
+qcRun :: (Testable p) => p -> IO Bool
 qcRun p = isSuccess <$> quickCheckWithResult stdArgs{maxSuccess = 100, chatty = False} p
 
 adversarialTests :: [(String, IO Bool)]
@@ -4388,11 +4392,11 @@ adversarialTests =
     , ("adv_solve_unsatisfiable", qcRun Adversarial.prop_solve_unsatisfiable)
     , ("adv_bounded_time", qcRun Adversarial.prop_bounded_time)
     , ("adv_no_memory_bomb", qcRun Adversarial.prop_no_memory_bomb)
-      -- DROPPED adv_literal_type_preserved: ill-posed/flaky. Asserts type-preserving
+    , -- DROPPED adv_literal_type_preserved: ill-posed/flaky. Asserts type-preserving
       -- roundtrip over ARBITRARY literals, but its renderLiteral prints LitString "2"
       -- as bare `2`, which correctly re-parses as LitInt 2. Canonical roundtrips
       -- (literal_int_roundtrip / literal_bool_roundtrip) already cover the valid case.
-    , ("adv_subst_chain_bash", qcRun Adversarial.prop_subst_chain_bash)
+      ("adv_subst_chain_bash", qcRun Adversarial.prop_subst_chain_bash)
     , ("adv_subst_chain_nix", qcRun Adversarial.prop_subst_chain_nix)
     , -- #23 FIXED: `eval` behind a command modifier (`command`/`builtin`/…) detected.
       ("adv_bash_lint_eval_prefixed", qcRun Adversarial.prop_bash_lint_eval_prefixed)
@@ -4474,7 +4478,8 @@ main = do
             , run "schema_preserves_defaults" prop_schema_preserves_defaults
             , run "schema_required_marked" prop_schema_required_marked
             , -- Parser
-              run "parser_no_crash" prop_parser_no_crash            , run "parser_empty" prop_parser_empty
+              run "parser_no_crash" prop_parser_no_crash
+            , run "parser_empty" prop_parser_empty
             , run "parser_comments" prop_parser_comments
             , -- Patterns
               run "pattern_default" $ forAll genVarName $ \var -> property $ prop_pattern_default var
@@ -4490,14 +4495,15 @@ main = do
             , run "builtins_unknown_flag" prop_builtins_unknown_flag
             , run "builtins_unknown_cmd" prop_builtins_unknown_cmd
             , -- Config tree
-              run "config_tree_complete" prop_config_tree_complete            , -- Scope graph
-              run "scope_parent_before_with" prop_scope_parent_before_with
+              run "config_tree_complete" prop_config_tree_complete -- Scope graph
+            , run "scope_parent_before_with" prop_scope_parent_before_with
             , -- Literals
               run "literal_int_roundtrip" prop_literal_int_roundtrip
             , run "literal_bool_roundtrip" prop_literal_bool_roundtrip
             , run "literal_type_consistent" prop_literal_type_consistent
             , -- End-to-end
-              run "e2e_no_crash" prop_e2e_no_crash            , run "e2e_concrete_types" prop_e2e_concrete_types
+              run "e2e_no_crash" prop_e2e_no_crash
+            , run "e2e_concrete_types" prop_e2e_concrete_types
             , -- Stress tests
               run "stress_large_script" prop_stress_large_script
             , run "stress_many_vars" prop_stress_many_vars
@@ -4512,7 +4518,8 @@ main = do
             , run "overlay_satisfaction" prop_overlay_satisfaction
             , run "overlay_propagation" prop_overlay_propagation
             , -- Nix type inference (FIX-11)
-              run "nix_infer_no_crash" prop_nix_infer_no_crash            , run "nix_int_literal" prop_nix_int_literal
+              run "nix_infer_no_crash" prop_nix_infer_no_crash
+            , run "nix_int_literal" prop_nix_int_literal
             , run "nix_string_literal" prop_nix_string_literal
             , run "nix_bool_literal" prop_nix_bool_literal
             , run "nix_null_literal" prop_nix_null_literal
@@ -4576,7 +4583,8 @@ main = do
             , run "nix_lint_raw_wsa" prop_nix_lint_raw_wsa
             , run "nix_lint_write_shell_script" prop_nix_lint_write_shell_script
             , run "nix_lint_long_string" prop_nix_lint_long_string
-            , run "nix_lint_short_string_ok" prop_nix_lint_short_string_ok            , run "nix_lint_stdenv_path" prop_nix_lint_stdenv_path
+            , run "nix_lint_short_string_ok" prop_nix_lint_short_string_ok
+            , run "nix_lint_stdenv_path" prop_nix_lint_stdenv_path
             , -- Bash lint
               run "bash_lint_heredoc" prop_bash_lint_heredoc
             , run "bash_lint_backtick" prop_bash_lint_backtick
@@ -4836,8 +4844,8 @@ main = do
             , run "cli_report_format_dynamic" prop_report_format_dynamic
             , run "cli_report_indent_block" prop_report_indent_block
             , run "cli_report_package_empty" prop_report_package_empty
-            , run "cli_report_package_nonempty" prop_report_package_nonempty            , -- CLI Check
-              run "cli_check_unsupported_rec" prop_check_unsupported_rec
+            , run "cli_report_package_nonempty" prop_report_package_nonempty -- CLI Check
+            , run "cli_check_unsupported_rec" prop_check_unsupported_rec
             , run "cli_check_unsupported_dynamic" prop_check_unsupported_dynamic
             , run "cli_check_unsupported_clean" prop_check_unsupported_clean
             , run "cli_check_format_type_error" prop_check_format_type_error
@@ -4854,48 +4862,52 @@ main = do
     -- Adversarial regression suite for review-2 findings (C1-C6, S1-S6, B*, P*)
     putStrLn ""
     putStrLn "  -- psychotic adversarial regression suite --"
-    psychoticResults <- sequence
-        [ do
-            putStr $ "  " ++ name ++ " ... "
-            ok <- action
-            putStrLn (if ok then "OK" else "FAILED")
-            pure ok
-        | (name, action) <- Psychotic.psychoticTests
-        ]
+    psychoticResults <-
+        sequence
+            [ do
+                putStr $ "  " ++ name ++ " ... "
+                ok <- action
+                putStrLn (if ok then "OK" else "FAILED")
+                pure ok
+            | (name, action) <- Psychotic.psychoticTests
+            ]
 
     -- LSP project cache (non-blocking incremental cross-module inference)
     putStrLn ""
     putStrLn "  -- project cache --"
-    pcResults <- sequence
-        [ do
-            putStr $ "  " ++ name ++ " ... "
-            ok <- action
-            putStrLn (if ok then "OK" else "FAILED")
-            pure ok
-        | (name, action) <- ProjectCacheSpec.projectCacheTests
-        ]
+    pcResults <-
+        sequence
+            [ do
+                putStr $ "  " ++ name ++ " ... "
+                ok <- action
+                putStrLn (if ok then "OK" else "FAILED")
+                pure ok
+            | (name, action) <- ProjectCacheSpec.projectCacheTests
+            ]
 
     putStrLn ""
     putStrLn "  -- adversarial (bash/security) --"
-    advResults <- sequence
-        [ do
-            putStr $ "  " ++ name ++ " ... "
-            ok <- action
-            putStrLn (if ok then "OK" else "FAILED")
-            pure ok
-        | (name, action) <- adversarialTests
-        ]
+    advResults <-
+        sequence
+            [ do
+                putStr $ "  " ++ name ++ " ... "
+                ok <- action
+                putStrLn (if ok then "OK" else "FAILED")
+                pure ok
+            | (name, action) <- adversarialTests
+            ]
 
     putStrLn ""
     putStrLn "  -- nix adversarial (type inference) --"
-    nixAdvResults <- sequence
-        [ do
-            putStr $ "  " ++ name ++ " ... "
-            ok <- action
-            putStrLn (if ok then "OK" else "FAILED")
-            pure ok
-        | (name, action) <- nixAdversarialTests
-        ]
+    nixAdvResults <-
+        sequence
+            [ do
+                putStr $ "  " ++ name ++ " ... "
+                ok <- action
+                putStrLn (if ok then "OK" else "FAILED")
+                pure ok
+            | (name, action) <- nixAdversarialTests
+            ]
 
     putStrLn ""
     let allResults = results ++ psychoticResults ++ pcResults ++ advResults ++ nixAdvResults

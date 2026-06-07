@@ -189,8 +189,9 @@ anonRowVar = TypeVar (-1)
 isAnonRowVar :: TypeVar -> Bool
 isAnonRowVar v = v == anonRowVar
 
--- | build an open record with the anonymous tail (pure-context helper for
--- flake/module types; the inference engine uses fresh row vars instead)
+{- | build an open record with the anonymous tail (pure-context helper for
+flake/module types; the inference engine uses fresh row vars instead)
+-}
 tRecOpenAnon :: Map Text (NixType, Bool) -> NixType
 tRecOpenAnon m = TRec m (ROpen anonRowVar)
 

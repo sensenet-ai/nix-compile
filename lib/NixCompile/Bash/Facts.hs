@@ -71,6 +71,7 @@ factFromInnerToken shellCheckId innerToken = do
 -- ── assignment facts ─────────────────────────────────────────────
 
 -- | facts from a single variable assignment (config.* or regular env var)
+
 {- | Reconstruct the assignment LHS. ShellCheck keeps an array subscript in a
 separate indices field, so @config[server]=…@ arrives as name=@config@,
 indices=@[server]@. We rebuild @config[server]@ so it routes to the config-array
@@ -79,7 +80,8 @@ name, preserving prior behavior). (REVIEW-3 #24)
 -}
 assignmentLhs :: String -> [SA.Token] -> Text
 assignmentLhs name indices
-    | name == "config", not (null indices) =
+    | name == "config"
+    , not (null indices) =
         T.pack name <> "[" <> T.intercalate "." (map tokenToText indices) <> "]"
     | otherwise = T.pack name
 

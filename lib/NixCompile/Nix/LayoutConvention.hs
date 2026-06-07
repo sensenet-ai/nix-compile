@@ -345,10 +345,11 @@ nixosConfig =
         , convRequireFlakeMod = False
         }
 
--- | The all-flake-module convention (modeled on github:nixified-ai/flake):
--- every .nix under flake-modules/ is a flake-parts module wiring its children
--- via `imports`, with leaf package.nix derivations. Requires every recognized
--- file to be a flake module or a package (convRequireFlakeMod).
+{- | The all-flake-module convention (modeled on github:nixified-ai/flake):
+every .nix under flake-modules/ is a flake-parts module wiring its children
+via `imports`, with leaf package.nix derivations. Requires every recognized
+file to be a flake module or a package (convRequireFlakeMod).
+-}
 allFlakeModule :: Convention
 allFlakeModule =
     Convention

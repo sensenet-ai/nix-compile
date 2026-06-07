@@ -81,7 +81,10 @@ instance Exception SafetyError
 renderSafetyError :: SafetyError -> Text
 renderSafetyError = \case
     SafetyDepthExceeded (DepthError d ctx) ->
-        "depth limit exceeded (" <> T.pack (show d) <> " > " <> T.pack (show maxRecursionDepth)
+        "depth limit exceeded ("
+            <> T.pack (show d)
+            <> " > "
+            <> T.pack (show maxRecursionDepth)
             <> ") at "
             <> ctx
     SafetyParseFailed t -> "parse error: " <> t
@@ -220,4 +223,3 @@ safeAnalyze :: NExprLoc -> Either SafetyError NExprLoc
 safeAnalyze expr = case analyzeDepth expr of
     Left de -> Left (SafetyDepthExceeded de)
     Right () -> Right expr
-

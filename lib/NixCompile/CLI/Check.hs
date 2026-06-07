@@ -59,7 +59,9 @@ checkFile config file = do
             Left de -> do
                 $(logTM) ErrorS $
                     logStr $
-                        crossMarker <> " " <> T.pack file
+                        crossMarker
+                            <> " "
+                            <> T.pack file
                             <> " (depth limit exceeded: "
                             <> Safety.renderSafetyError (Safety.SafetyDepthExceeded de)
                             <> ")"

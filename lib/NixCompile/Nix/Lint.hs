@@ -33,9 +33,10 @@ import Nix.Utils (Path (..))
 import NixCompile.Diagnostic (Diagnostic (..))
 import NixCompile.Types (Loc (..), Span (..))
 
--- | A lint violation as a unified 'Diagnostic': the rule code, a one-line
--- summary, the span, and the suggestion line as @= help:@. The verbose
--- explanation from 'formatNixNote' is condensed to its final (suggestion) line.
+{- | A lint violation as a unified 'Diagnostic': the rule code, a one-line
+summary, the span, and the suggestion line as @= help:@. The verbose
+explanation from 'formatNixNote' is condensed to its final (suggestion) line.
+-}
 nixViolationDiagnostic :: NixViolation -> Diagnostic
 nixViolationDiagnostic v =
     Diagnostic

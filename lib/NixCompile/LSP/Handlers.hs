@@ -42,6 +42,7 @@ import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..), Params (..))
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Bash.Parse (parseBash)
+import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Lint.Forbidden qualified as Forbidden
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Nix.Inference qualified as Infer
@@ -51,7 +52,6 @@ import NixCompile.Nix.LintDerivation qualified as Deriv
 import NixCompile.Nix.LintPatterns qualified as Patterns
 import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Nix.ModuleSystem qualified as MS
-import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Nix.Parse qualified as NixParse
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
@@ -67,12 +67,15 @@ moduleGraphCache :: MVar (Map.Map FilePath Mod.ModuleGraph)
 moduleGraphCache = unsafePerformIO $ newMVar Map.empty
 
 {-# NOINLINE inflightCache #-}
--- | Tracks an in-flight graph build per project root so concurrent requests
--- don't both rebuild the same graph (Race-A from the audit).
+
+{- | Tracks an in-flight graph build per project root so concurrent requests
+don't both rebuild the same graph (Race-A from the audit).
+-}
 inflightCache :: MVar (Map.Map FilePath (Async (Maybe Mod.ModuleGraph)))
 inflightCache = unsafePerformIO $ newMVar Map.empty
 
 {-# NOINLINE projectCacheRef #-}
+
 {- | Per-file, content-addressed project cache. Built lazily and incrementally
 in the background; lookups never block. Replaces the all-or-nothing
 moduleGraphCache for hover/inlay/completion paths.
@@ -80,8 +83,9 @@ moduleGraphCache for hover/inlay/completion paths.
 projectCacheRef :: MVar (Maybe PC.ProjectCache)
 projectCacheRef = unsafePerformIO (newMVar Nothing)
 
--- | Get the project cache, creating it (and starting workers) the first time.
--- Subsequent calls return the same cache.
+{- | Get the project cache, creating it (and starting workers) the first time.
+Subsequent calls return the same cache.
+-}
 getProjectCache :: IO PC.ProjectCache
 getProjectCache = modifyMVar projectCacheRef $ \case
     Just pc -> pure (Just pc, pc)
@@ -971,8 +975,9 @@ exprName (Fix (Compose (AnnUnit _ e))) = case e of
 
 -- ═══════════════════════ cross-module helpers ═══════════════════════
 
--- | Maximum number of directory levels to walk up looking for a project root.
--- n.b. raised from 10 to 64 to handle deeply nested workspaces (B6 from review-2).
+{- | Maximum number of directory levels to walk up looking for a project root.
+n.b. raised from 10 to 64 to handle deeply nested workspaces (B6 from review-2).
+-}
 projectRootWalkupLimit :: Int
 projectRootWalkupLimit = 64
 

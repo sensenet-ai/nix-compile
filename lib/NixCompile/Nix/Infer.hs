@@ -40,9 +40,10 @@ import NixCompile.Types (Loc (..), Span (..))
 annotateFile :: FilePath -> IO (Either Text Text)
 annotateFile = annotateFileWithEnv builtinEnv
 
--- | Annotate a file using a pre-built TypeEnv (e.g. from cross-module inference).
--- n.b. D2 from review-2: the @infer@ command must not throw away cross-module
--- knowledge by inferring with the empty env.
+{- | Annotate a file using a pre-built TypeEnv (e.g. from cross-module inference).
+n.b. D2 from review-2: the @infer@ command must not throw away cross-module
+knowledge by inferring with the empty env.
+-}
 annotateFileWithEnv :: TypeEnv -> FilePath -> IO (Either Text Text)
 annotateFileWithEnv env path = do
     readResult <- Safety.safeReadFile path

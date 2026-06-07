@@ -204,7 +204,6 @@ reportCISummary counts = do
             $(logTM) ErrorS $ logStr summary
             liftIO exitFailure
 
-
 collectFiles :: Config.Config -> FilePath -> IO [FilePath]
 collectFiles config path = do
     isDirectory <- doesDirectoryExist path

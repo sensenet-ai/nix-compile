@@ -33,10 +33,11 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 import Nixfmt qualified
 import Nixfmt.Predoc (layout)
 
--- | Format source via vendored nixfmt with the RFC-166 CLI defaults (100-col
--- width, 2-space indent, non-strict). On the (unreachable) event that nixfmt's
--- parser rejects source the caller already parsed with hnix, fall back to the
--- input verbatim.
+{- | Format source via vendored nixfmt with the RFC-166 CLI defaults (100-col
+width, 2-space indent, non-strict). On the (unreachable) event that nixfmt's
+parser rejects source the caller already parsed with hnix, fall back to the
+input verbatim.
+-}
 nixfmtFormat :: FilePath -> Text -> Text
 nixfmtFormat path srcTxt =
     case Nixfmt.format (layout 100 2 False) path srcTxt of

@@ -28,8 +28,8 @@ import System.Exit (exitFailure, exitSuccess)
 import System.IO (hIsTerminalDevice, stderr)
 import Text.Read (readMaybe)
 
-import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Config qualified as Config
+import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Lint.Forbidden (Violation (..))
 import NixCompile.Log
 import NixCompile.Nix.Lint qualified as Lint
@@ -38,16 +38,18 @@ import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.LintPatterns qualified as LintPatterns
 import NixCompile.Types (Loc (..), Span (..))
 
--- | Render a diagnostic in the unified clippy layout and log it at its own
--- severity (to stderr, per the stdout/stderr contract). Colour is enabled when
--- stderr is a terminal; a trailing newline separates consecutive diagnostics.
+{- | Render a diagnostic in the unified clippy layout and log it at its own
+severity (to stderr, per the stdout/stderr contract). Colour is enabled when
+stderr is a terminal; a trailing newline separates consecutive diagnostics.
+-}
 emitDiagnostic :: Diag.Diagnostic -> AppM ()
 emitDiagnostic d = do
     color <- liftIO (hIsTerminalDevice stderr)
     $(logTM) (Diag.diagSeverity d) $ logStr (Diag.renderDiagnostic color d <> "\n")
 
--- | Fill in a diagnostic's source snippet (line text + caret range) from the
--- file's text, when it has a span but no snippet yet.
+{- | Fill in a diagnostic's source snippet (line text + caret range) from the
+file's text, when it has a span but no snippet yet.
+-}
 attachSnippet :: Text -> Diag.Diagnostic -> Diag.Diagnostic
 attachSnippet src d = case Diag.diagSpan d of
     Just sp
@@ -65,8 +67,9 @@ attachSnippet src d = case Diag.diagSpan d of
                 }
     _ -> d
 
--- | Build a TYPE diagnostic from an engine error string, parsing a leading
--- @"line:col: "@ prefix into a span when present.
+{- | Build a TYPE diagnostic from an engine error string, parsing a leading
+@"line:col: "@ prefix into a span when present.
+-}
 typeDiagnostic :: Severity -> FilePath -> Text -> Diag.Diagnostic
 typeDiagnostic sev file raw =
     Diag.Diagnostic
@@ -185,4 +188,3 @@ printCheckResult :: FilePath -> Int -> AppM ()
 printCheckResult _file totalErrors
     | totalErrors > 0 = liftIO exitFailure
     | otherwise = liftIO exitSuccess
-

@@ -92,9 +92,11 @@ n.b. this is the safe variant — exception-handling lives in Safety.
 -}
 parseNixExpr :: Text -> Either Text NExprLoc
 parseNixExpr src =
-    let parseResult = (case Safety.safeAnalyze =<< parseNoIO src of
-            Left e -> Left (Safety.renderSafetyError e)
-            Right expr -> Right expr)
+    let parseResult =
+            ( case Safety.safeAnalyze =<< parseNoIO src of
+                Left e -> Left (Safety.renderSafetyError e)
+                Right expr -> Right expr
+            )
      in parseResult
   where
     parseNoIO :: Text -> Either Safety.SafetyError NExprLoc
