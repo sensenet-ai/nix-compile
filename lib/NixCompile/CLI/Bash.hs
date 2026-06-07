@@ -88,9 +88,11 @@ parseNixFiles :: FilePath -> AppM [Nix.BashScript]
 parseNixFiles file = do
     result <- liftIO $ Nix.extractBashScripts file
     case result of
-        Left err -> do
-            $(logTM) ErrorS $ logStr $ "Parse error: " <> err
-            liftIO exitFailure
+        -- The caller (checkNixFile / the CI type-check phase) has already parsed
+        -- and reported this file; a parse failure here would only re-report it
+        -- (with a doubled "Parse error: parse error:" prefix) and abort. Just
+        -- yield no embedded scripts and let the earlier failure stand.
+        Left _ -> pure []
         Right scripts -> do
             $(logTM) InfoS $ logStr $ T.pack $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
             pure scripts

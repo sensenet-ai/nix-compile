@@ -280,7 +280,7 @@ prettyTypeWith mapping = go
         TFloat -> "Float"
         TBool -> "Bool"
         TString -> "String"
-        TStrLit s -> "\"" <> s <> "\""
+        TStrLit s -> "\"" <> truncLit s <> "\""
         TPath -> "Path"
         TNull -> "Null"
         TList t -> "[" <> go t <> "]"
@@ -293,6 +293,13 @@ prettyTypeWith mapping = go
 
     prettyArg t@(TFun _ _) = "(" <> go t <> ")"
     prettyArg t = go t
+
+    -- A 'TStrLit' carries the literal's full text; cap it in type display so a
+    -- giant string literal doesn't become a giant type (e.g. `infer` on a file
+    -- with a 200 KB string was emitting a 200 KB `# :: "…"` annotation).
+    truncLit s
+        | T.length s <= 40 = s
+        | otherwise = T.take 39 s <> "…"
 
     prettyAttrs m
         | Map.null m = "{}"

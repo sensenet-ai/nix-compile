@@ -63,9 +63,9 @@ withSafeNix :: FilePath -> (NExprLoc -> AppM ()) -> AppM ()
 withSafeNix file act = do
     parseResult <- liftIO $ Nix.parseNixFile file
     case parseResult of
-        Left err -> failParse err
+        Left err -> failSafety err
         Right expr -> case Safety.analyzeDepth expr of
-            Left de -> failParse (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+            Left de -> failSafety (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
             Right () -> act expr
 
 cmdFmt :: FilePath -> AppM ()
@@ -79,14 +79,14 @@ cmdInfer :: FilePath -> AppM ()
 cmdInfer file = withSafeNix file $ \_expr -> do
     result <- liftIO $ Annotate.annotateFile file
     case result of
-        Left err -> do $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure
+        Left err -> do $(logTM) ErrorS $ logStr err; liftIO exitFailure
         Right formatted -> liftIO $ TIO.putStr formatted
 
 cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do
     result <- liftIO $ parseScriptFile file
     case result of
-        Left err -> do $(logTM) ErrorS $ logStr $ "Error: " <> err; liftIO exitFailure
+        Left err -> do $(logTM) ErrorS $ logStr err; liftIO exitFailure
         Right script -> do
             liftIO $ TIO.putStr $ emitConfigFunction (scriptSchema script)
 
@@ -108,8 +108,13 @@ cmdScopeDhall file = withSafeNix file $ \expr -> do
     let scopeGraph = Scope.fromNixFile file expr
     liftIO $ TIO.putStrLn $ Scope.toDhall scopeGraph
 
-failParse :: Text -> AppM a
-failParse err = do $(logTM) ErrorS $ logStr $ "Parse error: " <> err; liftIO exitFailure
+-- | Report a failure from the safe-parse/depth gate and exit. The message is
+-- already categorized by 'Safety.renderSafetyError' (e.g. "parse error: …",
+-- "I/O error: …", "depth limit exceeded …"), so we emit it as-is — prefixing it
+-- with "Parse error:" mislabeled I/O and depth failures and double-printed
+-- "parse error:" for real parse failures.
+failSafety :: Text -> AppM a
+failSafety err = do $(logTM) ErrorS $ logStr err; liftIO exitFailure
 
 printScopeGraph :: Scope.ScopeGraph -> IO ()
 printScopeGraph scopeGraph = do

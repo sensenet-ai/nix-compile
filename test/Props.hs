@@ -69,6 +69,7 @@ import NixCompile.Nix.ModuleKind
 import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
+import NixCompile.Safety qualified as Safety
 import Adversarial qualified
 import NixAdversarial qualified
 import NixCompile.Schema.Build (buildSchema)
@@ -1416,6 +1417,26 @@ prop_reformatter_indented_string =
 -- merely "doesn't crash". A curated vector set spanning atoms, string literals,
 -- lists, arithmetic, if/let, application, selection (incl. row-polymorphic select
 -- through a function param), list concat, and a row-polymorphic builtin.
+-- JANK (found dogfooding the CLI): `prettyType` dumped a `TStrLit`'s full text, so
+-- `infer` on a file with a huge string literal produced a huge `# :: "…"` type.
+-- Long literals must be truncated in type display; short ones preserved exactly.
+prop_pretty_strlit_truncated :: Bool
+prop_pretty_strlit_truncated =
+    NT.prettyType (NT.TStrLit "hi") == "\"hi\""
+        && let big = NT.prettyType (NT.TStrLit (T.replicate 5000 "a"))
+            in T.length big <= 45 && "…\"" `T.isSuffixOf` big
+
+-- JANK (found dogfooding the CLI): the dispatch used to prefix every safe-parse
+-- failure with "Parse error:", mislabeling I/O and depth errors and double-printing
+-- "parse error:". The fix relies on 'renderSafetyError' being self-categorizing —
+-- lock that each variant renders with its correct, distinct category.
+prop_safety_error_categories :: Bool
+prop_safety_error_categories =
+    Safety.renderSafetyError (Safety.SafetyIOError "boom") == "I/O error: boom"
+        && Safety.renderSafetyError (Safety.SafetyParseFailed "boom") == "parse error: boom"
+        && Safety.renderSafetyError (Safety.SafetyInternalException "boom") == "internal exception: boom"
+        && Safety.renderSafetyError Safety.SafetyStackOverflow /= ""
+
 prop_welltyped_vectors :: Property
 prop_welltyped_vectors = conjoin (map check vectors)
   where
@@ -4580,6 +4601,8 @@ main = do
             , run "reformatter_roundtrip_corpus" prop_reformatter_roundtrip_corpus
             , run "reformatter_indented_string" prop_reformatter_indented_string
             , run "welltyped_vectors" prop_welltyped_vectors
+            , run "pretty_strlit_truncated" prop_pretty_strlit_truncated
+            , run "safety_error_categories" prop_safety_error_categories
             , run "review_select_on_var_constrains" (property prop_review_select_on_var_constrains)
             , run "review_select_accumulates" (property prop_review_select_accumulates)
             , run "review_select_present_ok" (property prop_review_select_present_ok)

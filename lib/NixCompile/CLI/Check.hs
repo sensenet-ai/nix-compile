@@ -46,7 +46,7 @@ checkFile config file = do
                         [ ""
                         , "━━━ " <> crossMarker <> " " <> T.pack file <> " ━━━"
                         , ""
-                        , "  PARSE ERROR: " <> parseError
+                        , "  " <> parseError
                         , ""
                         ]
             return TCFail
