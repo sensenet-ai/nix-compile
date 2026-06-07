@@ -100,14 +100,12 @@ analyzeNixScripts :: Config.Config -> FilePath -> [Nix.BashScript] -> AppM Int
 analyzeNixScripts config file scripts =
     sum <$> mapM (checkScript config file) scripts
 
+-- A single-file check is silent on success and emits only the diagnostics (plus
+-- exit code) on failure — the directory check prints the "checked N files" summary.
 reportNixResults :: FilePath -> Int -> AppM ()
-reportNixResults file totalErrors
-    | totalErrors > 0 = do
-        $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " total error(s)"
-        liftIO exitFailure
-    | otherwise = do
-        $(logTM) DebugS $ logStr $ T.pack $ file ++ ": OK"
-        liftIO exitSuccess
+reportNixResults _file totalErrors
+    | totalErrors > 0 = liftIO exitFailure
+    | otherwise = liftIO exitSuccess
 
 checkScript :: Config.Config -> FilePath -> Nix.BashScript -> AppM Int
 checkScript configuration _file bs = do

@@ -181,6 +181,7 @@ reportCISummary counts = do
                 + ciBashViolations counts
                 + ciGraphFailures counts
     let n = T.pack . show
+        plural one count = n count <> " " <> one <> (if count == 1 then "" else "s")
         violations =
             ciLintViolations counts
                 + ciPackageViolations counts
@@ -188,13 +189,13 @@ reportCISummary counts = do
                 + ciGraphFailures counts
         summary =
             "checked "
-                <> n (ciFilesScanned counts)
-                <> " files: "
+                <> plural "file" (ciFilesScanned counts)
+                <> ": "
                 <> n (ciTypePass counts)
                 <> " ok"
                 <> (if ciTypeSkip counts > 0 then ", " <> n (ciTypeSkip counts) <> " skipped" else "")
                 <> (if ciTypeFail counts > 0 then ", " <> n (ciTypeFail counts) <> " failed" else "")
-                <> (if violations > 0 then ", " <> n violations <> " violations" else "")
+                <> (if violations > 0 then ", " <> plural "violation" violations else "")
     if totalFailures == 0
         then do
             $(logTM) InfoS $ logStr summary
