@@ -49,6 +49,33 @@ hygiene/process.
 *[point]* = standalone fix, correct under either fork. *[RC1]* = only truly fixed
 by real row variables (Fork B); under Fork A, document the limitation instead.
 
+### HIGH — dogfooding (`nix-compile check .` on this repo, 2026-06-06)
+
+Running the tool on its own repo surfaced three issues:
+
+- [x] **Duplicate violation reporting — FIXED.** Root cause was NOT a reporter
+      dedup gap but an **exponential re-walk**: `LintCombined.combinedLintSafe`
+      walked `NSet`/`NLet` binding values twice (via `childExprs` AND a redundant
+      `bindingsOf`+`walkBinding` pass), so a node N attrset-levels deep was walked
+      2^N times → the HLS `runCommand` (~4 levels) printed 16×. Removed the
+      redundant pass (`childExprs` already descends bindings). A second, smaller
+      dup (graph phase re-dumped per-violation detail the type-check phase already
+      printed) fixed by making `runGraphPhase` emit only the aggregate count line.
+      Verified: 16× → 0 (flake clean after the runCommandLocal fix below).
+- [x] **`check` over-scopes into fixtures — FIXED.** Added `tools/fmtparity/**` to
+      `extra-ignores` in `.nix-compile.dhall` (same mechanism that already excludes
+      `test/fixtures/**`). `check .` now scans 2 files instead of 16.
+- [x] **Our own `flake.nix` passes our lint — FIXED.** `flake.nix:81` raw
+      `runCommand` → `runCommandLocal` (drop-in, correct for a trivial local
+      symlink, not on the banned list). `nix-compile check .` reports 0 lint
+      violations on the flake.
+
+(Residual, separate from the above: the engine still emits type warnings on
+`flake.nix` itself — infinite-type / `expected {} got Derivation` on the flake's
+recursive output structure. That's the HM engine applied to whole-flake code,
+which is the graph phase's / nix's job; not a lint-reporting bug. Left for a later
+"don't type-check flake.nix top-level" decision.)
+
 - [~] **[RC1] Real row variables** — landed on `main` (see `design/rows.md`):
       `TRec (Map Text (NixType,Bool)) RowTail`, `RowTail = RClosed | ROpen TypeVar`;
       `unifyRec` with open∪open **union accumulation**; selection emits row

@@ -89,14 +89,12 @@ combinedLintSafe filePath = walkExpr (0 :: Int)
         | otherwise =
             let d = depth + 1
                 local = LintOk (localViolations filePath srcSpan expression)
+                -- 'childExprs' already descends into binding RHSs (NSet/NLet),
+                -- so we must NOT also walk 'bindingsOf' — doing both traversed
+                -- every binding value twice, i.e. 2^depth re-walks of nested
+                -- attrsets (duplicate violations + exponential blowup).
                 rest = combineResults (map (walkExpr d) (childExprs expression))
-                bindings = combineResults (map (walkBinding d) (bindingsOf expression))
-             in mergeResults local (mergeResults bindings rest)
-
-    walkBinding depth = \case
-        NamedVar _ expr _ -> walkExpr depth expr
-        Inherit (Just scope) _ _ -> walkExpr depth scope
-        Inherit Nothing _ _ -> LintOk emptyBundle
+             in mergeResults local rest
 
     mergeResults (LintDepthExceeded e) _ = LintDepthExceeded e
     mergeResults _ (LintDepthExceeded e) = LintDepthExceeded e
@@ -253,12 +251,6 @@ bindingExprs :: Binding NExprLoc -> [NExprLoc]
 bindingExprs (NamedVar _ e _) = [e]
 bindingExprs (Inherit (Just scope) _ _) = [scope]
 bindingExprs (Inherit Nothing _ _) = []
-
-bindingsOf :: NExprF NExprLoc -> [Binding NExprLoc]
-bindingsOf = \case
-    NSet _ bs -> bs
-    NLet bs _ -> bs
-    _ -> []
 
 stringExprs :: NString NExprLoc -> [NExprLoc]
 stringExprs (DoubleQuoted parts) = [e | Antiquoted e <- parts]

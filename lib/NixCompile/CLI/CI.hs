@@ -34,7 +34,6 @@ import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
 import NixCompile.Log
-import NixCompile.Nix.Lint qualified as Lint
 import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.Module qualified as Mod
 
@@ -135,6 +134,11 @@ runGraphPhase config flakePath = do
                 layoutCount = sum (map (length . Mod.layViolations) (Mod.mgLayoutFailures graph))
              in if Mod.hasViolations graph
                     then do
+                        -- n.b. the per-file type-check phase already prints the
+                        -- detailed lint violations for every on-disk file, so the
+                        -- graph phase only emits the aggregate count line here —
+                        -- re-dumping each violation double-printed everything the
+                        -- flake graph shares with the type-check walk.
                         $(logTM) ErrorS $
                             logStr $
                                 "\nGraph violations: "
@@ -145,17 +149,12 @@ runGraphPhase config flakePath = do
                                     <> " across "
                                     <> T.pack (show (length (Mod.mgLintFailures graph)))
                                     <> " files"
-                        mapM_ reportGraphFailure (Mod.mgLintFailures graph)
                         pure $
                             emptyCICounts
                                 { ciLintViolations = lintCount + layoutCount
                                 , ciGraphFailures = length (Mod.mgFailures graph)
                                 }
                     else pure emptyCICounts
-  where
-    reportGraphFailure lf = do
-        $(logTM) ErrorS $ logStr $ "  " <> T.pack (Mod.lfPath lf) <> ": " <> T.pack (show (length (Mod.lfViolations lf))) <> " violations"
-        $(logTM) ErrorS $ logStr $ Lint.formatNixViolations (Mod.lfViolations lf)
 
 runNixPhase :: Config.Config -> FilePath -> AppM CICounts
 runNixPhase config flakePath = do

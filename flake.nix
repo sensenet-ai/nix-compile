@@ -78,7 +78,9 @@
                 # Keep both, and add a plain symlink to the wrapper for clients/users
                 # that invoke the unversioned name.
                 pkgs.haskell-language-server
-                (pkgs.runCommand "haskell-language-server-plain" { } ''
+                # runCommandLocal (not raw runCommand): trivial local symlink, and
+                # it keeps our own flake clean under `nix-compile check` (ALEPH-N007).
+                (pkgs.runCommandLocal "haskell-language-server-plain" { } ''
                   mkdir -p "$out/bin"
                   ln -s ${pkgs.haskell-language-server}/bin/haskell-language-server-wrapper \
                     "$out/bin/haskell-language-server"
