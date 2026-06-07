@@ -1,6 +1,7 @@
 # Layout enforcement & the `all-flake-module` convention
 
-Status: **accepted, in progress**.
+Status: **implemented**. `all-flake-module` plus the four prior conventions each
+have an 8-pass / 8-fail fixture tree, all green under `nix-compile-layout`.
 
 ## Goal
 
@@ -126,8 +127,24 @@ expression (`1 + 1`) under `flake-modules/`; an overlay placed loose under
 `flake-modules/`; a flake-logic file under `modules/` (wrong tree); a
 `default.nix` that is a NixOS module rather than a flake module.
 
-The same harness extends to `flake-parts`, `straylight`, `nixpkgs-by-name`, and
-`nixos-config` (their existing `test/fixtures/flake-parts/` tree folds in).
+The same harness covers the other shipped conventions, each with its own 8 + 8
+tree under `test/fixtures/layout/<convention>/`:
+
+- **`straylight`** — kebab-case everywhere; `_class` required under
+  `nix/modules/{flake,nixos,home,darwin}/`. Fail cases exercise E001 (wrong
+  location), E002 (forbidden location), E003 (naming), E009 (missing `_class`),
+  E010 (wrong `_class`).
+- **`flake-parts`** — flake modules under `modules/` or `flake-modules/`,
+  packages under `packages/`, overlays under `overlays/`; `_class` required under
+  `modules/nixos/`. Fail cases cover wrong location, missing/wrong `_class`, and
+  banned `_index.nix` / `_main.nix` (E007/E008).
+- **`nixpkgs-by-name`** — the single Package rule (`pkgs/by-name/…`); fail cases
+  are mislocated packages plus banned files.
+- **`nixos-config`** — NixOS modules under `modules/` or `hosts/`, home modules
+  under `users/` or `home/`; `_class` required under `modules/{nixos,home}/`.
+
+All five run from one table in `test/Layout.hs`: 40 pass fixtures yield no errors,
+40 fail fixtures each yield ≥1.
 
 ## Plan
 

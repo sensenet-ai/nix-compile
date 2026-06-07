@@ -14,11 +14,29 @@
 module Main (main) where
 
 import Control.Monad (forM)
-import NixCompile.Nix.LayoutConvention (Convention, allFlakeModule, validateFileFromExpr)
+import NixCompile.Nix.LayoutConvention
+    ( Convention
+    , allFlakeModule
+    , flakeParts
+    , nixosConfig
+    , nixpkgsByName
+    , straylight
+    , validateFileFromExpr
+    )
 import NixCompile.Nix.Parse (parseNixFile)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (takeExtension, (</>))
+
+-- | Conventions under test, by their on-disk fixture directory name.
+conventions :: [(String, Convention)]
+conventions =
+    [ ("all-flake-module", allFlakeModule)
+    , ("straylight", straylight)
+    , ("flake-parts", flakeParts)
+    , ("nixpkgs-by-name", nixpkgsByName)
+    , ("nixos-config", nixosConfig)
+    ]
 
 -- | All .nix files under a directory, recursively.
 nixFiles :: FilePath -> IO [FilePath]
@@ -31,9 +49,7 @@ nixFiles dir = do
             then nixFiles p
             else pure [p | takeExtension p == ".nix"]
 
-{- | Check one pass/ or fail/ tree. Returns the number of files that behaved as
-expected and the number that did not.
--}
+-- | Check one pass/ or fail/ tree. Returns (behaved-correctly, misbehaved).
 checkTree :: Convention -> FilePath -> Bool -> IO (Int, Int)
 checkTree conv root expectClean = do
     files <- nixFiles root
@@ -60,13 +76,15 @@ checkTree conv root expectClean = do
                         pure False
     pure (length (filter id oks), length (filter not oks))
 
-main :: IO ()
-main = do
-    putStrLn "Running layout-convention fixture tests..."
-    (pPass, pBad) <- checkTree allFlakeModule "test/fixtures/layout/all-flake-module/pass" True
-    (fPass, fBad) <- checkTree allFlakeModule "test/fixtures/layout/all-flake-module/fail" False
+-- | Run both trees for one convention; returns its total misbehavior count.
+checkConvention :: (String, Convention) -> IO Int
+checkConvention (name, conv) = do
+    let base = "test/fixtures/layout" </> name
+    (pPass, pBad) <- checkTree conv (base </> "pass") True
+    (fPass, fBad) <- checkTree conv (base </> "fail") False
     putStrLn $
-        "all-flake-module: pass-tree "
+        name
+            <> ": pass-tree "
             <> show pPass
             <> "/"
             <> show (pPass + pBad)
@@ -75,6 +93,12 @@ main = do
             <> "/"
             <> show (fPass + fBad)
             <> " flagged"
-    if pBad == 0 && fBad == 0
+    pure (pBad + fBad)
+
+main :: IO ()
+main = do
+    putStrLn "Running layout-convention fixture tests..."
+    bad <- sum <$> mapM checkConvention conventions
+    if bad == 0
         then do putStrLn "All layout fixture tests passed."; exitSuccess
         else do putStrLn "Some layout fixture tests failed."; exitFailure
