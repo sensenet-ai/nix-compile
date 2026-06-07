@@ -23,7 +23,6 @@ where
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.IO qualified as TIO
 import System.Exit (exitFailure, exitSuccess)
 
 import NixCompile.CLI.Types
@@ -106,21 +105,25 @@ formatPackageViolations violations =
         ]
         <> T.unlines (map (\violation -> "  " <> T.pack (LintPackages.pvPath violation)) violations)
 
+-- n.b. diagnostics go to stderr via katip (the stdout/stderr contract); only a
+-- command's product (formatted source, scope JSON, …) is allowed on stdout.
 reportBareCommands :: FilePath -> [(Text, Span)] -> AppM ()
 reportBareCommands file bareFacts
     | null bareFacts = pure ()
-    | otherwise = do
-        liftIO $ TIO.putStrLn ""
-        liftIO $ TIO.putStrLn "Bare commands (external commands must use store paths; shell builtins allowed):"
-        liftIO $ mapM_ (TIO.putStr . formatBareCommand (T.pack file)) bareFacts
+    | otherwise =
+        $(logTM) ErrorS $
+            logStr $
+                "\nBare commands (external commands must use store paths; shell builtins allowed):\n"
+                    <> T.concat (map (formatBareCommand (T.pack file)) bareFacts)
 
 reportDynamicCommands :: FilePath -> [(Text, Span)] -> AppM ()
 reportDynamicCommands file dynFacts
     | null dynFacts = pure ()
-    | otherwise = do
-        liftIO $ TIO.putStrLn ""
-        liftIO $ TIO.putStrLn "Dynamic commands (cannot analyze):"
-        liftIO $ mapM_ (TIO.putStr . formatDynamicCommand (T.pack file)) dynFacts
+    | otherwise =
+        $(logTM) ErrorS $
+            logStr $
+                "\nDynamic commands (cannot analyze):\n"
+                    <> T.concat (map (formatDynamicCommand (T.pack file)) dynFacts)
 
 printCheckResult :: FilePath -> Int -> AppM ()
 printCheckResult file totalErrors

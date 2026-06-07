@@ -48,9 +48,8 @@ checkBashFile config file = do
             Right ast -> do
                 let allViolations = findViolations ast
                 let (_suppressed, violations) = partitionViolations config allViolations
-                unless (null violations) $ do
+                unless (null violations) $
                     $(logTM) ErrorS $ logStr $ formatViolationsAt (T.pack file) violations
-                    liftIO $ putStrLn ""
 
                 let facts = extractFacts ast :: [Fact]
                 case validateConfigPaths facts of
@@ -125,9 +124,11 @@ checkScript configuration file bs = do
                 $(logTM) ErrorS $ logStr $ formatViolationsAt srcLabel violations
 
             let badInterps = filter (not . Nix.intIsStorePath) (Nix.bsInterpolations bs)
-            unless (null badInterps) $ do
-                $(logTM) WarningS $ logStr "  Non-store-path interpolations (may need verification):"
-                liftIO $ mapM_ (\i -> putStrLn $ "    ${" ++ T.unpack (Nix.intExpr i) ++ "}") badInterps
+            unless (null badInterps) $
+                $(logTM) WarningS $
+                    logStr $
+                        "  Non-store-path interpolations (may need verification):\n"
+                            <> T.concat ["    ${" <> Nix.intExpr i <> "}\n" | i <- badInterps]
 
             let facts = extractFacts ast :: [Fact]
             configErrors <- case validateConfigPaths facts of
@@ -147,15 +148,18 @@ checkScript configuration file bs = do
             let bareCount = length bareFacts
             let dynCount = length dynFacts
 
-            unless (null bareFacts) $ do
-                $(logTM) ErrorS $ logStr "  Bare commands (external commands must use store paths; shell builtins allowed):"
-                let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-                liftIO $ mapM_ (TIO.putStr . indentBlock "  " . formatBareCommand srcLabel) bareFacts
+            let srcLabel = T.pack file <> ":" <> Nix.bsName bs
+            unless (null bareFacts) $
+                $(logTM) ErrorS $
+                    logStr $
+                        "  Bare commands (external commands must use store paths; shell builtins allowed):\n"
+                            <> T.concat (map (indentBlock "  " . formatBareCommand srcLabel) bareFacts)
 
-            unless (null dynFacts) $ do
-                $(logTM) ErrorS $ logStr "  Dynamic commands (cannot analyze):"
-                let srcLabel = T.pack file <> ":" <> Nix.bsName bs
-                liftIO $ mapM_ (TIO.putStr . indentBlock "  " . formatDynamicCommand srcLabel) dynFacts
+            unless (null dynFacts) $
+                $(logTM) ErrorS $
+                    logStr $
+                        "  Dynamic commands (cannot analyze):\n"
+                            <> T.concat (map (indentBlock "  " . formatDynamicCommand srcLabel) dynFacts)
 
             let errorCount = length violations + bareCount + dynCount + typeErrors + configErrors
             if errorCount == 0

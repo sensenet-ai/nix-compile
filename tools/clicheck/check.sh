@@ -79,5 +79,18 @@ dfo=$("$BIN" fmt "$W/dir" 2>&1)
 echo "$dfo" | grep -qiE "I/O error" || note "fmt dir label" "expected 'I/O error', got: $dfo"
 echo "$dfo" | grep -qiE "I/O error" && ok
 
+# ── stdout/stderr contract (output rework C0) ───────────────────────────────
+# Data commands: product on stdout, nothing on stderr on success.
+so=$("$BIN" fmt "$W/good.nix" 2>"$W/e"); se=$(cat "$W/e")
+{ [ -n "$so" ] && [ -z "$se" ]; } && ok || note "fmt stream contract" "stdout empty or stderr noisy (stderr='$se')"
+so=$("$BIN" scope --json "$W/good.nix" 2>"$W/e"); se=$(cat "$W/e")
+{ [ -n "$so" ] && [ -z "$se" ]; } && ok || note "scope --json stream contract" "stderr not empty: '$se'"
+# Diagnostics: check emits findings to stderr, never stdout.
+printf 'foo bar baz\n' > "$W/bare.sh"
+so=$("$BIN" check "$W/bare.sh" 2>/dev/null)
+[ -z "$so" ] && ok || note "check stdout clean" "diagnostics leaked to stdout: '$so'"
+se=$("$BIN" check "$W/bare.sh" 2>&1 >/dev/null)
+echo "$se" | grep -qiE "bare command|ALEPH" && ok || note "check diag on stderr" "expected bare-command diagnostic on stderr"
+
 echo "CLICHECK: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
