@@ -1,6 +1,7 @@
 # Bug Tracker
 
-Current status of known issues. See [BUGS.md](https://github.com/sensenet-ai/nix-compile/blob/main/BUGS.md) in the repository for the full detail.
+Current status of known issues. The authoritative round-3 review and its
+verdicts live in [REVIEW-3.md](https://github.com/sensenet-ai/nix-compile/blob/main/REVIEW-3.md); the actionable work list is [TODO.md](https://github.com/sensenet-ai/nix-compile/blob/main/TODO.md). (The older `BUGS.md`/`FIXES.md`/`REVIEW*.md` artifacts were deleted in round 3 because their `file:line` citations had gone stale.) The test suite passes 446/446 with the differential oracle reporting 0 failures.
 
 ## Fixed
 
@@ -20,7 +21,7 @@ Current status of known issues. See [BUGS.md](https://github.com/sensenet-ai/nix
 | NEW-3 | `error "impossible"` in production code |
 | NEW-4 | `NWith` scope edges both point to lexical parent |
 | NEW-5 | `fromModuleGraph` drops all but first scope graph |
-| NEW-6 | `FlakeOutputs` `Eq` only compares packages (won't fix — low impact) |
+| NEW-6 | `FlakeOutputs` `Eq` only compares packages (was "won't fix"; later fixed in round 3 — see review3-#14) |
 | NEW-7 | `mergeSchemas` drops overlapping env specs |
 | NEW-8 | `buildConfigSchema` last-writer-wins semantics inverted |
 | NEW-9 | `mapConcurrently` unbounded parallelism |
@@ -60,6 +61,27 @@ Current status of known issues. See [BUGS.md](https://github.com/sensenet-ai/nix
 | review2-D1 | Three independent `200` constants — unified at `Safety.maxRecursionDepth` |
 | review2-D2 | `cmdFmt`/`cmdInfer`/`cmdScope*` used empty environment — `formatFileWithEnv` accepts cross-module env |
 | review2-P2 | `walkDirectory` rebuilt `Set.toList ignoredDirs` per entry — switched to `Set.member` |
+| review3-RC1 | Row polymorphism implemented — `TRec (Map Text (NixType,Bool)) RowTail` with `RowTail = RClosed \| ROpen TypeVar`; `unifyRec` accumulates fields on open∪open; selection emits row constraints and extends open records; list/row builtins are schemes instantiated at the use site |
+| review3-RC2 | Bash subtyping order-dependence fixed — `NixCompile.Infer.Unify` solver rewritten as collect-then-join (union-find + LUB over the `{TInt,TBool} <: TNumeric` lattice), so `[TInt~α, α~TBool]` resolves `α=TNumeric` order-independently |
+| review3-RC3 | Differential oracle added (`test/Oracle.hs` / `nix-compile-oracle`) comparing inferred type vs `nix-instantiate` `builtins.typeOf`; soundness gate at 0 failures |
+| review3-RC4 | Inference quadratics fixed — triangular substitution (`addSubst` = insert, `applySubst` resolves on read), `desugarNestedBindings` mergeByKey made O(n log n), non-recursive bindings use `mapM` (no `++` append); wide-attrset inference 276ms→5.47ms at 5000 fields |
+| review3-#1 | Nested attribute selection truncated to one level (`x.a.b.c` typed as `x.a`) — `inferSelect` now folds the full `NonEmpty` path and errors on selecting from a concrete non-attrset |
+| review3-#2 | Select on a type variable emitted no row constraint (`(x: x.foo) 5` accepted) — selection now emits `α ~ { k : β \| ρ }` and open records accumulate fields across selections |
+| review3-#3 | `==`/`!=` unified their operands → false positive on `x == null` — equality operators no longer unify; typed as `TBool` |
+| review3-#4 | `map`/`foldl'`/`concatMap` were `TAny` — promoted to real polymorphic schemes (`getAttr`/`attrValues` remain `TAny` pending rows/IO; `import` is #5) |
+| review3-#5 | Cross-module `import` type flow confirmed working for static paths — driver extends env with raw and canonical keys; test `review_import_cross_module` infers `TInt` end-to-end (non-static import args remain deferred) |
+| review3-#7 | `NPlus` rejected legal `1 + 1.5`, `./a + "b"`, `"" + ./a` — `+` now modeled over the numeric/path/string lattice instead of unifying operands to an identical base |
+| review3-#8 | Optional-field handling — `unifyRec`'s `closeAgainst` respects the optional flag, so an open row demanding an optional key a closed set lacks no longer errors |
+| review3-#14 | `FlakeOutputs` `Eq` was lawless/lossy (compared only `outPackages`) — now a lawful `deriving (Eq)` (supersedes NEW-6) |
+| review3-#16 | Reformatter rewritten on deep-vendored nixfmt 1.3.1 (RFC 166) under `vendor/nixfmt/` → byte-exact parity; reformatting is meaning-preserving (round-trip tests pass, incl. `''…''` interiors) |
+| review3-#19 | Applying any polymorphic builtin hung inference — `instantiate` self-map plus chasing `applySubst` looped; `applySubst` self-map now treated as identity; test `review_poly_builtin_terminates` |
+| review3-#21 | Config parser accepted `$\|` as a variable reference — `parseConfigValue` validates the var name after `$`/`"$` |
+| review3-#22 | Config var-ref captured `;`/newline (injection-relevant) — a non-name is now a literal, not a captured var ref |
+| review3-#23 | `eval` behind a prefix (`command eval …`, `builtin eval …`) not detected — `isEvalInvocation` skips command modifiers before checking for `eval` |
+| review3-#24 | No `ConfigTemplate` fact for a multi-interpolation array config — array-subscript LHS reconstructed and `parseConfigTemplate` counts all var parts |
+| review3-#25 | Union membership didn't flatten nested unions — `checkUnionMembership` flattens before the membership test |
+| review3-#26 | Derivation linter missed `mkDerivation` reached through a deep select chain — `isMkDerivationCall` checks the last key of the select path |
+| review3-modules | Module cleanup — deleted dead duplicate `NixCompile.Nix.Pretty`, folded `NixCompile.Nix.Format` into the `infer`-command module, renamed the inference engine `NixCompile.Nix.Infer` → `NixCompile.Nix.Inference` and the `infer`-command renderer to `NixCompile.Nix.Infer` |
 
 ## Closed (confirmed not bugs)
 
@@ -75,6 +97,7 @@ Current status of known issues. See [BUGS.md](https://github.com/sensenet-ai/nix
 | BUG-3 | `findValueTokens` loses `Quoted` metadata on text-based fallback path. Depends on ShellCheck tokenization behavior. |
 | REVIEW-4 | `ALEPH-B00N` error code scheme not fully implemented (cf. HACKING.md). |
 | REVIEW-7 | `ConfigSpec` record has mutually-exclusive fields (var vs literal); sum-type refactor deferred to Lean 4 port. |
+| review3-#20 | Non-global builtins (`head`/`filter`/`foldl'`/`elemAt`/`length`/…) are in the checker's top-level scope, but Nix provides them only under `builtins.`; bare `head xs` is an undefined var at eval, yet the checker types it. Split builtin env into true-globals vs `builtins.*`-only. (Found by the oracle.) |
 
 ## Untested
 

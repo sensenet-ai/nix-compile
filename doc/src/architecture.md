@@ -11,8 +11,8 @@ nix-compile is a Haskell static analysis tool that provides compile-time type ch
 - [Module Graph Builder](#module-graph-builder)
 - [Scope Graphs](#scope-graphs)
 - [LSP Server](#lsp-server)
-- [Formatter / Pretty-Printer](#formatter--pretty-printer)
-- [Source Formatting with Type Annotation](#source-formatting-with-type-annotation)
+- [Formatter (vendored nixfmt)](#formatter-vendored-nixfmt)
+- [Type-Annotated Output](#type-annotated-output)
 - [Layout Conventions](#layout-conventions)
 - [Effect Algebra](#effect-algebra)
 - [Configuration System](#configuration-system)
@@ -43,8 +43,8 @@ The system processes two distinct languages — Nix expressions and bash scripts
 │   └──────────────────┘   │       │   └──────────────────┘   │
 │                          │       │                          │
 │   ┌──────────────────┐   │       │                          │
-│   │ Formatter        │   │       │                          │
-│   │ Format/Annotate  │   │       │                          │
+│   │ Formatter / Infer│   │       │                          │
+│   │ (nixfmt / annot) │   │       │                          │
 │   └──────────────────┘   │       │                          │
 └──────────────────────────┘       └──────────────────────────┘
                                 │
@@ -231,17 +231,20 @@ data NixType
     | TStrLit Text        -- literal string (singleton type for interpolation tracking)
     | TFun NixType NixType    -- function type
     | TList NixType           -- list type
-    | TAttrs (Map Text (NixType, Bool))   -- closed record (w/ required flag)
-    | TAttrsOpen (Map Text (NixType, Bool)) -- open record (may have extra fields)
+    | TRec (Map Text (NixType, Bool)) RowTail  -- record: known fields + row tail
     | TUnion [NixType]   -- union (sum) type
     | TAny               -- top type (dynamic/unknown)
-    deriving (Eq, Show)
+    deriving (Eq, Ord, Show)
+
+data RowTail = RClosed | ROpen TypeVar  -- closed record, or open with a row variable
 
 data Scheme = Forall [TypeVar] NixType  -- polymorphic type scheme
 ```
 
+`TAttrs` and `TAttrsOpen` survive as bidirectional **pattern synonyms** over `TRec` (`TAttrs m = TRec m RClosed`; `TAttrsOpen m` matches any `TRec m (ROpen _)`), so existing call sites and the rest of this document continue to read in those terms.
+
 **Key design decisions:**
-- **Row polymorphism** via `TAttrs` (closed) and `TAttrsOpen` (open). Closed records unify only when all keys match; open records only check common keys. This models Nix's structural typing where attribute sets passed to functions may carry extra fields.
+- **Row polymorphism** via `TRec fields RowTail`. A `RClosed` tail (the `TAttrs` view) is an exact record that unifies only when all keys match; an `ROpen r` tail (the `TAttrsOpen` view) carries a row **variable** `r` standing for "at least these fields plus whatever `r` resolves to", letting open records accumulate fields across unifications. This models Nix's structural typing where attribute sets passed to functions may carry extra fields. (Row-variable lacks-constraints — labels a row must NOT gain — live in a side store in the inference state; see [Nix type inference](nix-inference.md) for the full engine.)
 - **Required field tracking**: the `Bool` flag in record fields tracks whether a field is required (`False`) or optional (`True`). Lambda patterns with defaults produce optional fields.
 - **Union types** via `TUnion` model sum types (e.g., `toString` accepts `Int | Float | Bool | Path | String`).
 - **String literals** (`TStrLit`) distinguish literal strings from general `TString` — useful for tracking known strings vs interpolated ones, especially for bash extraction.
@@ -263,7 +266,7 @@ freeTypeVarsScheme :: Scheme -> Set TypeVar
 
 Standard environment-based substitution with occurs check. Composition is left-biased: `composeSubst s1 s2` applies `s1` to the values in `s2`, then unions — effectively `s1 ∘ s2`.
 
-### Inference Engine — `NixCompile.Nix.Infer`
+### Inference Engine — `NixCompile.Nix.Inference`
 
 ```haskell
 inferExpr :: NExprLoc -> Either Text (NixType, [Binding])
@@ -740,91 +743,70 @@ Two helpers build project-wide data structures on demand:
 
 ---
 
-## Formatter / Pretty-Printer
+## Formatter (vendored nixfmt)
 
 **Module:** `NixCompile.Nix.Formatter`
 
-A standalone Nix source formatter that pretty-prints a parsed Nix AST back to text while preserving comments and blank-line spacing from the original source.
+The `fmt` command reformats Nix source. The formatter is meaning-preserving and produces byte-for-byte the same output as the upstream `nixfmt` binary.
 
 ### Design
 
-The formatter uses the `prettyprinter` library to produce `Doc ann` values, then renders them via `layoutSmart` (80-column target, by default). The key insight is that the formatter reads back the original source lines to reconstruct comments and blank-line spacing, rather than carrying them through the AST.
+There is no hand-rolled pretty-printer. `NixCompile.Nix.Formatter` delegates to a **deep-vendored copy of nixfmt 1.3.1** (RFC 166), whose source lives under `vendor/nixfmt/` (MPL-2.0; see `vendor/nixfmt/LICENSE`) and is built as a private cabal sub-library, `nixfmt-vendored`. nixfmt re-parses the source with its own parser — its layout depends on comment/trivia attached to tokens, which hnix discards — so the already-parsed `NExprLoc` is *unused* by the formatter; the caller still parses with hnix first only to run the safety/depth gate.
+
+Both entry points call:
+
+```haskell
+Nixfmt.format (layout 100 2 False) path srcTxt
+```
+
+i.e. the RFC-166 CLI defaults matching `nixfmt -`: **100-column width, 2-space indent, non-strict**. On the (unreachable) event that nixfmt's parser rejects source the caller already parsed with hnix, the formatter falls back to the input verbatim.
 
 ### Export API
 
 ```haskell
-formatNix :: Text -> NExprLoc -> Text           -- format from source text
-formatNixFile :: Text -> FilePath -> NExprLoc -> Text  -- format file (includes top comments)
+formatNix     :: Text -> NExprLoc -> Text              -- format from source text
+formatNixFile :: Text -> FilePath -> NExprLoc -> Text  -- format file (path used for errors)
 ```
 
-### Key Features
+### Parity
 
-**Comment preservation:**
-- Tracks doc-comment blocks (`/** ... */`) via `markDocCommentLines`
-- Identifies comment-like lines (`#`, `/**`, `*/`, `* `)
-- `precedingCommentsDoc` extracts comments immediately preceding a binding's source position
-- `topCommentsDoc` preserves leading comments before any expression
+Byte-exact parity with the `nixfmt` binary is enforced by the `tools/fmtparity/check.sh` harness (curated 14/14, real fixtures 48/48). The vendored modules (`Nixfmt`, `Nixfmt.Lexer`, `Nixfmt.Parser`, `Nixfmt.Predoc`, `Nixfmt.Pretty`, `Nixfmt.Types`, `Nixfmt.Util`, …) are first-class code in our tree: they build under our `-Wall -Werror` flags, and we own them — divergence happens by editing `vendor/nixfmt/Nixfmt/Pretty.hs` etc. directly (those edits remain MPL-2.0).
 
-**Blank-line preservation:**
-- `precedingBlankCount` counts blank lines between a binding and the previous element
-- `precedingBlankDoc` inserts a blank line when there were one or more in the original
-
-**Binding formatting (`printBindingVal`):**
-- Single-line format when the rendered key + value fits on one line
-- Multi-line format with `key\n  value` when it doesn't
-- Prefers single-line for compact output
-
-**Expression-specific formatting rules:**
-- Lists: single-line `[a b c]` when all elements fit; multi-line with indentation otherwise
-- Sets: `rec` prefix preserved; empty set → `rec { }`
-- Lambdas: `{ a, b } @ self:` format for set patterns, `name:` for simple params
-- Applications: parenthesization of functions/lambdas in argument position
-- Selects (`a.b.c`): parenthesization in base position
-- Binary ops: proper parenthesization of nested operations on the right
-- Strings: proper escaping of `"`, `\`, `$`; indented string `''` handling
-- Paths: `./` prefix for relative paths
+> The `prettyprinter` / `prettyprinter-ansi-terminal` libraries are still dependencies, but only for `NixCompile.Pretty` (terminal-colored CLI output) — not for the formatter.
 
 ---
 
-## Source Formatting with Type Annotation
+## Type-Annotated Output
 
-**Modules:** `NixCompile.Nix.Format`, `NixCompile.Nix.Annotate`, `NixCompile.Nix.Pretty`
+**Module:** `NixCompile.Nix.Infer`
 
-A separate pipeline that runs type inference on a Nix file and injects type annotations as comments.
+The `infer` command runs the inference engine over a Nix file and injects inferred types back into the source as `# :: <type>` comments. (`NixCompile.Nix.Infer` is the *command renderer*; the inference *engine* it calls is `NixCompile.Nix.Inference`.)
 
 ### Pipeline
 
 ```
-Source text → hnix parse → inferExpr → annotateSource → annotated text
+Source text → hnix parse → inferExprWithEnv → annotateSource → annotated text
 ```
 
-**`NixCompile.Nix.Annotate.annotateSource`:**
+### Export API
 
 ```haskell
-annotateSource :: Text -> InferResult -> Text
+annotateFile        :: FilePath -> IO (Either Text Text)             -- default (no-import) env
+annotateFileWithEnv :: TypeEnv -> FilePath -> IO (Either Text Text)  -- pre-built cross-module env
+annotateExpr        :: Text -> Either Text Text                       -- annotate an in-memory expr
+annotateSource      :: Text -> InferResult -> Text                    -- low-level injector
 ```
 
+`annotateFile` (used by the `fmt`/`infer` CLI path via `cmdInfer`) defaults to `builtinEnv`; `annotateFileWithEnv` accepts a pre-built `TypeEnv` so the command does not throw away cross-module knowledge.
+
+**`annotateSource`:**
+
 1. Takes the original source text and the inference result (`irBindings :: [Binding]`)
-2. Creates an `Ann` for each binding: `{# :: <type>}` comment inserted at the binding's source location
+2. Creates an `Ann` for each binding: a `# :: <type>` comment carrying `prettyType bindType`
 3. Sorts annotations by location (reverse line order) so that insertions don't invalidate subsequent positions
 4. Inserts each annotation on the line before the declaration, preserving the original indentation
 
-**`NixCompile.Nix.Format.formatFile`:**
-
-```haskell
-formatFile :: FilePath -> IO (Either Text Text)
-```
-
-Reads the file, parses, infers types, and runs `annotateSource`. The `fmt` CLI command calls this.
-
-**`NixCompile.Nix.Pretty.annotateSource`:**
-
-Provides pretty-printing of `NixType` values for user display. Handles:
-- `Forall [a, b] (...) -> ...` for schemes
-- Structurally indented attribute set types
-- Union types displayed as `a | b | c`
-- Function types: `a -> b` (right-associative)
-- String literals rendered with quotes
+Type values are rendered by `prettyType` / `prettyScheme` from `NixCompile.Nix.Types` (union types as `a | b | c`, function types right-associative `a -> b`, string literals quoted).
 
 ---
 
@@ -1048,8 +1030,8 @@ main = runLog InfoS $ do
 | Command | Handler | Description |
 |---|---|---|
 | `nix-compile check <path>` | `cmdCheck` | Auto-detect: directories run CI mode, `.nix` files run Nix check, others run bash check |
-| `nix-compile fmt <file.nix>` | `cmdFmt` | Parse then pretty-print via `NixCompile.Nix.Formatter` |
-| `nix-compile infer <file.nix>` | `cmdInfer` | Type-infer then inject `# :: <type>` annotations via `NixCompile.Nix.Format` |
+| `nix-compile fmt <file.nix>` | `cmdFmt` | Reformat via `NixCompile.Nix.Formatter` (delegates to vendored nixfmt) |
+| `nix-compile infer <file.nix>` | `cmdInfer` | Type-infer then inject `# :: <type>` annotations via `NixCompile.Nix.Infer` |
 | `nix-compile emit <script.sh>` | `cmdEmit` | Parse bash, build schema, emit `emit_config()` function via `NixCompile.Emit.Config` |
 | `nix-compile lsp` | `cmdLSP` | Start LSP server via `NixCompile.LSP.Server.run` |
 | `nix-compile scope <file.nix>` | `cmdScope` | Build scope graph, pretty-print to terminal |
@@ -1178,12 +1160,18 @@ NixCompile.Lint.Forbidden ────► NixCompile.Bash.Parse
 ### Nix Subsystem
 
 ```
-NixCompile.Nix.Types ────────── (NixType, Scheme, Subst, type helpers)
-NixCompile.Nix.Infer
+NixCompile.Nix.Types ────────── (NixType, RowTail, Scheme, Subst, type helpers)
+NixCompile.Nix.Inference        (the HM inference engine)
 ├── NixCompile.Nix.Types
 ├── NixCompile.Nix.Utils
 ├── hnix (Expr.Types, Expr.Types.Annotated, Parser, Utils)
 └── NixCompile.Types (Span, Loc)
+
+NixCompile.Nix.Infer            (the `infer` command renderer)
+├── NixCompile.Nix.Inference (Binding, InferResult, inferExprWithEnv, builtinEnv)
+├── NixCompile.Nix.Parse
+├── NixCompile.Nix.Types (prettyType)
+└── NixCompile.Safety
 
 NixCompile.Nix.Parse
 ├── NixCompile.Nix.Utils
@@ -1197,7 +1185,7 @@ NixCompile.Nix.LintPackages ── NixCompile.Nix.Utils
 NixCompile.Nix.LintCombined ─── .Nix.Lint + .Nix.LintDerivation + .Nix.LintPatterns
 
 NixCompile.Nix.Module
-├── NixCompile.Nix.Infer (inferExpr, builtinEnv, extendImport)
+├── NixCompile.Nix.Inference (inferExpr, inferExprWithEnv, builtinEnv, extendImport)
 ├── NixCompile.Nix.Lint (findNixViolations)
 ├── NixCompile.Nix.Layout (findLayoutViolations)
 ├── NixCompile.Nix.Types
@@ -1219,10 +1207,8 @@ NixCompile.Nix.LayoutConvention ─ NixCompile.Nix.ModuleKind + .Nix.Naming
 NixCompile.Nix.ModuleKind ───── (standalone, used by LayoutConvention + Module)
 NixCompile.Nix.Naming ───────── (standalone, used by LayoutConvention)
 NixCompile.Nix.Effect ───────── NixCompile.Nix.Types
-NixCompile.Nix.Formatter ────── hnix + prettyprinter + NixCompile.Nix.Utils
-NixCompile.Nix.Format ───────── NixCompile.Nix.Infer + .Nix.Pretty + .Nix.Annotate
-NixCompile.Nix.Annotate ────── NixCompile.Nix.Infer (Binding, InferResult), NixCompile.Nix.Types
-NixCompile.Nix.Pretty ──────── NixCompile.Nix.Types
+NixCompile.Nix.Formatter ────── nixfmt-vendored (Nixfmt, Nixfmt.Predoc) + hnix (NExprLoc)
+NixCompile.Nix.Infer ────────── NixCompile.Nix.Inference + .Nix.Parse + .Nix.Types + .Safety
 NixCompile.Nix.Utils ───────── NixCompile.Types + hnix
 ```
 
@@ -1238,7 +1224,7 @@ NixCompile.LSP.Handlers
 ├── Language.LSP.Server
 ├── NixCompile.Bash.Parse (parseBash)
 ├── NixCompile.Lint.Forbidden
-├── NixCompile.Nix.Infer (inferExprWithEnv, builtinEnv, extendImport)
+├── NixCompile.Nix.Inference (inferExprWithEnv, builtinEnv, extendImport, TypeEnv)
 ├── NixCompile.Nix.Lint (findNixViolations)
 ├── NixCompile.Nix.LintDerivation
 ├── NixCompile.Nix.LintPatterns
@@ -1261,7 +1247,7 @@ NixCompile.CLI.Dispatch
 ├── NixCompile.CLI.CI (cmdCI)
 ├── NixCompile.Emit.Config (emitConfigFunction)
 ├── NixCompile.LSP.Server (run)
-├── NixCompile.Nix.Format (formatFile)
+├── NixCompile.Nix.Infer (annotateFile)
 ├── NixCompile.Nix.Formatter (formatNixFile)
 ├── NixCompile.Nix.Parse (parseNixFile)
 └── NixCompile.Nix.Scope (fromNixFile, toDhall, toJSON)
@@ -1279,7 +1265,7 @@ NixCompile.CLI.Bash
 
 NixCompile.CLI.Check
 ├── NixCompile.CLI.Report (report*)
-├── NixCompile.Nix.Infer (inferExpr)
+├── NixCompile.Nix.Inference (inferExpr)
 ├── NixCompile.Nix.LintCombined (combinedLint)
 ├── NixCompile.Nix.Parse (parseNixFile)
 └── NixCompile.Nix.Types (prettyType)
@@ -1305,7 +1291,7 @@ NixCompile.Log ────── CLI layer (all CLI modules)
 **Key dependency rules:**
 - `NixCompile.Types` is the foundation — no other internal dependencies
 - `NixCompile.Nix.Types` depends only on `base`, `containers`, `text`, `hnix`
-- `NixCompile.Nix.Infer` depends on `NixCompile.Nix.Types` and `NixCompile.Types`
+- `NixCompile.Nix.Inference` (the HM engine) depends on `NixCompile.Nix.Types` and `NixCompile.Types`; `NixCompile.Nix.Infer` (the `infer` command) sits on top of it
 - `NixCompile.Config` depends on six lint modules (for rule ID mappings)
 - The LSP module (`NixCompile.LSP.Handlers`) is the most connected leaf, importing from 14+ internal modules
 
@@ -1315,10 +1301,11 @@ NixCompile.Log ────── CLI layer (all CLI modules)
 
 ### Build
 
-- **Build system:** Cabal (`nix-compile.cabal`)
-- **GHC options:** `-Wall -Werror -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints`
+- **Build system:** Cabal (`cabal-version: 3.0`, `nix-compile.cabal`)
+- **GHC options:** `-Wall -Werror -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints` (GHC 9.10.3)
 - **Language:** GHC2021
-- **Source layout:** `lib/` (library, 48 modules), `app/` (executable)
+- **Source layout:** `lib/` (main library, 46 modules), `app/` (executable), `vendor/nixfmt/` (the private `nixfmt-vendored` sub-library)
+- **Vendored sub-library:** `library nixfmt-vendored` (visibility `private`) builds the deep-vendored nixfmt 1.3.1 under `vendor/nixfmt/` (MPL-2.0) and is depended on by the main library. Its only deps are `base`, `containers`, `megaparsec`, `mtl`, `parser-combinators`, `scientific`, `text`, `transformers`, `pretty-simple`.
 
 ### Dependencies
 
@@ -1329,7 +1316,8 @@ NixCompile.Log ────── CLI layer (all CLI modules)
 | Config | `dhall >= 1.42 && < 1.43` |
 | LSP | `lsp >= 2.7 && < 2.8`, `lsp-types >= 2.3 && < 2.4` |
 | Logging | `katip >= 0.8 && < 0.9` |
-| Pretty-printing | `prettyprinter >= 1.7 && < 1.8`, `prettyprinter-ansi-terminal >= 1.1 && < 1.2` |
+| Formatting | `nixfmt-vendored` (private sub-library; deep-vendored nixfmt 1.3.1) |
+| Terminal pretty-printing | `prettyprinter >= 1.7 && < 1.8`, `prettyprinter-ansi-terminal >= 1.1 && < 1.2` (used only by `NixCompile.Pretty`) |
 | Serialization | `aeson >= 2.0 && < 2.3` |
 | Parsing (CLI) | `megaparsec >= 9.0 && < 10.0` |
 | Data structures | `containers >= 0.6 && < 0.8`, `data-fix >= 0.3 && < 0.4` |

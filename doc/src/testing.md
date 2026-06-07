@@ -1,7 +1,10 @@
 # Testing
 
-nix-compile has four test suites with 339 property tests, 34 adversarial regression
-tests (the "psychotic" suite for review-2 findings), and 10 integration tests.
+nix-compile ships six test suites. The main property suite (`nix-compile-test`)
+bundles the QuickCheck properties, the "psychotic" review-2 regression suite, the
+LSP project-cache spec, and the bash/Nix adversarial suites; the full run reports
+**446/446 passing**. Alongside it are three fixture suites and a differential
+soundness oracle that checks inferred types against `nix-instantiate`.
 
 ## Running tests
 
@@ -9,44 +12,62 @@ tests (the "psychotic" suite for review-2 findings), and 10 integration tests.
 # All suites
 cabal test
 
-# Property tests only
+# Property + regression + adversarial suite
 cabal test nix-compile-test
 
 # Fixture tests
 cabal test nix-compile-fixtures
 cabal test nix-compile-more-fixtures
 cabal test nix-compile-flake-parts
+
+# Differential soundness oracle (vs nix-instantiate builtins.typeOf)
+cabal test nix-compile-oracle
 ```
 
 ## Test suites
 
-### `nix-compile-test` (Props.hs + Adversarial.hs)
+### `nix-compile-test` (Props.hs + Adversarial.hs + NixAdversarial.hs + Psychotic.hs + ProjectCacheSpec.hs)
 
-114 QuickCheck property tests across 21 categories:
+`Props.hs` registers the QuickCheck property groups (a long `run "name" prop`
+list) and then folds in the wired-in adversarial suites and the psychotic and
+project-cache regression suites. The registered groups cover, roughly:
 
-| Category          | Count | What it tests                                                                           |
-| ----------------- | ----- | --------------------------------------------------------------------------------------- |
-| Type algebra      | 9     | Reflexive, symmetric, valid subst, order-independent solving                            |
-| Constraints       | 4     | Empty identity, reflexive, satisfaction, order-independence                             |
-| Fact extraction   | 5     | DefaultIs, Required, AssignFrom, ConfigAssign, ConfigLit vectors                        |
-| Schema building   | 8     | Complete, defaults, required, defaulted-vars diagnostic                                 |
-| Merge correctness | 4     | Required preserved, default kept, duplicate merged, identity law                        |
-| Parser            | 4     | Labeled success/failure, deterministic, empty, comments                                 |
-| Pattern matching  | 5     | Default, required, simple, numeric, alpha rejection                                     |
-| Builtins          | 6     | Database integrity, known flags, unknown handling                                       |
-| Config tree       | 2     | Completeness (conflict-free), deterministic                                             |
-| Scope graph       | 7     | Priority, let/attrset/func/with/var construction, cross-file merge                      |
-| Nix inference     | 10    | Totality, determinism, all literal types, lists, attrsets, functions, let               |
-| Nix lint          | 3     | `with` detected, `rec` detected, clean passes                                           |
-| Bash lint         | 3     | Heredoc, backtick detected, clean passes                                                |
-| Emit-config       | 8     | `${VAR:?}` guards, no null, literal, string quoted, balanced braces, no heredoc, nested |
-| Format            | 4     | Simple annotation, preserves source, function annotation, no-crash                      |
-| E2E integration   | 5     | Config extraction, required vars, type conflicts, empty, store paths                    |
-| Edge cases        | 4     | Comments-only, long names, deep config, all fact types                                  |
-| Bash AST          | 4     | Arithmetic, subshell, pipe, for-loop body extraction                                    |
-| Overlay algebra   | 5     | Identity, associativity, satisfaction, propagation                                      |
-| Stress            | 4     | Large scripts (structural), many vars (>0), deep config, chains                         |
-| Literals          | 3     | Int/bool roundtrip, type consistency                                                    |
+| Group              | What it tests                                                                            |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| Type algebra       | Unification reflexive/symmetric/disjoint, substitution composition, order-independence  |
+| Constraints        | Empty identity, reflexive, satisfaction, deterministic solving                          |
+| Fact extraction    | DefaultIs, Required, AssignFrom, ConfigAssign/Lit vectors, config quoting/splitting      |
+| Schema building    | Complete, defaults preserved, required marked, defaulted-vars diagnostic                |
+| Merge correctness  | Required preserved, default kept, duplicate merged, identity law                        |
+| Parser / patterns  | Labeled success/failure, empty, comments; `${VAR:-}`/`${VAR:?}`/`$VAR`, numeric vectors |
+| Builtins           | Database integrity, known flag types, unknown flag/command handling                     |
+| Config tree        | Completeness over conflict-free path sets                                               |
+| Scope graph        | Edge priority, let/attrset/func/with/var construction, cross-file merge                 |
+| Nix inference      | Totality, determinism, literal types, lists, attrsets, functions, let, `with`, `rec`    |
+| Nix / bash lint    | `with`/`rec` detection, derivation/package/pattern lint rules, heredoc/backtick         |
+| Emit-config        | `${VAR:?}` guards, no null, literal/string quoting, balanced JSON, YAML/TOML, nested    |
+| Format             | Type-annotation smoke test (`annotateExpr` injects an annotation)                       |
+| REVIEW-3 round-3   | Nested-select errors, polymorphic builtins terminate, `+`/`toString` typing, reformatter round-trip, well-typed exact-type vectors, row-polymorphic attribute builtins, cross-module import type flow |
+| Layout / naming    | Layout-convention validation, kebab/camel/pascal naming, glob matching                  |
+| Severity / rules   | Severity overrides, rule-id uniqueness, suppression                                     |
+| LSP                | Lint diagnostics, hover, definition, references, rename, completion                     |
+| CLI                | Report partitioning/formatting, `check` unsupported-construct detection, CI markers     |
+| Overlay algebra    | Identity, associativity, satisfaction, propagation                                      |
+| E2E / stress / edge| Config extraction, required vars, type conflicts, store paths; large/many-var scripts   |
+
+The `Format` group is now a single smoke test (`format_function`) that confirms
+the type-annotation renderer injects an annotation; meaning-preservation and the
+reformatter are covered by the REVIEW-3 round-trip properties below. The renderer
+under test is `NixCompile.Nix.Infer.annotateExpr` (the `infer` command), formerly
+`formatExpr`.
+
+New round-3 properties worth calling out: `reformatter_roundtrip` /
+`reformatter_roundtrip_corpus` / `reformatter_indented_string` exercise the
+vendored-nixfmt reformatter as real passing meaning-preserving round-trips
+(including indented strings); `welltyped_vectors` pins exact inferred types for a
+fixed corpus; `review_import_cross_module` checks a type flowing across a module
+import. The Nix expression generator now also produces `NSelect` via
+`genNixSelect`, so selection paths are fuzzed throughout.
 
 ### `nix-compile-fixtures` (Fixtures.hs)
 
@@ -68,13 +89,32 @@ Integration tests against real-world scripts:
 - Bash script with `@shell@` substitution placeholders
 - Module directory lint (observation mode)
 
+### `nix-compile-oracle` (Oracle.hs)
+
+The differential soundness oracle — the one property a type checker most needs:
+"accept ⟹ the runtime type matches what we claimed." For each closed expression
+in a fixed corpus it compares the inferred kind against the runtime kind reported
+by `nix-instantiate --eval -E 'builtins.typeOf (EXPR)'`. The corpus spans
+literals, arithmetic, string/path concat, comparison/equality, collections,
+nested selection, lambdas/application, polymorphic and row-polymorphic builtins,
+and expressions that should type-error at runtime.
+
+Verdicts: `MISMATCH` (checker claimed a kind the runtime contradicts) and
+`CHECKER-HANG` (inference didn't terminate within the timeout) are failures;
+`AGREE` / `AGREE-REJECT` pass; `INCOMPLETE` (conservative rejection) and
+`typed-but-noeval` (typed but the expression doesn't evaluate, e.g. `head []`)
+are noted, not failed. The current run reports **41 agree / 0 failures** — the
+soundness gate against `nix-instantiate builtins.typeOf`. The suite skips cleanly
+(vacuous pass) when `nix-instantiate` is not on PATH, e.g. inside the sandboxed
+flake check.
+
 ## Property test design
 
 The property tests follow an adversarial philosophy:
 
 1. **No tautologies** -- every property asserts something structural about successful results, not just "no exception." Tests that previously followed `Left _ -> True; Right _ -> True` have been replaced with labeled assertions on output structure.
 
-2. **Generators produce hostile input** -- injection attempts, overflow integers, malformed expansions, path traversal, Unicode in variable names. Bash generators include conditionals (`if/then/fi`), loops (`for/do/done`), pipes, and subshells. Nix generators include list concat (`++`), attrset merge (`//`), and nested let.
+2. **Generators produce hostile input** -- injection attempts, overflow integers, malformed expansions, path traversal, Unicode in variable names. Bash generators include conditionals (`if/then/fi`), loops (`for/do/done`), pipes, and subshells. Nix generators include list concat (`++`), attrset merge (`//`), nested let, and attribute selection (`NSelect`).
 
 3. **Properties assert invariants** -- algebraic laws (unification reflexivity/symmetry, substitution composition, overlay monoid laws), structural properties (balanced JSON braces, non-empty facts), and correctness vectors (specific bash patterns produce specific facts).
 
@@ -89,19 +129,18 @@ The `Adversarial.hs` module contains additional security-focused properties (inj
 `test/Psychotic.hs` holds the regression suite for the second-round adversarial
 audit (`REVIEW-2.md`). Each finding gets at least one negative test (input that
 previously crashed or accepted bad code) and at least one positive test (input
-that still works correctly after the fix). The 34 tests are grouped by finding:
+that still works correctly after the fix). The suite currently registers 22 tests
+(`Psychotic.psychoticTests`) grouped by finding:
 
 | Group | Tests | Subject |
 |-------|-------|---------|
-| C1    | 6     | `escapeForParamExpansion` defeats every payload, idempotent under double-escape, end-to-end through `parseScriptFile` → `emitConfigFunction` |
-| C2/C3 | 6     | `analyzeDepth` rejects `NWith`/`NApp` bypass chains; shallow ASTs accepted; structured `DepthError` |
-| C4    | 2     | `safeParseNixText` survives 5000-deep parens, 3000-deep lists |
-| C5    | 1     | Sibling-directory `proj-evil` not considered inside `proj` |
-| C6    | 2     | Dhall config containing `https://attacker.example/x.dhall` rejected; local config still loads |
-| S1    | 1     | `builtins.head [1 2 3] + 1` type-checks with polymorphic builtins |
-| S2    | 3     | Closed-set missing-key errors; missing-with-`or` works; present-key works |
-| S3    | 3     | Unbound variable errors; let-bound works; `envLenient = True` retains old behavior |
-| S5    | 1     | `let xs = { a.b = 1; }; in xs.a.b` type-checks |
-| S6    | 4     | `null + null`, `true + false` fail; `Int + Int`, `String + String` work |
-| B1    | 2     | `combinedLintSafe` returns `LintDepthExceeded` past depth; clean returns `LintOk` |
-| Safety wrappers | 3 | `renderSafetyError` total; `safeIO` catches exceptions; `safeReadFile` returns Left for missing path |
+| C1    | 5     | `escapeForParamExpansion` is idempotent, neutralizes newlines and single quotes, safe defaults pass through, end-to-end injection neutralized through `parseScriptFile` → `emitConfigFunction` |
+| C2    | 1     | Deep `NSelect` chain doesn't crash the depth analyzer |
+| C3    | 4     | `analyzeDepth` rejects `NWith`/`NApp` bypass chains; shallow ASTs accepted; error names the constructor |
+| C4    | 1     | `safeParseNixText` survives deeply nested lists |
+| C6    | 1     | Local Dhall config still loads |
+| S2    | 2     | Closed-set missing-with-default works; present-key works |
+| S3    | 2     | Let-bound variable works; `envLenient = True` retains old behavior |
+| S6    | 3     | `true + false` fails; `Int + Int`, `String + String` work |
+| B1    | 1     | `combinedLintSafe` returns `LintOk` on clean input |
+| Safety wrappers | 2 | `safeIO` catches exceptions; `safeReadFile` returns Left for a missing path |
