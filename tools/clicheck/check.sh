@@ -62,6 +62,15 @@ expect "check missing"   1 "" -- check "$W/nope.nix"
 expect "check good.sh"   0 "" -- check "$W/good.sh"
 expect "check dir"       0 "" -- check "$W/dir"
 
+# emit must produce syntactically valid bash
+if "$BIN" emit "$W/good.sh" 2>/dev/null | bash -n 2>/dev/null; then ok; else note "emit valid bash" "generated emitter fails 'bash -n'"; fi
+
+# lsp must shut down cleanly on EOF (not hang, not crash)
+lo=$(printf '' | timeout 5 "$BIN" lsp 2>&1); lec=$?
+if [ "$lec" = "124" ]; then note "lsp eof" "lsp hung on empty stdin (timeout)"
+elif echo "$lo" | grep -qiE "INTERNAL ERROR|CallStack|Prelude\.|fromJust"; then note "lsp eof" "lsp crashed on empty stdin"
+else ok; fi
+
 # error-category invariants: missing/dir are I/O errors, not parse errors
 mfo=$("$BIN" fmt "$W/nope.nix" 2>&1)
 echo "$mfo" | grep -qiE "I/O error" || note "fmt missing label" "expected 'I/O error', got: $mfo"
