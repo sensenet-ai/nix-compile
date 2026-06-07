@@ -60,6 +60,7 @@ library
         NixCompile.CLI.Report
         NixCompile.CLI.Types
         NixCompile.Config
+        NixCompile.Diagnostic
         NixCompile.Bash.Facts
         NixCompile.Bash.Parse
         NixCompile.Bash.Patterns

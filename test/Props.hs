@@ -55,7 +55,8 @@ import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
-import NixCompile.Log (Severity (ErrorS), runLog)
+import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Formatter (formatNixFile)
@@ -1420,6 +1421,35 @@ prop_reformatter_indented_string =
 -- JANK (found dogfooding the CLI): `prettyType` dumped a `TStrLit`'s full text, so
 -- `infer` on a file with a huge string literal produced a huge `# :: "…"` type.
 -- Long literals must be truncated in type display; short ones preserved exactly.
+-- C1 (output rework): the pure Diagnostic renderer produces the clippy layout.
+-- Golden — locks the format so the C2 checker migration reviews as a diff.
+prop_diagnostic_render :: Bool
+prop_diagnostic_render = full && minimal
+  where
+    full = Diag.renderDiagnostic d == expected
+    d =
+        Diag.Diagnostic
+            { Diag.diagSeverity = ErrorS
+            , Diag.diagCode = Just "ALEPH-N001"
+            , Diag.diagSpan = Just (Span (Loc 90 7) (Loc 90 16) (Just "flake.nix"))
+            , Diag.diagSummary = "`with` expression is not allowed"
+            , Diag.diagHelp = ["use `inherit (pkgs) git;` instead"]
+            , Diag.diagSnippet = Just (Diag.Snippet 90 "  with pkgs; [ git ];" 3 9)
+            }
+    expected =
+        T.intercalate
+            "\n"
+            [ "error[ALEPH-N001]: `with` expression is not allowed"
+            , "  --> flake.nix:90:7"
+            , "   |"
+            , "90 |   with pkgs; [ git ];"
+            , "   |   ^^^^^^^^^"
+            , "   = help: use `inherit (pkgs) git;` instead"
+            ]
+    minimal =
+        Diag.renderDiagnostic (Diag.Diagnostic WarningS Nothing Nothing "something off" [] Nothing)
+            == "warning: something off"
+
 prop_pretty_strlit_truncated :: Bool
 prop_pretty_strlit_truncated =
     NT.prettyType (NT.TStrLit "hi") == "\"hi\""
@@ -4601,6 +4631,7 @@ main = do
             , run "reformatter_roundtrip_corpus" prop_reformatter_roundtrip_corpus
             , run "reformatter_indented_string" prop_reformatter_indented_string
             , run "welltyped_vectors" prop_welltyped_vectors
+            , run "diagnostic_render" prop_diagnostic_render
             , run "pretty_strlit_truncated" prop_pretty_strlit_truncated
             , run "safety_error_categories" prop_safety_error_categories
             , run "review_select_on_var_constrains" (property prop_review_select_on_var_constrains)
