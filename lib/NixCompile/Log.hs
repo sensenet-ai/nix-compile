@@ -35,14 +35,17 @@ logStr = Katip.logStr
 
 runLog :: Severity -> AppM a -> IO a
 runLog minSeverity action = do
+    -- No severity text prefix: diagnostics already carry their own
+    -- "error[CODE]:" / "warning[CODE]:" word (see NixCompile.Diagnostic), and
+    -- ColorIfTerminal still colours each line by severity on a TTY. A "[ERROR]"
+    -- prefix here only doubled up ("[ERROR] error[TYPE]: …"). Debug lines keep a
+    -- marker since they have no inherent one and only appear under -vv.
     let fmt _color _verb item =
-            let sev = case _itemSeverity item of
-                    ErrorS   -> "[ERROR] "
-                    WarningS -> "[WARN] "
-                    DebugS   -> "[DEBUG] "
-                    _        -> ""
+            let pfx = case _itemSeverity item of
+                    DebugS -> "[debug] "
+                    _ -> ""
                 msg = unLogStr (_itemMessage item)
-             in Builder.fromText sev <> msg
+             in Builder.fromText pfx <> msg
     handleScribe <- mkHandleScribeWithFormatter fmt ColorIfTerminal stderr (permitItem minSeverity) V0
     initLogEnv "nix-compile" "production"
         >>= registerScribe "stderr" handleScribe defaultScribeSettings

@@ -28,6 +28,7 @@ import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
+import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Log
 import NixCompile.Nix.Inference qualified
 import NixCompile.Nix.LintCombined qualified as Combined
@@ -62,7 +63,7 @@ checkFile config file = do
             Right () ->
                 case detectUnsupportedConstruct expression of
                     Just reason -> do
-                        $(logTM) InfoS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
+                        $(logTM) DebugS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
                         checkWithViolations config file expression True
                     Nothing -> checkWithViolations config file expression False
 
@@ -77,60 +78,49 @@ checkWithViolations config file expression skipTypeCheck = do
     reportDerivViolations file activeDerivViolations
     reportPatternViolations file activePatternViolations
 
-    typeCheckResult <- performTypeCheck config expression skipTypeCheck
+    typeCheckResult <- performTypeCheck config file expression skipTypeCheck
     case typeCheckResult of
         TCFail -> return TCFail
         TCOk
             | skipTypeCheck -> do
-                $(logTM) InfoS $ logStr $ crossMarker <> " " <> T.pack file <> " (unsupported construct — type check skipped)"
+                $(logTM) DebugS $ logStr $ crossMarker <> " " <> T.pack file <> " (unsupported construct — type check skipped)"
                 return TCFail
             | null activeNixViolations && null activeDerivViolations && null activePatternViolations -> do
-                $(logTM) InfoS $ logStr $ okMarker <> " " <> T.pack file
+                $(logTM) DebugS $ logStr $ okMarker <> " " <> T.pack file
                 return TCOk
         _ -> do
-            $(logTM) InfoS $ logStr $ crossMarker <> " " <> T.pack file <> " (lint violations)"
+            $(logTM) DebugS $ logStr $ crossMarker <> " " <> T.pack file <> " (lint violations)"
             return TCFail
 
-performTypeCheck :: Config.Config -> NExprLoc -> Bool -> AppM TCResult
-performTypeCheck config expression skipTypeCheck
+performTypeCheck :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
+performTypeCheck config file expression skipTypeCheck
     | skipTypeCheck = return TCOk
     | otherwise = do
-    result <- liftIO $ try $ case NixCompile.Nix.Inference.inferExpr expression of
-        Left typeError -> return $ Left typeError
-        Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
-    case result of
-        Left (exception :: SomeException) -> do
-            $(logTM) ErrorS $
-                logStr $
-                    T.unlines
-                        [ ""
-                        , "  INTERNAL ERROR (this is a bug in nix-compile):"
-                        , ""
-                        , T.unlines $ map ("     " <>) $ T.lines $ T.pack $ show exception
-                        ]
-            return TCFail
-        Right (Left typeError) ->
-            case Config.effectiveSeverity config Config.typeCheckRuleId of
-                Just Config.SevOff -> return TCOk
-                Just Config.SevWarning -> do
-                    $(logTM) WarningS $
-                        logStr $
-                            T.unlines
-                                [ ""
-                                , formatTypeError typeError
-                                , ""
-                                ]
-                    return TCOk
-                _ -> do
-                    $(logTM) ErrorS $
-                        logStr $
-                            T.unlines
-                                [ ""
-                                , formatTypeError typeError
-                                , ""
-                                ]
-                    return TCFail
-        Right (Right _) -> return TCOk
+        result <- liftIO $ try $ case NixCompile.Nix.Inference.inferExpr expression of
+            Left typeError -> return $ Left typeError
+            Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
+        case result of
+            Left (exception :: SomeException) -> do
+                emitDiagnostic $
+                    Diag.Diagnostic
+                        { Diag.diagSeverity = ErrorS
+                        , Diag.diagCode = Just "INTERNAL"
+                        , Diag.diagSpan = Nothing
+                        , Diag.diagSummary = "internal error (this is a bug in nix-compile): " <> T.pack (show exception)
+                        , Diag.diagHelp = []
+                        , Diag.diagSnippet = Nothing
+                        }
+                return TCFail
+            Right (Left typeError) ->
+                case Config.effectiveSeverity config Config.typeCheckRuleId of
+                    Just Config.SevOff -> return TCOk
+                    Just Config.SevWarning -> do
+                        emitDiagnostic (typeDiagnostic WarningS file typeError)
+                        return TCOk
+                    _ -> do
+                        emitDiagnostic (typeDiagnostic ErrorS file typeError)
+                        return TCFail
+            Right (Right _) -> return TCOk
 
 formatTypeError :: T.Text -> T.Text
 formatTypeError errorText =

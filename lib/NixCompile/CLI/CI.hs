@@ -9,7 +9,6 @@ module NixCompile.CLI.CI (
     runNixPhase,
     runPackagePhase,
     reportCISummary,
-    printTypeCheckHeader,
     collectFiles,
     wrapCheckFile,
 )
@@ -39,11 +38,6 @@ import NixCompile.Nix.Module qualified as Mod
 
 cmdCI :: Config.Config -> FilePath -> AppM ()
 cmdCI config dir = do
-    $(logTM) InfoS $ logStr "\n═══════════════════════════════════════════════════════════════════════════════"
-    $(logTM) InfoS $ logStr "  nix-compile ci"
-    $(logTM) InfoS $ logStr $ "  " <> T.pack dir
-    $(logTM) InfoS $ logStr "═══════════════════════════════════════════════════════════════════════════════"
-
     counts <- runCIPhases config dir
     reportCISummary counts
 
@@ -90,7 +84,6 @@ runCIPhases config dir = do
 runTypeCheckPhase :: Config.Config -> FilePath -> AppM CICounts
 runTypeCheckPhase config dir = do
     files <- liftIO $ collectFiles config dir
-    printTypeCheckHeader files
 
     loggingEnv <- getLogEnv
     loggingCtx <- getKatipContext
@@ -187,52 +180,29 @@ reportCISummary counts = do
                 + ciPackageViolations counts
                 + ciBashViolations counts
                 + ciGraphFailures counts
-    $(logTM) InfoS $ logStr ""
-    $(logTM) InfoS $
-        logStr $
-            T.unlines
-                [ "═══════════════════════════════════════════════════════════════════════════════"
-                , "  CI Summary"
-                , "  " <> T.pack (show (ciFilesScanned counts)) <> " files scanned"
-                , "  "
-                    <> T.pack (show (ciTypePass counts))
-                    <> " passed"
-                    <> (if ciTypeSkip counts > 0 then ", " <> T.pack (show (ciTypeSkip counts)) <> " skipped" else "")
-                    <> (if ciTypeFail counts > 0 then ", " <> T.pack (show (ciTypeFail counts)) <> " failed" else "")
-                , if ciLintViolations counts > 0
-                    then "  " <> T.pack (show (ciLintViolations counts)) <> " lint violations"
-                    else ""
-                , if ciPackageViolations counts > 0
-                    then "  " <> T.pack (show (ciPackageViolations counts)) <> " package violations"
-                    else ""
-                , if ciBashViolations counts > 0
-                    then "  " <> T.pack (show (ciBashViolations counts)) <> " bash violations"
-                    else ""
-                , if ciGraphFailures counts > 0
-                    then "  " <> T.pack (show (ciGraphFailures counts)) <> " graph failures"
-                    else ""
-                , "═══════════════════════════════════════════════════════════════════════════════"
-                ]
+    let n = T.pack . show
+        violations =
+            ciLintViolations counts
+                + ciPackageViolations counts
+                + ciBashViolations counts
+                + ciGraphFailures counts
+        summary =
+            "checked "
+                <> n (ciFilesScanned counts)
+                <> " files: "
+                <> n (ciTypePass counts)
+                <> " ok"
+                <> (if ciTypeSkip counts > 0 then ", " <> n (ciTypeSkip counts) <> " skipped" else "")
+                <> (if ciTypeFail counts > 0 then ", " <> n (ciTypeFail counts) <> " failed" else "")
+                <> (if violations > 0 then ", " <> n violations <> " violations" else "")
     if totalFailures == 0
         then do
-            $(logTM) InfoS $ logStr "\n  ALL GREEN"
+            $(logTM) InfoS $ logStr summary
             liftIO exitSuccess
         else do
-            $(logTM) ErrorS $ logStr $ "\n  " <> T.pack (show totalFailures) <> " total issue(s)"
+            $(logTM) ErrorS $ logStr summary
             liftIO exitFailure
 
-printTypeCheckHeader :: [FilePath] -> AppM ()
-printTypeCheckHeader files =
-    $(logTM) InfoS $
-        logStr $
-            T.unlines
-                [ ""
-                , "═══════════════════════════════════════════════════════════════════════════════"
-                , "  nix-compile typecheck"
-                , "  " <> T.pack (show (length files) <> " files")
-                , "═══════════════════════════════════════════════════════════════════════════════"
-                , ""
-                ]
 
 collectFiles :: Config.Config -> FilePath -> IO [FilePath]
 collectFiles config path = do

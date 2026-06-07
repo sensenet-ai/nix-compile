@@ -93,7 +93,7 @@ parseNixFiles file = do
         -- yield no embedded scripts and let the earlier failure stand.
         Left _ -> pure []
         Right scripts -> do
-            $(logTM) InfoS $ logStr $ T.pack $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
+            $(logTM) DebugS $ logStr $ T.pack $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
             pure scripts
 
 analyzeNixScripts :: Config.Config -> FilePath -> [Nix.BashScript] -> AppM Int
@@ -106,12 +106,12 @@ reportNixResults file totalErrors
         $(logTM) ErrorS $ logStr $ T.pack $ "\n" ++ show totalErrors ++ " total error(s)"
         liftIO exitFailure
     | otherwise = do
-        $(logTM) InfoS $ logStr $ T.pack $ file ++ ": OK"
+        $(logTM) DebugS $ logStr $ T.pack $ file ++ ": OK"
         liftIO exitSuccess
 
 checkScript :: Config.Config -> FilePath -> Nix.BashScript -> AppM Int
 checkScript configuration file bs = do
-    $(logTM) InfoS $ logStr $ "\n=== " <> Nix.bsName bs <> " ==="
+    $(logTM) DebugS $ logStr $ "\n=== " <> Nix.bsName bs <> " ==="
     case parseBash (Nix.bsContent bs) of
         Left err -> do
             $(logTM) ErrorS $ logStr $ "  Parse error: " <> err
@@ -163,7 +163,7 @@ checkScript configuration file bs = do
 
             let errorCount = length violations + bareCount + dynCount + typeErrors + configErrors
             if errorCount == 0
-                then $(logTM) InfoS "  OK"
+                then $(logTM) DebugS "  OK"
                 else $(logTM) ErrorS $ logStr $ T.pack $ "  " ++ show errorCount ++ " error(s)"
             return errorCount
 

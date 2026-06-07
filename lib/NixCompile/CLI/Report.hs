@@ -17,6 +17,8 @@ module NixCompile.CLI.Report (
     reportNixLintViolations,
     reportDerivViolations,
     reportPatternViolations,
+    emitDiagnostic,
+    typeDiagnostic,
 )
 where
 
@@ -24,8 +26,10 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Data.Text (Text)
 import Data.Text qualified as T
 import System.Exit (exitFailure, exitSuccess)
+import Text.Read (readMaybe)
 
 import NixCompile.CLI.Types
+import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Config qualified as Config
 import NixCompile.Lint.Forbidden (Violation (..))
 import NixCompile.Log
@@ -34,6 +38,33 @@ import NixCompile.Nix.LintDerivation qualified as Derivation
 import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.LintPatterns qualified as LintPatterns
 import NixCompile.Types (Loc (..), Span (..))
+
+-- | Render a diagnostic in the unified clippy layout and log it at its own
+-- severity (to stderr, per the stdout/stderr contract).
+emitDiagnostic :: Diag.Diagnostic -> AppM ()
+emitDiagnostic d = $(logTM) (Diag.diagSeverity d) $ logStr (Diag.renderDiagnostic d)
+
+-- | Build a TYPE diagnostic from an engine error string, parsing a leading
+-- @"line:col: "@ prefix into a span when present.
+typeDiagnostic :: Severity -> FilePath -> Text -> Diag.Diagnostic
+typeDiagnostic sev file raw =
+    Diag.Diagnostic
+        { Diag.diagSeverity = sev
+        , Diag.diagCode = Just "TYPE"
+        , Diag.diagSpan = mspan
+        , Diag.diagSummary = summary
+        , Diag.diagHelp = []
+        , Diag.diagSnippet = Nothing
+        }
+  where
+    (mspan, summary) = case T.breakOn ": " raw of
+        (loc, rest)
+            | not (T.null rest)
+            , [lt, ct] <- T.splitOn ":" loc
+            , Just l <- readMaybe (T.unpack lt)
+            , Just c <- readMaybe (T.unpack ct) ->
+                (Just (Span (Loc l c) (Loc l c) (Just file)), T.drop 2 rest)
+        _ -> (Nothing, raw)
 
 partitionViolations :: Config.Config -> [Violation] -> ([Violation], [Violation])
 partitionViolations config = foldr go ([], [])
