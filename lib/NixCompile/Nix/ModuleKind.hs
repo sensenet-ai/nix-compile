@@ -287,7 +287,9 @@ detectFromAttrNames names
     hasMkDeriv = any (`elem` names) ["mkDerivation", "stdenv.mkDerivation", "buildPythonPackage", "buildGoModule"]
     hasPname = "pname" `elem` names
     hasVersion = "version" `elem` names
-    hasFlakeConfig = "perSystem" `elem` names || "flake" `elem` names
+    -- `imports` (with no options/config/mkDerivation above) marks a flake-parts
+    -- module that only wires children — common in all-flake-module layouts.
+    hasFlakeConfig = any (`elem` names) ["perSystem", "flake", "imports"]
     hasShellAttrs = "buildInputs" `elem` names && "shellHook" `elem` names
     hasLibExports = any (`elem` names) ["mkOption", "mkIf", "mapAttrs", "filterAttrs"]
 

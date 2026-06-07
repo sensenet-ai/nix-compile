@@ -216,6 +216,20 @@ test-suite nix-compile-flake-parts
     hs-source-dirs:   test
     default-language: GHC2021
 
+-- Fixture-driven layout-convention enforcement (8 pass + 8 fail per convention).
+test-suite nix-compile-layout
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Layout.hs
+    build-depends:
+        base >= 4.16 && < 4.21,
+        directory >= 1.3 && < 1.4,
+        filepath >= 1.4 && < 1.6,
+        nix-compile,
+        text >= 2.0 && < 2.2
+    hs-source-dirs:   test
+    default-language: GHC2021
+
 -- Differential soundness oracle: compares inferred types against
 -- `nix-instantiate --eval` (builtins.typeOf). Skips cleanly when
 -- nix-instantiate is unavailable (e.g. the sandboxed flake check).

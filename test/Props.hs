@@ -1956,14 +1956,16 @@ prop_layout_filename_kebab =
      in null violations
             && not (null $ LC.validateLayout LC.straylight "/" [("nix/modules/flake/snake_name.nix", Detection FlakeModule 100 [])])
 
--- | validateFlakeModReq with convRequireFlakeMod = True
+-- | validateFlakeModReq with convRequireFlakeMod = True: flake modules and
+-- package leaves are permitted; any other recognized kind is rejected (E006).
 prop_layout_flake_mod_required :: Bool
 prop_layout_flake_mod_required =
     let strictConv = LC.straylight{LC.convRequireFlakeMod = True}
+        nixosViolations = LC.validateLayout strictConv "/" [("nix/modules/foo.nix", Detection NixOSModule 100 [])]
         packageViolations = LC.validateLayout strictConv "/" [("nix/packages/foo.nix", Detection Package 100 [])]
         flakeViolations = LC.validateLayout strictConv "/" [("nix/modules/flake/bar.nix", Detection FlakeModule 100 [])]
-     in not (null packageViolations)
-            && any (\e -> LC.errCode e == LC.E006) packageViolations
+     in any (\e -> LC.errCode e == LC.E006) nixosViolations
+            && null packageViolations
             && null flakeViolations
 
 -- | validateLayout with unknown module kind produces no location errors

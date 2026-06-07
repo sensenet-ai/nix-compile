@@ -31,6 +31,7 @@ module NixCompile.Nix.LayoutConvention (
     nixpkgsByName,
     flakeParts,
     nixosConfig,
+    allFlakeModule,
 
     -- * Validation
     validateLayout,
@@ -344,6 +345,35 @@ nixosConfig =
         , convRequireFlakeMod = False
         }
 
+-- | The all-flake-module convention (modeled on github:nixified-ai/flake):
+-- every .nix under flake-modules/ is a flake-parts module wiring its children
+-- via `imports`, with leaf package.nix derivations. Requires every recognized
+-- file to be a flake module or a package (convRequireFlakeMod).
+allFlakeModule :: Convention
+allFlakeModule =
+    Convention
+        { convName = "all-flake-module"
+        , convDescription = "Every .nix is a flake-parts module under flake-modules/ (nixified-ai)"
+        , convRules =
+            [ ConventionRule
+                { ruleKind = FlakeModule
+                , rulePattern = Prefix ["flake-modules"]
+                , ruleForbidden = []
+                , ruleExportName = Nothing
+                }
+            , ConventionRule
+                { ruleKind = Package
+                , rulePattern = Prefix ["flake-modules"]
+                , ruleForbidden = []
+                , ruleExportName = Nothing
+                }
+            ]
+        , convFileNaming = NoNaming
+        , convAttrNaming = NoNaming
+        , convIdentNaming = NoNaming
+        , convRequireFlakeMod = True
+        }
+
 -- | Look up a convention by name. Defaults to 'straylight' if unrecognised.
 layoutFromName :: Text -> Convention
 layoutFromName = \case
@@ -351,6 +381,7 @@ layoutFromName = \case
     "nixpkgs-by-name" -> nixpkgsByName
     "flake-parts" -> flakeParts
     "nixos-config" -> nixosConfig
+    "all-flake-module" -> allFlakeModule
     _ -> straylight
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -655,14 +686,17 @@ validateFileName conv relPath fileName =
 
 validateFlakeModReq :: Convention -> FilePath -> ModuleKind -> Detection -> [LayoutError]
 validateFlakeModReq conv relPath kind _detection =
-    if convRequireFlakeMod conv && kind /= Flake && kind /= FlakeModule && kind /= Unknown
+    -- Under a uniform-structure convention every recognized file must be a flake
+    -- module, the flake itself, or a package.nix leaf; anything else (a stray
+    -- NixOS module, overlay, bare attrset, or raw expression) is rejected.
+    if convRequireFlakeMod conv && kind `notElem` [Flake, FlakeModule, Package]
         then
             [ LayoutError
                 { errCode = E006
                 , errPath = relPath
                 , errKind = kind
-                , errMessage = "File must be a flake module (convention requires uniform structure)"
-                , errExpected = Just "flake-parts module structure"
+                , errMessage = "File must be a flake module or package (convention requires uniform structure)"
+                , errExpected = Just "flake-parts module or package.nix"
                 }
             ]
         else []
