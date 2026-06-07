@@ -10,21 +10,24 @@ Compile-time static analysis for Nix expressions and embedded bash scripts.
 
 ## // documentation //
 
-Full docs are in [`doc/`](./doc/) (built with [mdBook](https://rust-lang.github.io/mdBook/)):
+Documentation lives under [`doc/`](./doc/): the mdBook is at [`doc/book/`](./doc/book/)
+(built with [mdBook](https://rust-lang.github.io/mdBook/)); design notes, the
+specification, and the review/TODO trackers sit alongside it in `doc/`.
 
 ```bash
-mdbook serve doc/    # local preview at http://localhost:3000
-mdbook build doc/    # build to doc/book/
+mdbook serve doc/book/    # local preview at http://localhost:3000
+mdbook build doc/book/    # build to doc/book/book/
 ```
 
 Or read the source markdown directly:
 
-- [Introduction](./doc/src/introduction.md)
-- [Getting Started](./doc/src/getting-started.md)
-- [CLI Reference](./doc/src/cli.md)
-- [Architecture](./doc/src/architecture.md)
-- [Policy Rules](./doc/src/policy.md)
-- [Bug Tracker](./doc/src/bugs.md)
+- [Introduction](./doc/book/src/introduction.md)
+- [Getting Started](./doc/book/src/getting-started.md)
+- [CLI Reference](./doc/book/src/cli.md)
+- [Architecture](./doc/book/src/architecture.md)
+- [Policy Rules](./doc/book/src/policy.md)
+- [Bug Tracker](./doc/book/src/bugs.md)
+- [Specification](./doc/SPECIFICATION.md) · [Hacking](./doc/HACKING.md) · [Design notes](./doc/design/)
 
 ## // quick start //
 

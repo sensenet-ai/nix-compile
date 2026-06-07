@@ -55,7 +55,7 @@ the un-forcing test suite was hiding.**
 > fact correctly **rejected**: `unify'` hits its `(t, TVar v) -> bindVar` arm
 > *before* `unifyUnion`, so the variable is bound to the whole union and the later
 > application catches the mismatch. The residual `checkUnionMembership`
-> `TVar _ -> pure ()` ([Infer.hs:409](lib/NixCompile/Nix/Infer.hs#L409)) is a narrow
+> `TVar _ -> pure ()` ([Infer.hs:409](../lib/NixCompile/Nix/Infer.hs#L409)) is a narrow
 > edge case, not the broad hole described. Like #14, overstated against this tree.
 > (The `TStrLit`-ignores-text and closed/open-ignores-optional sub-parts of #8 do
 > stand.)
@@ -66,7 +66,7 @@ the un-forcing test suite was hiding.**
 
 ### 1. Nested attribute selection is truncated to one level — CONFIRMED
 
-[`Infer.hs:792`](lib/NixCompile/Nix/Infer.hs#L792):
+[`Infer.hs:792`](../lib/NixCompile/Nix/Infer.hs#L792):
 
 ```haskell
 NSelect mDef base (attr :| _) -> inferSelect environment base attr (isJust mDef)
@@ -81,7 +81,7 @@ path.
 
 ### 2. Selection on a variable emits no row constraint — CONFIRMED
 
-[`inferSelect`, `Infer.hs:592-605`](lib/NixCompile/Nix/Infer.hs#L592). When the
+[`inferSelect`, `Infer.hs:592-605`](../lib/NixCompile/Nix/Infer.hs#L592). When the
 base resolves to `TVar`, the case falls to `_ -> freshVar` (line 605) with no
 constraint recorded. So `x: x.foo` infers `α → β` with no requirement that `α`
 be an attrset containing `foo`. `(x: x.foo) 5` type-checks. A real
@@ -91,23 +91,23 @@ polymorphism" and "principality" (INV-3) claims in one shot.
 
 ### 4. `TAny` remains a universal escape hatch; comment claims a fix that isn't there — CONFIRMED
 
-[`Infer.hs:313-314`](lib/NixCompile/Nix/Infer.hs#L313): `(TAny, _) -> pure ()` /
+[`Infer.hs:313-314`](../lib/NixCompile/Nix/Infer.hs#L313): `(TAny, _) -> pure ()` /
 `(_, TAny) -> pure ()`. The comment at
-[`Infer.hs:122-125`](lib/NixCompile/Nix/Infer.hs#L122) states the polymorphic
+[`Infer.hs:122-125`](../lib/NixCompile/Nix/Infer.hs#L122) states the polymorphic
 builtins are "now real schemes, so misuse fails." Only **six** are
-([`polymorphicBuiltins`, 128-137](lib/NixCompile/Nix/Infer.hs#L128)): `head`,
+([`polymorphicBuiltins`, 128-137](../lib/NixCompile/Nix/Infer.hs#L128)): `head`,
 `tail`, `length`, `elemAt`, `filter`, `concatLists`. The comment explicitly names
 `map` as fixed, but `map`, `foldl'`, `concatMap`
-([162-165](lib/NixCompile/Nix/Infer.hs#L162)), `getAttr`, `attrValues`, `import`
+([162-165](../lib/NixCompile/Nix/Infer.hs#L162)), `getAttr`, `attrValues`, `import`
 remain `TAny`-typed. `builtins.map (x: x + 1) ["a" "b"]` type-checks. `map` is
 the most-used higher-order builtin and is not fixed; the comment is misleading.
 
 ### 5. `import : TPath → TAny` makes cross-module inference largely inert — CONFIRMED (structural)
 
-[`Infer.hs:190`](lib/NixCompile/Nix/Infer.hs#L190). The intercept
-[`inferAppWithImport`, 550-559](lib/NixCompile/Nix/Infer.hs#L550) only recovers a
+[`Infer.hs:190`](../lib/NixCompile/Nix/Infer.hs#L190). The intercept
+[`inferAppWithImport`, 550-559](../lib/NixCompile/Nix/Infer.hs#L550) only recovers a
 real type when (a) the argument is a bare literal path/string —
-[`extractImportPathLiteral`, 562-567](lib/NixCompile/Nix/Infer.hs#L562) returns
+[`extractImportPathLiteral`, 562-567](../lib/NixCompile/Nix/Infer.hs#L562) returns
 the **raw source string** (`./foo.nix`) and fails on `import ./${x}.nix`,
 `import (./. + "/f.nix")`, `let p = …; in import p` — **and** (b) `lookupImport`
 hits. `envImportTypes` is a `Map FilePath NixType`; if the module graph keys it by
@@ -120,16 +120,16 @@ importer consumes a type error from the imported file.**
 
 ### 8. Unions never constrain a variable; minor type-erasure cases — CONFIRMED
 
-[`unifyUnion`, 399-411](lib/NixCompile/Nix/Infer.hs#L399):
+[`unifyUnion`, 399-411](../lib/NixCompile/Nix/Infer.hs#L399):
 `checkUnionMembership` has `| TVar _ <- t' = pure ()` (line 409). So `toString`
 (`TUnion[TInt,TFloat,TBool,TPath,TString] → TString`) applied to a variable adds
 no constraint. `toString {a = 1;}` type-checks. Unions only bite against
 already-concrete types. Related:
 
-- [`Infer.hs:320`](lib/NixCompile/Nix/Infer.hs#L320): `(TStrLit _, TStrLit _) ->
+- [`Infer.hs:320`](../lib/NixCompile/Nix/Infer.hs#L320): `(TStrLit _, TStrLit _) ->
   pure ()` ignores the carried text — `TStrLit "a" ~ TStrLit "b"` succeeds.
   Decorative singleton type, not a literal type.
-- [`unifyAttrsClosedOpen`, 384-394](lib/NixCompile/Nix/Infer.hs#L384):
+- [`unifyAttrsClosedOpen`, 384-394](../lib/NixCompile/Nix/Infer.hs#L384):
   `missingInClosed` is computed without consulting the optional-field `Bool`, so
   an open row demanding an *optional* key the closed set lacks still errors.
 
@@ -139,7 +139,7 @@ already-concrete types. Related:
 
 ### 3. `==` / `!=` unify their operands — CONFIRMED
 
-[`Infer.hs:667-668`](lib/NixCompile/Nix/Infer.hs#L667):
+[`Infer.hs:667-668`](../lib/NixCompile/Nix/Infer.hs#L667):
 
 ```haskell
 NEq  -> unify leftT rightT >> pure TBool
@@ -148,13 +148,13 @@ NNEq -> unify leftT rightT >> pure TBool
 
 In Nix, `==` is total over all values and never type-errors. `unify'` has no
 cross-`TNull` case (only `(TNull, TNull)` at
-[`Infer.hs:324`](lib/NixCompile/Nix/Infer.hs#L324)), so `x == null` with
+[`Infer.hs:324`](../lib/NixCompile/Nix/Infer.hs#L324)), so `x == null` with
 `x : TInt` falls to `_ -> typeMismatch`. That is the single most idiomatic guard
 in nixpkgs, reported as an error. Large false-positive surface on real Nix.
 
 ### 7. `NPlus` rejects legal heterogeneous `+` — CONFIRMED (this tree)
 
-[`Infer.hs:681-692`](lib/NixCompile/Nix/Infer.hs#L681) unifies both operands, then
+[`Infer.hs:681-692`](../lib/NixCompile/Nix/Infer.hs#L681) unifies both operands, then
 inspects the resolved type. Nix permits `1 + 1.5` (→ Float), `./a + "b"`
 (path+string), `"" + ./a`. Each needs `unify TInt TFloat` / `unify TPath TString`,
 which fail (base types unify identical-only). So legal `+` across numeric/path/
@@ -168,9 +168,9 @@ behavior is present as described.)
 
 ### 6. Subtyping-as-empty-substitution is order-dependent and incomplete — CONFIRMED
 
-[`Infer/Unify.hs:36-40`](lib/NixCompile/Infer/Unify.hs#L36) handles `TNumeric`
+[`Infer/Unify.hs:36-40`](../lib/NixCompile/Infer/Unify.hs#L36) handles `TNumeric`
 against `TInt`/`TBool` by returning `emptySubst`, and
-[`solve = foldM`](lib/NixCompile/Infer/Unify.hs#L62) folds left.
+[`solve = foldM`](../lib/NixCompile/Infer/Unify.hs#L62) folds left.
 
 - `[TInt ~ α, α ~ TBool]`: first binds `α ↦ TInt`; second becomes `TInt ~ TBool`
   → `Mismatch`. But the set is satisfiable with `α = TNumeric`. → **incomplete**
@@ -198,14 +198,14 @@ the spec and verified nowhere.
 
 ### 10. Property suite is dominated by no-crash / determinism — CONFIRMED
 
-[`prop_nix_infer_no_crash`, 1242](test/Props.hs#L1242) asserts only that the
+[`prop_nix_infer_no_crash`, 1242](../test/Props.hs#L1242) asserts only that the
 result is a `Left` or a forceable `Right`.
-[`prop_nix_infer_deterministic`, 1251](test/Props.hs#L1251) asserts `f x == f x`.
+[`prop_nix_infer_deterministic`, 1251](../test/Props.hs#L1251) asserts `f x == f x`.
 No positive property asserts that an accepted program is well-typed.
 
 ### 11. The generator cannot reach the select bugs — CONFIRMED
 
-[`genNixExpr`, 1106-1240](test/Props.hs#L1106) produces atoms, lists, attrsets,
+[`genNixExpr`, 1106-1240](../test/Props.hs#L1106) produces atoms, lists, attrsets,
 let, lambda, if, app, binop, concat, merge, with, rec — but **no
 attribute-selection node** (`NSelect`). Finding #1 (nested select) is structurally
 unreachable by the generative suite. `test/Psychotic.hs` builds `a.x.x…` by hand
@@ -217,7 +217,7 @@ but asserts no-crash only.
 
 ### 12. `lspSafeParse`'s graceful guarantee is false for lazy failures — CONFIRMED
 
-[`LSP/Handlers.hs:98-105`](lib/NixCompile/LSP/Handlers.hs#L98):
+[`LSP/Handlers.hs:98-105`](../lib/NixCompile/LSP/Handlers.hs#L98):
 
 ```haskell
 lspSafeParse txt = unsafePerformIO $ do
@@ -250,14 +250,14 @@ the scaling shape is readable from source and is not reassuring.
 ### 17. Inference is naive-`Map` HM → super-linear — CONFIRMED
 
 `type Subst = Map TypeVar NixType` with eager composition
-([`Nix/Types.hs:116-118`](lib/NixCompile/Nix/Types.hs#L116)):
+([`Nix/Types.hs:116-118`](../lib/NixCompile/Nix/Types.hs#L116)):
 
 ```haskell
 composeSubst s1 s2 = Map.map (applySubst s1) s2 `Map.union` s1
 ```
 
 and every bind composes a singleton over the whole accumulated substitution
-([`Infer.hs:270-272`](lib/NixCompile/Nix/Infer.hs#L270)):
+([`Infer.hs:270-272`](../lib/NixCompile/Nix/Infer.hs#L270)):
 
 ```haskell
 addSubst v t = modify $ \s -> s{ inferSubst = composeSubst (singleSubst v t) (inferSubst s) }
@@ -266,9 +266,9 @@ addSubst v t = modify $ \s -> s{ inferSubst = composeSubst (singleSubst v t) (in
 So each bind re-walks the entire substitution (O(k·m) for k entries, range size
 m → O(n²·m) over n binds). On top of that, `unify` re-applies the *whole*
 substitution to *both* operands on entry
-([`Infer.hs:300-304`](lib/NixCompile/Nix/Infer.hs#L300)) and recurses back through
+([`Infer.hs:300-304`](../lib/NixCompile/Nix/Infer.hs#L300)) and recurses back through
 `unify` structurally, and `applySubst`'s `TVar` case *chases*
-(`Just t -> go t`, [`Nix/Types.hs:122-126`](lib/NixCompile/Nix/Types.hs#L122)).
+(`Just t -> go t`, [`Nix/Types.hs:122-126`](../lib/NixCompile/Nix/Types.hs#L122)).
 This is the textbook HM scaling trap that union-find + path compression exists to
 avoid. It bites on **wide flat attrsets and long binding chains** — exactly the
 shape of nixpkgs modules. Small/narrow expressions are fine; the cliff is at
@@ -286,14 +286,14 @@ mean what they look like:
 
 - **It doesn't force results.** `parseStr`/`analyzeWHNF`/`inferWHNF`/`lintWHNF`/
   `safetyPipelineResult` all return `Bool`
-  ([`bench/Bench.hs:171-193`](bench/Bench.hs#L171)). `nf` on a `Bool` forces the
+  ([`bench/Bench.hs:171-193`](../bench/Bench.hs#L171)). `nf` on a `Bool` forces the
   wrapped `Either` only to its outer constructor — for parse that's
   `Right <thunk>`, leaving the whole AST spine unevaluated; for infer it runs the
   solve control-flow but leaves the materialized `NixType` and `[Binding]` as
   thunks; for lint it leaves the violation list unforced. The comment at
-  [`Bench.hs:80`](bench/Bench.hs#L80) claims the AST is forced; the
+  [`Bench.hs:80`](../bench/Bench.hs#L80) claims the AST is forced; the
   `parseNixExpr` group does not. The tell: a `newtype Whnf` with
-  `rnf (Whnf _) = ()` ([`Bench.hs:89-92`](bench/Bench.hs#L89)) is defined "because
+  `rnf (Whnf _) = ()` ([`Bench.hs:89-92`](../bench/Bench.hs#L89)) is defined "because
   tasty-bench's `nf` requires it" and then **never used** — the no-op-`NFData`
   dodge, with the `Bool` wrappers doing the same job by another route.
 - **Inputs are too small and narrow.** Largest infer fixture is `attrSet 100` /
@@ -316,14 +316,14 @@ immediately deadlocked inference in a CPU-bound infinite loop.
 
 Root cause, two pieces:
 
-1. `instantiate` ([Infer.hs:480-484](lib/NixCompile/Nix/Infer.hs#L480)) draws its
+1. `instantiate` ([Infer.hs:480-484](../lib/NixCompile/Nix/Infer.hs#L480)) draws its
    fresh vars from the same `0,1,…` supply that the builtin schemes use for their
    quantified vars (`scheme1`/`scheme2` literally use `TypeVar 0`/`TypeVar 1`). At
    a top-level call the supply is still low, so a "fresh" var equals a quantified
    var and `instantiate` builds the self-referential substitution
    `{ TypeVar 0 ↦ TVar (TypeVar 0) }`.
 2. `applySubst`'s `TVar` arm chased (`Just t -> go t`,
-   [Nix/Types.hs:122-126](lib/NixCompile/Nix/Types.hs#L122)). On a self-map that
+   [Nix/Types.hs:122-126](../lib/NixCompile/Nix/Types.hs#L122)). On a self-map that
    recurses forever.
 
 `map` *alone* didn't hang only because the type was returned lazily and never
@@ -406,7 +406,7 @@ reviewer's claim "the file is `app/Main.hs`" is correct.
 
 ### 14. `FlakeOutputs` `Eq` is lawless/lossy — PARTIAL
 
-[`Flake.hs:89-91`](lib/NixCompile/Nix/Flake.hs#L89):
+[`Flake.hs:89-91`](../lib/NixCompile/Nix/Flake.hs#L89):
 
 ```haskell
 instance Eq FlakeOutputs where
@@ -429,8 +429,8 @@ visible at call sites.
 
 ### 15. The checker fully models constructs it bans — CONFIRMED (tension, not a bug)
 
-[`inferWith`, 530-538](lib/NixCompile/Nix/Infer.hs#L530) (with a memoized field
-resolver) and [`inferRecursiveBindings`, 852](lib/NixCompile/Nix/Infer.hs#L852)
+[`inferWith`, 530-538](../lib/NixCompile/Nix/Infer.hs#L530) (with a memoized field
+resolver) and [`inferRecursiveBindings`, 852](../lib/NixCompile/Nix/Infer.hs#L852)
 implement `with` and `rec` semantics, both unconditionally forbidden per SPEC
 §3.2 (ALEPH-N001/N002, enforced in `Nix/Lint.hs`). This is defensible — inference
 and linting are separate passes, and modeling banned forms lets the checker stay
@@ -441,18 +441,18 @@ Either document "infer models a superset of the accepted language," or gate the
 ### 16. The formatter stamps unsound annotations and is unprotected by any semantic property — CONFIRMED
 
 Two formatters exist:
-[`Format.formatFile`](lib/NixCompile/Nix/Format.hs) →
-[`Pretty.annotateSource`](lib/NixCompile/Nix/Pretty.hs) injects `# ::` type
-comments; [`Formatter.formatNixFile`](lib/NixCompile/Nix/Formatter.hs) is the
-reformatter wired into `fmt` ([`CLI/Dispatch.hs:76`](lib/NixCompile/CLI/Dispatch.hs#L76)).
+[`Format.formatFile`](../lib/NixCompile/Nix/Format.hs) →
+[`Pretty.annotateSource`](../lib/NixCompile/Nix/Pretty.hs) injects `# ::` type
+comments; [`Formatter.formatNixFile`](../lib/NixCompile/Nix/Formatter.hs) is the
+reformatter wired into `fmt` ([`CLI/Dispatch.hs:76`](../lib/NixCompile/CLI/Dispatch.hs#L76)).
 
 - The injected `# ::` annotations come from the inference engine audited above, so
   they will frequently be wrong (findings #1–#8).
 - There is **no** `parse(format(x)) ≅ parse(x)` property. The format properties
-  are [`Props.hs:2879-2923`](test/Props.hs#L2879):
+  are [`Props.hs:2879-2923`](../test/Props.hs#L2879):
   `prop_format_no_crash` asserts only `T.length output >= T.length src`
-  ([2904](test/Props.hs#L2904)); `prop_format_preserves` asserts only
-  `"42" isInfixOf output` ([2889](test/Props.hs#L2889)). Neither checks meaning.
+  ([2904](../test/Props.hs#L2904)); `prop_format_preserves` asserts only
+  `"42" isInfixOf output` ([2889](../test/Props.hs#L2889)). Neither checks meaning.
 - The reformatter "collapses too much whitespace" (self-admitted in the old
   TODO). In Nix, `''…''` indented-string interior whitespace is semantically
   significant, so a formatter that touches it changes program meaning. For a
@@ -463,10 +463,10 @@ reformatter wired into `fmt` ([`CLI/Dispatch.hs:76`](lib/NixCompile/CLI/Dispatch
 ## What is actually fine (calibration)
 
 - Occurs check is present and correct on both unifiers
-  ([`Infer.hs:349`](lib/NixCompile/Nix/Infer.hs#L349),
-  [`Unify.hs:56`](lib/NixCompile/Infer/Unify.hs#L56)).
+  ([`Infer.hs:349`](../lib/NixCompile/Nix/Infer.hs#L349),
+  [`Unify.hs:56`](../lib/NixCompile/Infer/Unify.hs#L56)).
 - Let-generalization via SCC (`stronglyConnComp`,
-  [`Infer.hs:1012`](lib/NixCompile/Nix/Infer.hs#L1012)) exists; `instantiate`
+  [`Infer.hs:1012`](../lib/NixCompile/Nix/Infer.hs#L1012)) exists; `instantiate`
   freshens correctly.
 - Depth guard (`Safety.analyzeDepth`, cap 200) and store-path traversal guards
   landed.
@@ -510,8 +510,8 @@ docs claim, so every refactor regrows the same family.
 
 | Root | What's missing | Symptoms it produces | Point-fixable? |
 |------|----------------|----------------------|----------------|
-| **RC1** | **No row variables.** `TAttrsOpen` is `Map Name (Type, Bool)` with *no tail var* ([`Nix/Types.hs:79`](lib/NixCompile/Nix/Types.hs#L79)), so a second select can't accumulate "also has bar" — `unifyAttrsOpenOpen` checks the intersection and forgets the union. | #1, #2, #8; the README "row polymorphism" claim | **No** — this is building the advertised feature |
-| **RC2** | **No constraint solver.** Inference is immediate unification folded over a list ([`Unify.hs:62-69`](lib/NixCompile/Infer/Unify.hs#L62)), so it can't defer/relate constraints. | #6 (order-dependent bash subtyping), #8 (union can't constrain a var), and the eventual `//`/union-membership cases | **No** — architectural |
+| **RC1** | **No row variables.** `TAttrsOpen` is `Map Name (Type, Bool)` with *no tail var* ([`Nix/Types.hs:79`](../lib/NixCompile/Nix/Types.hs#L79)), so a second select can't accumulate "also has bar" — `unifyAttrsOpenOpen` checks the intersection and forgets the union. | #1, #2, #8; the README "row polymorphism" claim | **No** — this is building the advertised feature |
+| **RC2** | **No constraint solver.** Inference is immediate unification folded over a list ([`Unify.hs:62-69`](../lib/NixCompile/Infer/Unify.hs#L62)), so it can't defer/relate constraints. | #6 (order-dependent bash subtyping), #8 (union can't constrain a var), and the eventual `//`/union-membership cases | **No** — architectural |
 | **RC3** | **No differential oracle.** Nothing generates well/ill-typed programs and checks accept⟹evaluates / reject⟹fails. | Why #1–#8 existed *and survived ~4,500 lines of tests* | **No** — net-new infra |
 | **RC4** | **Quadratic substitution** (eager `composeSubst` + chase). | #17 | **Conditionally** — ignorable if real inputs never get wide; measure first |
 
