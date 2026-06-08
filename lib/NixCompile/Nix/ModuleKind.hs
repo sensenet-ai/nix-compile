@@ -1,6 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                               // module kind
@@ -11,18 +10,33 @@
 --                                                                 — Neuromancer
 --
 
-{- | Detect what kind of Nix module a file is by parsing its structure.
+{- | What kind of Nix file is this? A @.nix@ file carries no declared type, yet
+the layout checker, the module-graph builder, and the type checker all need to
+know whether they are looking at a package, a NixOS module, a flake-parts module,
+an overlay, and so on. This module answers that question from the file's path and
+parsed structure, and reports how sure it is.
 
-Module kinds:
+The strategy is a cascade, most-authoritative first:
 
-  * 'NixOSModule' — { config, lib, pkgs, ... }: { options = ...; config = ...; }
-  * 'HomeModule' — Same structure, for home-manager
-  * 'Package' — { lib, stdenv, ... }: stdenv.mkDerivation { ... }
-  * 'Overlay' — final: prev: { ... }
-  * 'FlakeModule' — flake-parts module
-  * 'Library' — { lib }: { ... } (exports functions)
-  * 'Flake' — The flake.nix file itself
-  * 'Unknown' — Could not determine
+  1. An explicit @_class = "nixos"@ attribute — the author told us; we believe
+     them (confidence 100).
+  2. The filename — @flake.nix@, @package.nix@, @overlay.nix@ are strong signals.
+  3. The shape — parameter names (@{ stdenv, ... }@) and body attributes
+     (@options@/@config@, @mkDerivation@, @perSystem@, @final: prev:@).
+
+Filename and shape each emit a list of weighted hints; 'selectBest' takes the
+highest-confidence one. The recognized kinds:
+
+  * 'NixOSModule' — @{ config, lib, pkgs, ... }: { options = …; config = …; }@
+  * 'HomeModule' — the same shape, for home-manager
+  * 'DarwinModule' — the same shape, for nix-darwin
+  * 'Package' — @{ lib, stdenv, ... }: stdenv.mkDerivation { … }@
+  * 'Overlay' — @final: prev: { … }@
+  * 'FlakeModule' — a flake-parts module (@perSystem@ / @flake@ / @imports@)
+  * 'Library' — @{ lib }: { … }@ exporting functions
+  * 'Flake' — the @flake.nix@ file itself
+  * 'Shell' — a devShell / @shell.nix@
+  * 'Unknown' — no signal strong enough to commit
 -}
 module NixCompile.Nix.ModuleKind (
   -- * Types
@@ -59,7 +73,7 @@ import System.FilePath (takeFileName)
 --                                                                     // types
 -- ══════════════════════════════════════════════════════════════════════════════
 
--- | The kind of Nix module.
+-- | The kind of Nix file, as recognized by 'detectKind'.
 data ModuleKind
   = -- | NixOS configuration module
     NixOSModule
@@ -67,262 +81,256 @@ data ModuleKind
     HomeModule
   | -- | nix-darwin module
     DarwinModule
-  | -- | Derivation/package definition
+  | -- | derivation / package definition
     Package
-  | -- | Nixpkgs overlay (final: prev: ...)
+  | -- | nixpkgs overlay (@final: prev: …@)
     Overlay
   | -- | flake-parts module
     FlakeModule
-  | -- | Part of a flake (perSystem, etc.)
+  | -- | part of a flake (@perSystem@, etc.)
     FlakePart
-  | -- | Library of functions
+  | -- | library of functions
     Library
-  | -- | flake.nix itself
+  | -- | the @flake.nix@ file itself
     Flake
-  | -- | devShell or shell.nix
+  | -- | devShell or @shell.nix@
     Shell
-  | -- | Test file
+  | -- | test file
     Test
-  | -- | Could not determine
+  | -- | no signal strong enough to commit
     Unknown
   deriving (Eq, Show, Ord)
 
--- | Detection result with confidence and evidence.
+{- | A classification plus how confident we are and why. The evidence list is
+kept so diagnostics can explain the verdict ("detected as Package because: has
+stdenv param, calls mkDerivation").
+-}
 data Detection = Detection
   { detectedKind :: !ModuleKind
   , detectedConf :: !Int
-  -- ^ 0-100 confidence
+  -- ^ confidence, 0–100
   , detectedEvidence :: ![Text]
-  -- ^ Why we think this
+  -- ^ the hints that produced this kind
   }
   deriving (Eq, Show)
+
+{- | View an annotated expression as its underlying functor layer.
+
+hnix wraps every node in an annotation spine, @Fix (Compose (AnnUnit span) …)@.
+Matching that wrapper inline turns every structural decision into a @case@; this
+pattern lets us strip it in a clause /head/ instead, so dispatch reads as a set
+of equations (per the house rule, guards and equations over @case@).
+-}
+pattern Layer :: NExprF NExprLoc -> NExprLoc
+pattern Layer e <- Fix (Compose (AnnUnit _ e))
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                                   // detection
 -- ══════════════════════════════════════════════════════════════════════════════
 
--- | Detect module kind from file path and content.
+-- | Parse a file from disk and classify it; 'Unknown' if it does not parse.
 detectKindFromFile :: FilePath -> IO Detection
 detectKindFromFile path = do
   content <- TIO.readFile path
-  case parseNix path content of
-    Left _ -> pure $ Detection Unknown 0 ["parse failed"]
-    Right expr -> pure $ detectKind path expr
+  pure (either parseFailed (detectKind path) (parseNix path content))
+ where
+  parseFailed _ = Detection Unknown 0 ["parse failed"]
 
--- | Detect module kind from parsed expression.
+{- | Classify an already-parsed expression. A declared @_class@ wins outright;
+otherwise we pool the filename and structural hints and take the best.
+-}
 detectKind :: FilePath -> NExprLoc -> Detection
-detectKind path expr =
-  case detectClassValue expr of
-    Just cls ->
-      case classToKind cls of
-        Just kind -> Detection kind 100 ["_class = \"" <> cls <> "\""]
-        Nothing -> Detection Unknown 0 ["unknown _class = \"" <> cls <> "\""]
-    Nothing ->
-      let fileName = takeFileName path
-          -- Check filename first
-          fileHints = detectFromFileName fileName
-          -- Then check structure
-          structHints = detectFromStructure expr
-          -- Combine evidence
-          allHints = fileHints ++ structHints
-       in -- Pick best match
-          selectBest allHints
+detectKind path expr
+  | Just cls <- detectClassValue expr = fromClass cls
+  | otherwise = selectBest (detectFromFileName (takeFileName path) ++ detectFromStructure expr)
+ where
+  -- An explicit `_class = "..."` is the author speaking directly: authoritative
+  -- (confidence 100), even when the value is one we don't recognize (in which
+  -- case we surface that rather than silently guessing from structure).
+  fromClass cls
+    | Just kind <- classToKind cls = Detection kind 100 ["_class = \"" <> cls <> "\""]
+    | otherwise = Detection Unknown 0 ["unknown _class = \"" <> cls <> "\""]
 
--- | Extract the declared _class attribute, if present.
+{- | Extract a top-level @_class@ string, if present. We look through the leading
+function parameters and @let@/@with@ wrappers a module may have before its body
+attrset, since @{ ... }: { _class = "nixos"; … }@ is the common shape.
+-}
 detectClassValue :: NExprLoc -> Maybe Text
 detectClassValue = go
  where
-  go (Fix (Compose (AnnUnit _ e))) = case e of
-    NSet _ bindings -> findInBindings bindings
-    NAbs _ body -> go body
-    NLet _ body -> go body
-    NWith _ body -> go body
-    _ -> Nothing
+  go (Layer (NSet _ bindings)) = listToMaybe (mapMaybe classBinding bindings)
+  go (Layer (NAbs _ body)) = go body
+  go (Layer (NLet _ body)) = go body
+  go (Layer (NWith _ body)) = go body
+  go _ = Nothing
 
-  findInBindings bindings = listToMaybe (mapMaybe extractClass bindings)
+  -- the value of a `_class = "..."` binding, if this is one
+  classBinding (NamedVar (StaticKey name :| []) valExpr _)
+    | coerce name == ("_class" :: Text) = staticString valExpr
+  classBinding _ = Nothing
 
-  extractClass :: Binding NExprLoc -> Maybe Text
-  extractClass = \case
-    NamedVar (StaticKey name :| []) valExpr _
-      | varNameText name == "_class" -> extractStringValue valExpr
-    _ -> Nothing
+  -- a string literal with no interpolation (both quoting styles)
+  staticString (Layer (NStr (DoubleQuoted [Plain t]))) = Just t
+  staticString (Layer (NStr (Indented _ [Plain t]))) = Just t
+  staticString _ = Nothing
 
-  extractStringValue :: NExprLoc -> Maybe Text
-  extractStringValue (Fix (Compose (AnnUnit _ e))) = case e of
-    NStr (DoubleQuoted [Plain t]) -> Just t
-    NStr (Indented _ [Plain t]) -> Just t
-    _ -> Nothing
-
-  varNameText :: VarName -> Text
-  varNameText = coerce
-
+-- | Map a declared @_class@ value to the kind it names.
 classToKind :: Text -> Maybe ModuleKind
-classToKind cls = case cls of
-  "flake" -> Just FlakeModule
-  "nixos" -> Just NixOSModule
-  "home" -> Just HomeModule
-  "homeManager" -> Just HomeModule
-  "darwin" -> Just DarwinModule
-  "package" -> Just Package
-  "overlay" -> Just Overlay
-  "lib" -> Just Library
-  "shell" -> Just Shell
-  _ -> Nothing
+classToKind "flake" = Just FlakeModule
+classToKind "nixos" = Just NixOSModule
+classToKind "home" = Just HomeModule
+classToKind "homeManager" = Just HomeModule
+classToKind "darwin" = Just DarwinModule
+classToKind "package" = Just Package
+classToKind "overlay" = Just Overlay
+classToKind "lib" = Just Library
+classToKind "shell" = Just Shell
+classToKind _ = Nothing
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                       // filename detection
 -- ══════════════════════════════════════════════════════════════════════════════
 
+{- | Hints from the bare filename. @default.nix@ is deliberately silent — it can
+be anything, so we let the structural pass decide.
+-}
 detectFromFileName :: String -> [(ModuleKind, Int, Text)]
-detectFromFileName name = case name of
-  "flake.nix" -> [(Flake, 100, "filename is flake.nix")]
-  "shell.nix" -> [(Shell, 90, "filename is shell.nix")]
-  "default.nix" -> [] -- Could be anything
-  "package.nix" -> [(Package, 80, "filename is package.nix")]
-  "module.nix" -> [(NixOSModule, 60, "filename is module.nix")]
-  "overlay.nix" -> [(Overlay, 80, "filename is overlay.nix")]
-  "test.nix" -> [(Test, 80, "filename is test.nix")]
-  _
-    | "-test.nix" `T.isSuffixOf` T.pack name -> [(Test, 70, "filename ends in -test.nix")]
-    | "-module.nix" `T.isSuffixOf` T.pack name -> [(NixOSModule, 60, "filename ends in -module.nix")]
-    | otherwise -> []
+detectFromFileName "flake.nix" = [(Flake, 100, "filename is flake.nix")]
+detectFromFileName "shell.nix" = [(Shell, 90, "filename is shell.nix")]
+detectFromFileName "default.nix" = []
+detectFromFileName "package.nix" = [(Package, 80, "filename is package.nix")]
+detectFromFileName "module.nix" = [(NixOSModule, 60, "filename is module.nix")]
+detectFromFileName "overlay.nix" = [(Overlay, 80, "filename is overlay.nix")]
+detectFromFileName "test.nix" = [(Test, 80, "filename is test.nix")]
+detectFromFileName name
+  | "-test.nix" `T.isSuffixOf` T.pack name = [(Test, 70, "filename ends in -test.nix")]
+  | "-module.nix" `T.isSuffixOf` T.pack name = [(NixOSModule, 60, "filename ends in -module.nix")]
+  | otherwise = []
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                         // structure detection
 -- ══════════════════════════════════════════════════════════════════════════════
 
+{- | Hints from the parsed shape. Three shapes carry signal: the two-argument
+@final: prev:@ overlay, a function (whose parameters and body we mine), and a
+bare attrset.
+-}
 detectFromStructure :: NExprLoc -> [(ModuleKind, Int, Text)]
-detectFromStructure expr = case unwrap expr of
-  -- Overlay pattern: final: prev: { ... }
-  NAbs param1 body1 | isOverlayParam param1 ->
-    case unwrap body1 of
-      NAbs param2 _
-        | isOverlayParam param2 ->
-            [(Overlay, 95, "two-argument function (final: prev:)")]
-      _ -> []
-  -- Function with { ... } @ pattern
-  NAbs param body ->
-    let paramNames = getParamNames param
-        bodyHints = detectFromBody body
-        paramHints = detectFromParams paramNames
-     in paramHints ++ bodyHints
-  -- Direct attrset (rare for modules)
-  NSet _ bindings ->
-    detectFromBindings bindings
-  _ -> []
+detectFromStructure (Layer (NAbs param1 body1))
+  -- `final: prev: { … }` — an overlay. n.b. a single overlay-shaped parameter
+  -- that is NOT followed by a second one is no signal (an empty list), and must
+  -- not fall through to the general-function clause below.
+  | isOverlayParam param1
+  , Layer (NAbs param2 _) <- body1
+  , isOverlayParam param2 =
+      [(Overlay, 95, "two-argument function (final: prev:)")]
+  | isOverlayParam param1 = []
+detectFromStructure (Layer (NAbs param body)) =
+  detectFromParams (getParamNames param) ++ detectFromBody body
+detectFromStructure (Layer (NSet _ bindings)) = detectFromBindings bindings
+detectFromStructure _ = []
 
--- | Check if a parameter looks like an overlay param.
+-- | Does this parameter name an overlay's fixpoint argument?
 isOverlayParam :: Params NExprLoc -> Bool
-isOverlayParam (Param name) =
-  let n = coerce name :: Text
-   in n `elem` ["final", "prev", "self", "super"]
+isOverlayParam (Param name) = coerce name `elem` (["final", "prev", "self", "super"] :: [Text])
 isOverlayParam _ = False
 
--- | Get parameter names from a function.
+-- | The names bound by a function's parameter (one name, or a whole @{ … }@ set).
 getParamNames :: Params NExprLoc -> [Text]
-getParamNames = \case
-  Param name -> [coerce name]
-  ParamSet _ _ params ->
-    map (\(name, _) -> coerce name) params
+getParamNames (Param name) = [coerce name]
+getParamNames (ParamSet _ _ params) = map (coerce . fst) params
 
--- | Detect from parameter names.
+{- | Hints from parameter names alone. The module-system trio (@config@ + @lib@
+or @pkgs@) reads as a NixOS module; build inputs (@stdenv@, fetchers) as a
+package; the flake-parts argument set as a flake module.
+-}
 detectFromParams :: [Text] -> [(ModuleKind, Int, Text)]
 detectFromParams params
-  | hasNixOSParams params = [(NixOSModule, 70, "has config/lib/pkgs params")]
-  | hasPackageParams params = [(Package, 70, "has stdenv/fetchurl params")]
-  | hasFlakeModuleParams params = [(FlakeModule, 60, "has flake-parts params")]
+  | hasNixOSParams = [(NixOSModule, 70, "has config/lib/pkgs params")]
+  | hasPackageParams = [(Package, 70, "has stdenv/fetchurl params")]
+  | hasFlakeModuleParams = [(FlakeModule, 60, "has flake-parts params")]
   | otherwise = []
  where
-  hasNixOSParams ps =
-    all (`elem` ps) ["config", "lib"]
-      || all (`elem` ps) ["config", "pkgs"]
-  hasPackageParams ps =
-    "stdenv" `elem` ps
-      || "mkDerivation" `elem` ps
-      || "fetchurl" `elem` ps
-      || "fetchFromGitHub" `elem` ps
-  hasFlakeModuleParams ps =
-    all (`elem` ps) ["config", "lib", "flake-parts-lib"]
-      || "self" `elem` ps && "inputs" `elem` ps
+  has names = all (`elem` params) names
+  hasNixOSParams = has ["config", "lib"] || has ["config", "pkgs"]
+  hasPackageParams = any (`elem` params) ["stdenv", "mkDerivation", "fetchurl", "fetchFromGitHub"]
+  hasFlakeModuleParams = has ["config", "lib", "flake-parts-lib"] || has ["self", "inputs"]
 
--- | Detect from function body.
+-- | Hints from a function body: look through @let@/@with@ to the attrset inside.
 detectFromBody :: NExprLoc -> [(ModuleKind, Int, Text)]
-detectFromBody body = case unwrap body of
-  NSet _ bindings -> detectFromBindings bindings
-  NLet _ inner -> detectFromBody inner
-  NWith _ inner -> detectFromBody inner
-  _ -> []
+detectFromBody (Layer (NSet _ bindings)) = detectFromBindings bindings
+detectFromBody (Layer (NLet _ inner)) = detectFromBody inner
+detectFromBody (Layer (NWith _ inner)) = detectFromBody inner
+detectFromBody _ = []
 
--- | Detect from top-level bindings.
+-- | Hints from an attrset's top-level attribute names.
 detectFromBindings :: [Binding NExprLoc] -> [(ModuleKind, Int, Text)]
-detectFromBindings bindings =
-  let attrNames = mapMaybe getBindingName bindings
-   in detectFromAttrNames attrNames
+detectFromBindings = detectFromAttrNames . mapMaybe bindingName
+ where
+  bindingName (NamedVar (StaticKey name :| []) _ _) = Just (coerce name)
+  bindingName _ = Nothing
 
--- | Get binding name if it's a simple named binding.
-getBindingName :: Binding NExprLoc -> Maybe Text
-getBindingName = \case
-  NamedVar (StaticKey name :| []) _ _ -> Just (coerce name)
-  _ -> Nothing
-
--- | Detect from attribute names in the body.
+{- | Hints from attribute names, ranked by how diagnostic each shape is. Ordering
+matters: @options@+@config@ pins a module hard (85) before the weaker package and
+flake heuristics get a look.
+-}
 detectFromAttrNames :: [Text] -> [(ModuleKind, Int, Text)]
 detectFromAttrNames names
-  -- NixOS/home-manager module pattern
   | hasOptions && hasConfig = [(NixOSModule, 85, "has options and config attrs")]
   | hasOptions = [(NixOSModule, 60, "has options attr")]
-  -- Package pattern
   | hasMkDeriv = [(Package, 90, "calls mkDerivation or similar")]
   | hasPname && hasVersion = [(Package, 75, "has pname and version")]
-  -- flake-parts module pattern
   | hasFlakeConfig = [(FlakeModule, 80, "has flake-parts config pattern")]
-  -- Shell pattern
   | hasShellAttrs = [(Shell, 70, "has shell-like attrs")]
-  -- Library pattern
   | hasLibExports = [(Library, 50, "exports library functions")]
   | otherwise = []
  where
-  hasOptions = "options" `elem` names
-  hasConfig = "config" `elem` names
-  hasMkDeriv = any (`elem` names) ["mkDerivation", "stdenv.mkDerivation", "buildPythonPackage", "buildGoModule"]
-  hasPname = "pname" `elem` names
-  hasVersion = "version" `elem` names
-  -- `imports` (with no options/config/mkDerivation above) marks a flake-parts
-  -- module that only wires children — common in all-flake-module layouts.
-  hasFlakeConfig = any (`elem` names) ["perSystem", "flake", "imports"]
-  hasShellAttrs = "buildInputs" `elem` names && "shellHook" `elem` names
-  hasLibExports = any (`elem` names) ["mkOption", "mkIf", "mapAttrs", "filterAttrs"]
+  named = (`elem` names)
+  hasOptions = named "options"
+  hasConfig = named "config"
+  hasMkDeriv = any named ["mkDerivation", "stdenv.mkDerivation", "buildPythonPackage", "buildGoModule"]
+  hasPname = named "pname"
+  hasVersion = named "version"
+  -- `imports` (with none of the stronger signals above) marks a flake-parts
+  -- module that only wires children — common in the all-flake-module layout.
+  hasFlakeConfig = any named ["perSystem", "flake", "imports"]
+  hasShellAttrs = named "buildInputs" && named "shellHook"
+  hasLibExports = any named ["mkOption", "mkIf", "mapAttrs", "filterAttrs"]
 
 -- ══════════════════════════════════════════════════════════════════════════════
---                                                                     // helpers
+--                                                                     // ranking
 -- ══════════════════════════════════════════════════════════════════════════════
 
-unwrap :: NExprLoc -> NExprF NExprLoc
-unwrap (Fix (Compose (AnnUnit _ e))) = e
-
--- | Select the best detection from hints.
+{- | Collapse a pool of weighted hints into a single verdict: the highest
+confidence wins, and the winner's evidence (across all hints that agree on the
+kind) is retained. No hints at all means 'Unknown'.
+-}
 selectBest :: [(ModuleKind, Int, Text)] -> Detection
 selectBest [] = Detection Unknown 0 []
-selectBest hints =
-  let sorted = reverse $ nub hints -- Remove dups, prefer later (structure over filename)
-      (kind, conf, _) = maximumBy' (\(_, c, _) -> c) sorted
-      allEvidence = [e | (k, _, e) <- hints, k == kind]
-   in Detection kind conf allEvidence
-
-maximumBy' :: (Ord b) => (a -> b) -> [a] -> a
-maximumBy' _ [x] = x
-maximumBy' f (x : xs) = go x (f x) xs
+selectBest hints = Detection kind conf evidence
  where
-  go best _ [] = best
-  go best bestVal (y : ys) =
-    let yVal = f y
-     in if yVal > bestVal then go y yVal ys else go best bestVal ys
-maximumBy' _ [] = error "maximumBy': empty list"
+  -- nub before ranking so a kind asserted by both filename and structure doesn't
+  -- get double-counted; reverse so structural hints (added last) outrank a
+  -- weaker filename hint at equal confidence.
+  (kind, conf, _) = maximumByConfidence (reverse (nub hints))
+  evidence = [e | (k, _, e) <- hints, k == kind]
+
+{- | The element with the greatest confidence (the middle field). Total on the
+non-empty lists 'selectBest' hands it; the empty case cannot arise there.
+-}
+maximumByConfidence :: [(ModuleKind, Int, Text)] -> (ModuleKind, Int, Text)
+maximumByConfidence [] = (Unknown, 0, "")
+maximumByConfidence (hint : hints) = foldl keepHigher hint hints
+ where
+  keepHigher best@(_, bestConf, _) candidate@(_, conf, _)
+    | conf > bestConf = candidate
+    | otherwise = best
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                                     // queries
 -- ══════════════════════════════════════════════════════════════════════════════
 
+-- | A NixOS / home-manager / nix-darwin module (the option-system family).
 isNixOSModule :: Detection -> Bool
 isNixOSModule d = detectedKind d `elem` [NixOSModule, HomeModule, DarwinModule]
 
