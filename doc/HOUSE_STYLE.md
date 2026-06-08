@@ -4,9 +4,16 @@
   GHC 9.12 / GHC2021 pin, two-space fourmolu, katip, and the nix-flake-check
   gate. Treat it as living: where we deviate, the deviation is documented here,
   not left implicit in the source.
+
+  Companion: TYPOGRAPHY.md governs the visual layer — delimiters, banners,
+  epigraph watermarks, 100-column discipline, comment capitalization.
 -->
 
 # `// hypermodern // haskell // nix-compile`
+
+> Companion: **[TYPOGRAPHY.md](TYPOGRAPHY.md)** — the visual conventions (Unicode
+> delimiters, 100-column banners, epigraph watermarks). This document is *what to
+> write*; that one is *how it looks*.
 
 ## Why we do what we do
 
