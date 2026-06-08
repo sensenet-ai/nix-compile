@@ -1,13 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                               // module kind
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                                    // module kind
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "He'd found her, one rainy night, in an arcade."
 --
---                                                                 — Neuromancer
+--                                                                                     — Neuromancer
 --
 
 {- | What kind of Nix file is this? A @.nix@ file carries no declared type, yet
@@ -69,9 +69,9 @@ import Nix.Expr.Types.Annotated
 import NixCompile.Nix.Parse (parseNix)
 import System.FilePath (takeFileName)
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                     // types
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                          // types
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | The kind of Nix file, as recognized by 'detectKind'.
 data ModuleKind
@@ -124,9 +124,9 @@ of equations (per the house rule, guards and equations over @case@).
 pattern Layer :: NExprF NExprLoc -> NExprLoc
 pattern Layer e <- Fix (Compose (AnnUnit _ e))
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                   // detection
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                      // detection
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Parse a file from disk and classify it; 'Unknown' if it does not parse.
 detectKindFromFile :: FilePath -> IO Detection
@@ -187,9 +187,9 @@ classToKind "lib" = Just Library
 classToKind "shell" = Just Shell
 classToKind _ = Nothing
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                       // filename detection
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                             // filename detection
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Hints from the bare filename. @default.nix@ is deliberately silent — it can
 be anything, so we let the structural pass decide.
@@ -207,9 +207,9 @@ detectFromFileName name
   | "-module.nix" `T.isSuffixOf` T.pack name = [(NixOSModule, 60, "filename ends in -module.nix")]
   | otherwise = []
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                         // structure detection
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                            // structure detection
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Hints from the parsed shape. Three shapes carry signal: the two-argument
 @final: prev:@ overlay, a function (whose parameters and body we mine), and a
@@ -297,9 +297,9 @@ detectFromAttrNames names
   hasShellAttrs = named "buildInputs" && named "shellHook"
   hasLibExports = any named ["mkOption", "mkIf", "mapAttrs", "filterAttrs"]
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                     // ranking
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                        // ranking
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Collapse a pool of weighted hints into a single verdict: the highest
 confidence wins, and the winner's evidence (across all hints that agree on the
@@ -326,9 +326,9 @@ maximumByConfidence (hint : hints) = foldl keepHigher hint hints
     | conf > bestConf = candidate
     | otherwise = best
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                     // queries
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                        // queries
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | A NixOS / home-manager / nix-darwin module (the option-system family).
 isNixOSModule :: Detection -> Bool
