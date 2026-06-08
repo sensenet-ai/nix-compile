@@ -1550,6 +1550,20 @@ prop_review_builtins_hasattr_ok =
         Right (NT.TBool, _) -> True
         _ -> False
 
+-- `lib.*` is modeled like `builtins.*`: each field is a polymorphic SCHEME
+-- instantiated fresh per use, so a library combinator can be applied at many
+-- result types. Before this, `lib.mkIf` was monomorphically pinned by its first
+-- use and a second use at a different type false-positived — the dominant false
+-- positive on real flake-parts / NixOS module code.
+prop_lib_mkif_polymorphic :: Bool
+prop_lib_mkif_polymorphic =
+    isRight (parseAndInfer "{ lib }: { a = lib.mkIf true { x = 1; }; b = lib.mkIf true 2; }")
+
+-- `lib.mkMerge : [a] -> a` (structural combinator), instantiated fresh.
+prop_lib_mkmerge_polymorphic :: Bool
+prop_lib_mkmerge_polymorphic =
+    isRight (parseAndInfer "{ lib }: lib.mkMerge [ { a = 1; } { b = 2; } ]")
+
 -- #6 (RC2 — FIXED): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`.
 -- The new collect-then-join solver resolves it (the old left fold bound
 -- `a := TInt` then rejected `TInt ~ TBool`). Order-independent + complete.
@@ -4654,6 +4668,8 @@ main = do
             , run "review_builtins_attrnames_ok" (property prop_review_builtins_attrnames_ok)
             , run "review_builtins_attrnames_nonrecord_fails" (property prop_review_builtins_attrnames_nonrecord_fails)
             , run "review_builtins_hasattr_ok" (property prop_review_builtins_hasattr_ok)
+            , run "lib_mkif_polymorphic" (property prop_lib_mkif_polymorphic)
+            , run "lib_mkmerge_polymorphic" (property prop_lib_mkmerge_polymorphic)
             , run "review_bash_subtype_resolves" (property prop_review_bash_subtype_resolves)
             , run "review_union_var_constrains" (property prop_review_union_var_constrains)
             , -- Bash AST edge cases
