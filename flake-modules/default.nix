@@ -19,6 +19,22 @@
     in
     {
       checks = lib.mkIf (nix-compile != null) {
+        # End-to-end layout-enforcement guard. The harness in
+        # tools/layoutcheck/check.sh is invoked ONLY here, through
+        # `nix flake check` — keeping a single disciplined runner so it can't
+        # drift from a parallel manual invocation. It runs the real binary
+        # against the committed good/perturbed flake-parts fixture projects and
+        # asserts the clean one is layout-clean and the perturbed one fails.
+        "nix-compile:layout-e2e" = pkgs.runCommandLocal "nix-compile-layout-e2e" {
+          nativeBuildInputs = [
+            pkgs.bash
+            pkgs.gnugrep
+            pkgs.coreutils
+          ];
+        } ''
+          bash ${self}/tools/layoutcheck/check.sh ${nix-compile}/bin/nix-compile
+          touch $out
+        '';
         "nix-compile:ci" = builtins.derivation {
           name = "nix-compile-ci";
           builder = "${pkgs.bash}/bin/bash";

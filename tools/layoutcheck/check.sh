@@ -7,9 +7,10 @@
 # regression. This is the self-dogfooding coverage the unit fixtures can't give:
 # it exercises CLI -> cmdCI -> runLayoutPhase end to end.
 #
-# Usage (inside `nix develop`):
-#   cabal build exe:nix-compile
-#   bash tools/layoutcheck/check.sh "$(cabal list-bin nix-compile)"
+# This is run ONLY by `nix flake check`, via the `nix-compile:layout-e2e` check
+# in flake-modules/default.nix — a single disciplined runner so it can't drift.
+# To run just this check during development:
+#   nix build .#checks.x86_64-linux."nix-compile:layout-e2e" -L
 set -uo pipefail
 BIN="${1:?usage: check.sh <path-to-nix-compile>}"
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
