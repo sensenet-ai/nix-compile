@@ -496,8 +496,10 @@ annotated with their known exceptions.
 were removed in the same change that added this file. Their `file:line` citations
 no longer resolved (e.g. `app/nix-compile.hs`, §13) and their `FIXED`/`WONTFIX`
 tags could not be trusted without re-reading source — which defeats a tracker.
-Live, verified-at-HEAD findings now live here; actionable work lives in
-[`TODO.md`](TODO.md).
+This document is the point-in-time review evidence; the actionable work has been
+migrated to Linear — the `nix-compile` epic,
+[STR-97](https://linear.app/straylight-software/issue/STR-97/nix-compile). The
+`TODO.md` / `bugs.md` markdown trackers were deleted in that migration (2026-06-08).
 
 ---
 

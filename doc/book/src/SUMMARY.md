@@ -22,6 +22,5 @@
 
 # Development
 
-- [Bug Tracker](./bugs.md)
 - [Testing](./testing.md)
 - [Benchmarks](./benchmarks.md)

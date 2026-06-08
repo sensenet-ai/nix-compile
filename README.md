@@ -26,7 +26,7 @@ Or read the source markdown directly:
 - [CLI Reference](./doc/book/src/cli.md)
 - [Architecture](./doc/book/src/architecture.md)
 - [Policy Rules](./doc/book/src/policy.md)
-- [Bug Tracker](./doc/book/src/bugs.md)
+- [Issue tracker — Linear `nix-compile` (STR-97)](https://linear.app/straylight-software/issue/STR-97/nix-compile)
 - [Specification](./doc/SPECIFICATION.md) · [Hacking](./doc/HACKING.md) · [Design notes](./doc/design/)
 
 ## // quick start //

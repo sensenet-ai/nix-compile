@@ -22,4 +22,4 @@ nix-compile sits in the build pipeline and catches bugs _before_ runtime:
 
 ## Project status
 
-315 QuickCheck properties across 25+ categories, plus 10 fixture integration tests and a working LSP server. The bash analysis pipeline, Nix type inference, scope graph resolution, emit-config generation, LSP server (diagnostics, hover, go-to-definition, completion, references, rename, formatting), and policy enforcement are all tested and working. See [Testing](./testing.md) for the full breakdown and [Bug Tracker](./bugs.md) for the audit trail.
+315 QuickCheck properties across 25+ categories, plus 10 fixture integration tests and a working LSP server. The bash analysis pipeline, Nix type inference, scope graph resolution, emit-config generation, LSP server (diagnostics, hover, go-to-definition, completion, references, rename, formatting), and policy enforcement are all tested and working. See [Testing](./testing.md) for the full breakdown; open bugs and planned work are tracked in Linear (the `nix-compile` epic, STR-97).
