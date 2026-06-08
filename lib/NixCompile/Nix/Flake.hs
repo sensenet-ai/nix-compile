@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -35,11 +35,10 @@ module NixCompile.Nix.Flake (
 where
 
 import Control.Exception (IOException, try)
-import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
@@ -50,7 +49,7 @@ import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
 import NixCompile.Nix.Inference (inferExpr)
 import NixCompile.Nix.Types
-import NixCompile.Nix.Utils (varNameText)
+import NixCompile.Nix.Utils (varNameText, pattern Layer)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
@@ -105,10 +104,11 @@ instance Eq OutputEntry where
 parseFlake :: FilePath -> IO (Either Text Flake)
 parseFlake path = do
   result <- try (parseNixFileLoc (Nix.Path path))
-  case result of
-    Left (e :: IOException) -> pure $ Left (T.pack $ show e)
-    Right (Left doc) -> pure $ Left (T.pack $ show doc)
-    Right (Right expr) -> pure $ extractFlake path expr
+  pure (interpret result)
+ where
+  interpret (Left e) = Left (T.pack (show (e :: IOException)))
+  interpret (Right (Left doc)) = Left (T.pack (show doc))
+  interpret (Right (Right expr)) = extractFlake path expr
 
 parseFlakeDir :: FilePath -> IO (Either Text Flake)
 parseFlakeDir dir = do
@@ -119,23 +119,15 @@ parseFlakeDir dir = do
     else pure $ Left $ "No flake.nix found in " <> T.pack dir
 
 extractFlake :: FilePath -> NExprLoc -> Either Text Flake
-extractFlake path expr = do
-  case unwrapExpr expr of
-    NSet _ bindings -> do
-      let desc = extractDescription bindings
-      let inputs = extractInputs bindings
-      let outputs = extractOutputs bindings
-      Right $
-        Flake
-          { flakeDescription = desc
-          , flakeInputs = inputs
-          , flakeOutputs = outputs
-          , flakePath = path
-          }
-    _ -> Left "flake.nix must be an attribute set"
-
-unwrapExpr :: NExprLoc -> NExprF NExprLoc
-unwrapExpr (Fix (Compose (AnnUnit _ e))) = e
+extractFlake path (Layer (NSet _ bindings)) =
+  Right
+    Flake
+      { flakeDescription = extractDescription bindings
+      , flakeInputs = extractInputs bindings
+      , flakeOutputs = extractOutputs bindings
+      , flakePath = path
+      }
+extractFlake _ _ = Left "flake.nix must be an attribute set"
 
 extractDescription :: [Nix.Binding NExprLoc] -> Maybe Text
 extractDescription = foldr check Nothing
@@ -146,50 +138,43 @@ extractDescription = foldr check Nothing
   check _ acc = acc
 
 extractInputs :: [Nix.Binding NExprLoc] -> Map Text FlakeInput
-extractInputs bindings = case findBinding "inputs" bindings of
-  Just expr -> case unwrapExpr expr of
-    NSet _ inputBindings -> Map.fromList $ mapMaybe parseInput inputBindings
-    _ -> Map.empty
-  Nothing -> Map.empty
+extractInputs bindings
+  | Just (Layer (NSet _ inputBindings)) <- findBinding "inputs" bindings =
+      Map.fromList (mapMaybe parseInput inputBindings)
+  | otherwise = Map.empty
  where
   parseInput :: Nix.Binding NExprLoc -> Maybe (Text, FlakeInput)
-  parseInput (Nix.NamedVar (StaticKey name :| []) expr _) =
-    Just (varNameText name, parseInputExpr expr)
+  parseInput (Nix.NamedVar (StaticKey name :| []) expr _) = Just (varNameText name, parseInputExpr expr)
   parseInput _ = Nothing
 
   parseInputExpr :: NExprLoc -> FlakeInput
-  parseInputExpr expr = case unwrapExpr expr of
-    NSet _ bs ->
-      FlakeInput
-        { inputUrl = findBinding "url" bs >>= extractStringLit
-        , inputFlake = maybe True id (findBinding "flake" bs >>= extractBoolLit)
-        , inputFollows = findBinding "follows" bs >>= extractStringLit
-        }
-    NStr _ ->
-      FlakeInput
-        { inputUrl = extractStringLit expr
-        , inputFlake = True
-        , inputFollows = Nothing
-        }
-    _ -> FlakeInput Nothing True Nothing
+  parseInputExpr (Layer (NSet _ bs)) =
+    FlakeInput
+      { inputUrl = findBinding "url" bs >>= extractStringLit
+      , inputFlake = fromMaybe True (findBinding "flake" bs >>= extractBoolLit)
+      , inputFollows = findBinding "follows" bs >>= extractStringLit
+      }
+  parseInputExpr expr@(Layer (NStr _)) =
+    FlakeInput
+      { inputUrl = extractStringLit expr
+      , inputFlake = True
+      , inputFollows = Nothing
+      }
+  parseInputExpr _ = FlakeInput Nothing True Nothing
 
 extractOutputs :: [Nix.Binding NExprLoc] -> FlakeOutputs
-extractOutputs bindings = case findBinding "outputs" bindings of
-  Just outputsExpr -> parseOutputsExpr outputsExpr
-  Nothing -> emptyFlakeOutputs
+extractOutputs bindings = maybe emptyFlakeOutputs parseOutputsExpr (findBinding "outputs" bindings)
 
 parseOutputsExpr :: NExprLoc -> FlakeOutputs
-parseOutputsExpr expr = case unwrapExpr expr of
-  NAbs _ body -> parseOutputsBody body
-  NSet _ bindings -> parseOutputsBindings bindings
-  _ -> emptyFlakeOutputs
+parseOutputsExpr (Layer (NAbs _ body)) = parseOutputsBody body
+parseOutputsExpr (Layer (NSet _ bindings)) = parseOutputsBindings bindings
+parseOutputsExpr _ = emptyFlakeOutputs
 
 parseOutputsBody :: NExprLoc -> FlakeOutputs
-parseOutputsBody expr = case unwrapExpr expr of
-  NSet _ bindings -> parseOutputsBindings bindings
-  NLet _ body -> parseOutputsBody body
-  NWith _ body -> parseOutputsBody body
-  _ -> emptyFlakeOutputs
+parseOutputsBody (Layer (NSet _ bindings)) = parseOutputsBindings bindings
+parseOutputsBody (Layer (NLet _ body)) = parseOutputsBody body
+parseOutputsBody (Layer (NWith _ body)) = parseOutputsBody body
+parseOutputsBody _ = emptyFlakeOutputs
 
 emptyFlakeOutputs :: FlakeOutputs
 emptyFlakeOutputs =
@@ -222,26 +207,21 @@ knownOutputNames :: [Text]
 knownOutputNames = ["packages", "devShells", "checks", "apps", "overlays", "nixosModules", "nixosConfigurations", "lib"]
 
 parseSystemMap :: Text -> [Nix.Binding NExprLoc] -> Map Text (Map Text OutputEntry)
-parseSystemMap categoryName bindings = case findBinding categoryName bindings of
-  Just expr -> case unwrapExpr expr of
-    NSet _ systemBindings ->
-      Map.fromList $ mapMaybe (parseSystemBinding categoryName) systemBindings
-    _ -> Map.empty
-  Nothing -> Map.empty
+parseSystemMap categoryName bindings
+  | Just (Layer (NSet _ systemBindings)) <- findBinding categoryName bindings =
+      Map.fromList (mapMaybe (parseSystemBinding categoryName) systemBindings)
+  | otherwise = Map.empty
 
 parseSystemBinding :: Text -> Nix.Binding NExprLoc -> Maybe (Text, Map Text OutputEntry)
-parseSystemBinding category (Nix.NamedVar (StaticKey system :| []) expr _)
-  | NSet _ packageBindings <- unwrapExpr expr =
-      Just (varNameText system, Map.fromList $ mapMaybe (parseEntry category) packageBindings)
+parseSystemBinding category (Nix.NamedVar (StaticKey system :| []) (Layer (NSet _ packageBindings)) _) =
+  Just (varNameText system, Map.fromList (mapMaybe (parseEntry category) packageBindings))
 parseSystemBinding _ _ = Nothing
 
 parseSimpleMap :: Text -> [Nix.Binding NExprLoc] -> Map Text OutputEntry
-parseSimpleMap mapName bindings = case findBinding mapName bindings of
-  Just expr -> case unwrapExpr expr of
-    NSet _ entryBindings ->
-      Map.fromList $ mapMaybe (parseEntry mapName) entryBindings
-    _ -> Map.empty
-  Nothing -> Map.empty
+parseSimpleMap mapName bindings
+  | Just (Layer (NSet _ entryBindings)) <- findBinding mapName bindings =
+      Map.fromList (mapMaybe (parseEntry mapName) entryBindings)
+  | otherwise = Map.empty
 
 parseUnknownBindings :: [Nix.Binding NExprLoc] -> Map Text NExprLoc
 parseUnknownBindings bindings =
@@ -260,16 +240,15 @@ parseEntry category (Nix.NamedVar (StaticKey name :| []) expr _) =
 parseEntry _ _ = Nothing
 
 inferOutputType :: Text -> NixType
-inferOutputType = \case
-  "packages" -> TDerivation
-  "devShells" -> TDerivation
-  "checks" -> TDerivation
-  "apps" -> TAttrs $ Map.fromList [("type", (TString, False)), ("program", (TString, False))]
-  "overlays" -> TFun (tRecOpenAnon Map.empty) (TFun (tRecOpenAnon Map.empty) (tRecOpenAnon Map.empty))
-  "nixosModules" -> tRecOpenAnon Map.empty
-  "nixosConfigurations" -> tRecOpenAnon Map.empty
-  "lib" -> tRecOpenAnon Map.empty
-  _ -> TAny
+inferOutputType "packages" = TDerivation
+inferOutputType "devShells" = TDerivation
+inferOutputType "checks" = TDerivation
+inferOutputType "apps" = TAttrs $ Map.fromList [("type", (TString, False)), ("program", (TString, False))]
+inferOutputType "overlays" = TFun (tRecOpenAnon Map.empty) (TFun (tRecOpenAnon Map.empty) (tRecOpenAnon Map.empty))
+inferOutputType "nixosModules" = tRecOpenAnon Map.empty
+inferOutputType "nixosConfigurations" = tRecOpenAnon Map.empty
+inferOutputType "lib" = tRecOpenAnon Map.empty
+inferOutputType _ = TAny
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- type inference
@@ -296,7 +275,7 @@ inferFlakeInputs :: Map Text FlakeInput -> NixType
 inferFlakeInputs inputs =
   TAttrs $
     Map.fromList [("self", (tRecOpenAnon Map.empty, False))]
-      `Map.union` Map.map (const $ (tRecOpenAnon Map.empty, False)) inputs
+      `Map.union` Map.map (const (tRecOpenAnon Map.empty, False)) inputs
 
 inferFlakeOutputs :: FlakeOutputs -> NixType
 inferFlakeOutputs outputs =
@@ -316,9 +295,7 @@ inferFlakeOutputs outputs =
 
 inferFlakeLibType :: Maybe NExprLoc -> Maybe NixType
 inferFlakeLibType Nothing = Nothing
-inferFlakeLibType (Just libExpr) = case inferExpr libExpr of
-  Right (type_, _) -> Just type_
-  Left _ -> Nothing
+inferFlakeLibType (Just libExpr) = either (const Nothing) (Just . fst) (inferExpr libExpr)
 
 inferPerSystemOutputs :: NixType -> NixType
 inferPerSystemOutputs elementType =
@@ -354,7 +331,7 @@ flakeOutputSchema =
       ]
 
 systemMapType :: NixType -> NixType
-systemMapType t = tRecOpenAnon (Map.singleton "_" ((tRecOpenAnon (Map.singleton "_" (t, False))), False))
+systemMapType t = tRecOpenAnon (Map.singleton "_" (tRecOpenAnon (Map.singleton "_" (t, False)), False))
 
 flakeOverlayType :: NixType
 flakeOverlayType = TFun (tRecOpenAnon Map.empty) (TFun (tRecOpenAnon Map.empty) (tRecOpenAnon Map.empty))
@@ -375,12 +352,10 @@ findBinding name = foldr check Nothing
   check _ acc = acc
 
 extractStringLit :: NExprLoc -> Maybe Text
-extractStringLit expr = case unwrapExpr expr of
-  NStr (DoubleQuoted [Plain t]) -> Just t
-  NStr (Indented _ [Plain t]) -> Just t
-  _ -> Nothing
+extractStringLit (Layer (NStr (DoubleQuoted [Plain t]))) = Just t
+extractStringLit (Layer (NStr (Indented _ [Plain t]))) = Just t
+extractStringLit _ = Nothing
 
 extractBoolLit :: NExprLoc -> Maybe Bool
-extractBoolLit expr = case unwrapExpr expr of
-  NConstant (NBool b) -> Just b
-  _ -> Nothing
+extractBoolLit (Layer (NConstant (NBool b))) = Just b
+extractBoolLit _ = Nothing

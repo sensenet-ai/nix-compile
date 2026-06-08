@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -42,7 +42,6 @@ where
 
 import Control.Monad (foldM)
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List (isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
@@ -59,8 +58,9 @@ import NixCompile.Nix.Inference (builtinEnv, extendImport, inferExpr, inferExprW
 import NixCompile.Nix.LayoutConvention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Nix.Lint (NixViolation, findNixViolations)
 import NixCompile.Nix.Types
+import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
-import NixCompile.Types (Loc (..), Span (..))
+import NixCompile.Types (Span)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))
 
@@ -178,11 +178,10 @@ processFile conv path visited state = do
     then pure state
     else do
       parseResult <- Safety.safeParseNixFile path
-      case parseResult of
-        Left e ->
-          pure $ state{bsFailures = ParseFailure path (Safety.renderSafetyError e) : bsFailures state}
-        Right expr ->
-          processParsedFile conv path visited state expr
+      either onParseError (processParsedFile conv path visited state) parseResult
+ where
+  onParseError e =
+    pure $ state{bsFailures = ParseFailure path (Safety.renderSafetyError e) : bsFailures state}
 
 -- ── process a successfully parsed file ───────────────────────────
 
@@ -193,25 +192,21 @@ n.b. fixed from review-2:
     subsequent files still get processed.
 -}
 processParsedFile :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
-processParsedFile conv path visited state expr = case Safety.analyzeDepth expr of
-  Left de ->
+processParsedFile conv path visited state expr =
+  either onDepthExceeded (const (processParsedFile' conv path visited state expr)) (Safety.analyzeDepth expr)
+ where
+  onDepthExceeded de =
     pure $
       state
         { bsFailures =
-            ParseFailure
-              path
-              (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
-              : bsFailures state
+            ParseFailure path (Safety.renderSafetyError (Safety.SafetyDepthExceeded de)) : bsFailures state
         }
-  Right () -> processParsedFile' conv path visited state expr
 
 processParsedFile' :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
 processParsedFile' conv path visited state expr = do
   let rootDir = takeDirectory path
   let imports = findImports rootDir expr
-  let moduleType = case inferExpr expr of
-        Right (type_, _) -> type_
-        Left _ -> TAny
+  let moduleType = either (const TAny) fst (inferExpr expr)
   let lintViolations = findNixViolations expr
   let layoutViolations = validateFileFromExpr conv rootDir path expr
 
@@ -269,19 +264,18 @@ findImports :: FilePath -> NExprLoc -> [Import]
 findImports baseDir = walkExpr
  where
   walkExpr :: NExprLoc -> [Import]
-  walkExpr (Fix (Compose (AnnUnit srcSpan expr))) = case expr of
-    NApp func arg -> processApplication baseDir srcSpan func arg walkExpr
-    NLet bindings body -> concatMap walkBinding bindings ++ walkExpr body
-    NSet _ bindings -> concatMap walkBinding bindings
-    NIf cond thenBranch elseBranch -> walkExpr cond ++ walkExpr thenBranch ++ walkExpr elseBranch
-    NWith scope body -> walkExpr scope ++ walkExpr body
-    NAssert cond body -> walkExpr cond ++ walkExpr body
-    NAbs _ body -> walkExpr body
-    NList elements -> concatMap walkExpr elements
-    NSelect _ base _ -> walkExpr base
-    NBinary _ left right -> walkExpr left ++ walkExpr right
-    NUnary _ operand -> walkExpr operand
-    _ -> []
+  walkExpr (LayerAnn srcSpan (NApp func arg)) = processApplication baseDir srcSpan func arg walkExpr
+  walkExpr (Layer (NLet bindings body)) = concatMap walkBinding bindings ++ walkExpr body
+  walkExpr (Layer (NSet _ bindings)) = concatMap walkBinding bindings
+  walkExpr (Layer (NIf cond thenBranch elseBranch)) = walkExpr cond ++ walkExpr thenBranch ++ walkExpr elseBranch
+  walkExpr (Layer (NWith scope body)) = walkExpr scope ++ walkExpr body
+  walkExpr (Layer (NAssert cond body)) = walkExpr cond ++ walkExpr body
+  walkExpr (Layer (NAbs _ body)) = walkExpr body
+  walkExpr (Layer (NList elements)) = concatMap walkExpr elements
+  walkExpr (Layer (NSelect _ base _)) = walkExpr base
+  walkExpr (Layer (NBinary _ left right)) = walkExpr left ++ walkExpr right
+  walkExpr (Layer (NUnary _ operand)) = walkExpr operand
+  walkExpr _ = []
 
   walkBinding :: Nix.Binding NExprLoc -> [Import]
   walkBinding (Nix.NamedVar _ expr _) = walkExpr expr
@@ -302,24 +296,23 @@ processApplication baseDir srcSpan func arg continue
 
 -- | check if an expression is literally the `import` builtin (or builtins.import)
 checkImportBuiltin :: NExprLoc -> Maybe ()
-checkImportBuiltin (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NSym name | nixVarNameText name == "import" -> Just ()
-  NSelect _ _ (attr :| rest)
-    | nixVarNameText (nixKeyName (last (attr : rest))) == "import" -> Just ()
-  _ -> Nothing
+checkImportBuiltin (Layer (NSym name))
+  | nixVarNameText name == "import" = Just ()
+checkImportBuiltin (Layer (NSelect _ _ (attr :| rest)))
+  | nixVarNameText (nixKeyName (last (attr : rest))) == "import" = Just ()
+checkImportBuiltin _ = Nothing
 
 {- | try to unwrap a nested import expression: import (./path + args)
 returns (path, maybe inner-arg-expr)
 -}
 unwrapImportExpression :: NExprLoc -> Maybe (Text, Maybe NExprLoc)
-unwrapImportExpression (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NApp func pathExpr -> unwrapImportHelper func pathExpr
-  _ -> Nothing
+unwrapImportExpression (Layer (NApp func pathExpr)) = unwrapImportHelper func pathExpr
+unwrapImportExpression _ = Nothing
 
 -- | helper to unwrap import at the head of a chain of applications
 unwrapImportHelper :: NExprLoc -> NExprLoc -> Maybe (Text, Maybe NExprLoc)
 unwrapImportHelper func pathExpr
-  | Fix (Compose (AnnUnit _ (NSym name))) <- func
+  | Layer (NSym name) <- func
   , nixVarNameText name == "import" =
       Just (extractImportPath pathExpr, Nothing)
   | Just (path, Nothing) <- unwrapImportExpression func
@@ -330,11 +323,10 @@ unwrapImportHelper func pathExpr
 
 -- | extract the file path text from an import argument expression
 extractImportPath :: NExprLoc -> Text
-extractImportPath (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NLiteralPath (NixPath.Path p) -> T.pack p
-  NStr (DoubleQuoted [Plain t]) -> t
-  NStr (Indented _ [Plain t]) -> t
-  _ -> ""
+extractImportPath (Layer (NLiteralPath (NixPath.Path p))) = T.pack p
+extractImportPath (Layer (NStr (DoubleQuoted [Plain t]))) = t
+extractImportPath (Layer (NStr (Indented _ [Plain t]))) = t
+extractImportPath _ = ""
 
 -- ── key & name helpers ───────────────────────────────────────────
 
@@ -355,35 +347,14 @@ makeImport baseDirectory rawPath arguments srcSpan
               { impPath = resolvedPath
               , impRawPath = rawPath
               , impArgs = arguments
-              , impSpan = nixSrcSpanToSpan srcSpan
+              , impSpan = srcSpanToSpan srcSpan
               }
           ]
 
--- ── Nix SrcSpan → our Span type ──────────────────────────────────
-
-nixSrcSpanToSpan :: SrcSpan -> Span
-nixSrcSpanToSpan srcSpan =
-  let begin = getSpanBegin srcSpan
-      end = getSpanEnd srcSpan
-      fileFromBegin = case begin of
-        NSourcePos path _ _ -> Just (coerce path)
-   in Span
-        { spanStart = Loc (nixSourceLine begin) (nixSourceCol begin)
-        , spanEnd = Loc (nixSourceLine end) (nixSourceCol end)
-        , spanFile = fileFromBegin
-        }
-
-nixSourceLine :: NSourcePos -> Int
-nixSourceLine (NSourcePos _ (NPos line) _) = unPos line
-
-nixSourceCol :: NSourcePos -> Int
-nixSourceCol (NSourcePos _ _ (NPos col)) = unPos col
-
 -- | resolve a relative or absolute import path against the base directory
 resolveImportPath :: FilePath -> FilePath -> FilePath
-resolveImportPath baseDir path = case path of
-  '/' : _ -> path
-  _ -> normalise (baseDir </> path)
+resolveImportPath _ path@('/' : _) = path
+resolveImportPath baseDir path = normalise (baseDir </> path)
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- queries
@@ -435,46 +406,35 @@ inferModuleTypes mg = do
   -- update each module's modType with the cross-module inferred type
   let updatedModules =
         Map.mapWithKey
-          ( \p m -> case Map.lookup p finalTypes of
-              Just t -> m{modType = t}
-              Nothing -> m
-          )
+          (\p m -> maybe m (\t -> m{modType = t}) (Map.lookup p finalTypes))
           (mgModules mg)
   pure mg{mgModuleTypes = finalTypes, mgModules = updatedModules}
  where
   inferOneModule :: (Map FilePath NixType, Map FilePath [FilePath]) -> FilePath -> IO (Map FilePath NixType, Map FilePath [FilePath])
   inferOneModule (types, pendingDeps) path = do
-    let imports = case Map.lookup path (mgModules mg) of
-          Nothing -> []
-          Just m -> modImports m
+    let imports = maybe [] modImports (Map.lookup path (mgModules mg))
     -- insert types for both raw import paths (as written in the code) and resolved paths
-    canonicImports <- mapM (\i -> canonicalizePath (impPath i)) imports
+    canonicImports <- mapM (canonicalizePath . impPath) imports
     let rawPaths = map (T.unpack . impRawPath) imports
-    let resolvedPaths = map impPath imports
-    -- n.b. look up in `types` by resolved path, then insert for both raw and resolved keys
-    let env =
+        resolvedPaths = map impPath imports
+        -- n.b. look up in `types` by resolved path, then insert for both raw and resolved keys
+        env =
           foldr
-            ( \p e -> case Map.lookup p types of
-                Just t -> extendImport p t e
-                Nothing -> e
-            )
+            (\p e -> maybe e (\t -> extendImport p t e) (Map.lookup p types))
             builtinEnv
             (resolvedPaths ++ canonicImports)
-    let finalEnv =
+        finalEnv =
           foldr
-            ( \(raw, resolved) e -> case Map.lookup resolved types of
-                Just t -> extendImport raw t e
-                Nothing -> e
-            )
+            (\(raw, resolved) e -> maybe e (\t -> extendImport raw t e) (Map.lookup resolved types))
             env
             (zip rawPaths resolvedPaths)
-    case Map.lookup path (mgModules mg) of
-      Nothing -> pure (types, pendingDeps)
-      Just m -> do
-        let result = inferExprWithEnv finalEnv (modExpr m)
-        case result of
-          Left _ -> pure (types, pendingDeps)
-          Right (t, _) -> pure (Map.insert path t types, pendingDeps)
+        keep = pure (types, pendingDeps)
+        inferInto m =
+          either
+            (const keep)
+            (\(t, _) -> pure (Map.insert path t types, pendingDeps))
+            (inferExprWithEnv finalEnv (modExpr m))
+    maybe keep inferInto (Map.lookup path (mgModules mg))
 
 {- | compute a DFS-based topological order starting from the root module
 n.b. result is reversed so root appears first
@@ -485,12 +445,11 @@ computeOrder root modules = reverse $ snd $ dfs Set.empty [] root
   dfs :: Set FilePath -> [FilePath] -> FilePath -> (Set FilePath, [FilePath])
   dfs visited order path
     | path `Set.member` visited = (visited, order)
-    | otherwise =
-        case Map.lookup path modules of
-          Nothing -> (visited, order)
-          Just m ->
-            let visited' = Set.insert path visited
-                (visited'', order') = foldl go (visited', order) (map impPath (modImports m))
-             in (visited'', path : order')
+    | otherwise = maybe (visited, order) recurse (Map.lookup path modules)
+   where
+    recurse m =
+      let visited' = Set.insert path visited
+          (visited'', order') = foldl go (visited', order) (map impPath (modImports m))
+       in (visited'', path : order')
 
   go (v, o) p = dfs v o p
