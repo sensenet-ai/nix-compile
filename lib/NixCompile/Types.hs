@@ -19,59 +19,59 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Types (
-    -- * Types
-    Type (..),
-    TypeVar (..),
+  -- * Types
+  Type (..),
+  TypeVar (..),
 
-    -- * Constraints
-    Constraint (..),
-    Subst,
-    emptySubst,
-    singleSubst,
-    composeSubst,
-    applySubst,
+  -- * Constraints
+  Constraint (..),
+  Subst,
+  emptySubst,
+  singleSubst,
+  composeSubst,
+  applySubst,
 
-    -- * Source locations
-    Loc (..),
-    Span (..),
+  -- * Source locations
+  Loc (..),
+  Span (..),
 
-    -- * Literals
-    Literal (..),
-    literalType,
+  -- * Literals
+  Literal (..),
+  literalType,
 
-    -- * Facts (observations from parsing)
-    Fact (..),
-    Quoted (..),
+  -- * Facts (observations from parsing)
+  Fact (..),
+  Quoted (..),
 
-    -- * Config paths
-    ConfigPath,
-    ConfigPart (..),
+  -- * Config paths
+  ConfigPath,
+  ConfigPart (..),
 
-    -- * Commands
-    Command (..),
-    Arg (..),
+  -- * Commands
+  Command (..),
+  Arg (..),
 
-    -- * Store paths
-    StorePath (..),
-    isStorePath,
+  -- * Store paths
+  StorePath (..),
+  isStorePath,
 
-    -- * Schema (final output)
-    Schema (..),
-    EnvSpec (..),
-    mergeEnvSpec,
-    ConfigSpec (..),
-    mergeConfigSpec,
-    CommandSpec (..),
-    emptySchema,
-    mergeSchemas,
+  -- * Schema (final output)
+  Schema (..),
+  EnvSpec (..),
+  mergeEnvSpec,
+  ConfigSpec (..),
+  mergeConfigSpec,
+  CommandSpec (..),
+  emptySchema,
+  mergeSchemas,
 
-    -- * Scripts
-    Script (..),
+  -- * Scripts
+  Script (..),
 
-    -- * Errors
-    TypeError (..),
-    LintError (..),
-    Severity (..),
+  -- * Errors
+  TypeError (..),
+  LintError (..),
+  Severity (..),
 )
 where
 
@@ -90,17 +90,17 @@ import Data.Text qualified as T
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 newtype TypeVar = TypeVar {unTypeVar :: Text}
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving newtype (FromJSON, ToJSON)
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (FromJSON, ToJSON)
 
 data Type
-    = TInt
-    | TString
-    | TBool
-    | TPath
-    | TNumeric
-    | TVar TypeVar
-    deriving stock (Eq, Ord, Show, Generic)
+  = TInt
+  | TString
+  | TBool
+  | TPath
+  | TNumeric
+  | TVar TypeVar
+  deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON Type
 instance ToJSON Type
@@ -110,7 +110,7 @@ instance ToJSON Type
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data Constraint = Type :~: Type
-    deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
 
 infix 4 :~:
 
@@ -124,36 +124,36 @@ singleSubst = Map.singleton
 
 composeSubst :: Subst -> Subst -> Subst
 composeSubst substitution1 substitution2 =
-    Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
+  Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
 
 applySubst :: Subst -> Type -> Type
 applySubst substitution = go
-  where
-    go = \case
-        TVar variable -> case Map.lookup variable substitution of
-            Just t -> go t
-            Nothing -> TVar variable
-        typ -> typ
+ where
+  go = \case
+    TVar variable -> case Map.lookup variable substitution of
+      Just t -> go t
+      Nothing -> TVar variable
+    typ -> typ
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Source Locations
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data Loc = Loc
-    { locLine :: !Int
-    , locCol :: !Int
-    }
-    deriving stock (Eq, Ord, Show, Generic)
+  { locLine :: !Int
+  , locCol :: !Int
+  }
+  deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON Loc
 instance ToJSON Loc
 
 data Span = Span
-    { spanStart :: !Loc
-    , spanEnd :: !Loc
-    , spanFile :: !(Maybe FilePath)
-    }
-    deriving stock (Eq, Show, Generic)
+  { spanStart :: !Loc
+  , spanEnd :: !Loc
+  , spanFile :: !(Maybe FilePath)
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Span
 instance ToJSON Span
@@ -163,28 +163,28 @@ instance ToJSON Span
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data Literal
-    = LitInt !Int
-    | LitString !Text
-    | LitBool !Bool
-    | LitPath !StorePath
-    deriving stock (Eq, Show, Generic)
+  = LitInt !Int
+  | LitString !Text
+  | LitBool !Bool
+  | LitPath !StorePath
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Literal
 instance ToJSON Literal
 
 literalType :: Literal -> Type
 literalType = \case
-    LitInt _ -> TInt
-    LitString _ -> TString
-    LitBool _ -> TBool
-    LitPath _ -> TPath
+  LitInt _ -> TInt
+  LitString _ -> TString
+  LitBool _ -> TBool
+  LitPath _ -> TPath
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Facts
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data Quoted = Quoted | Unquoted
-    deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Quoted
 instance ToJSON Quoted
@@ -192,30 +192,30 @@ instance ToJSON Quoted
 type ConfigPath = [Text]
 
 data ConfigPart
-    = ConfigText !Text
-    | ConfigVar !Text
-    | ConfigVarDefault !Text !Text
-    | ConfigVarRequired !Text
-    | ConfigVarAlternate !Text !Text
-    deriving stock (Eq, Show, Generic)
+  = ConfigText !Text
+  | ConfigVar !Text
+  | ConfigVarDefault !Text !Text
+  | ConfigVarRequired !Text
+  | ConfigVarAlternate !Text !Text
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON ConfigPart
 instance ToJSON ConfigPart
 
 data Fact
-    = DefaultIs !Text !Literal !Span
-    | DefaultFrom !Text !Text !Span
-    | Required !Text !Span
-    | AssignFrom !Text !Text !Span
-    | AssignLit !Text !Literal !Span
-    | ConfigAssign !ConfigPath !Text !Quoted !Span
-    | ConfigLit !ConfigPath !Literal !Span
-    | ConfigTemplate !ConfigPath ![ConfigPart] !Quoted !Span
-    | CmdArg !Text !Text !Text !Span
-    | UsesStorePath !StorePath !Span
-    | BareCommand !Text !Span
-    | DynamicCommand !Text !Span
-    deriving stock (Eq, Show, Generic)
+  = DefaultIs !Text !Literal !Span
+  | DefaultFrom !Text !Text !Span
+  | Required !Text !Span
+  | AssignFrom !Text !Text !Span
+  | AssignLit !Text !Literal !Span
+  | ConfigAssign !ConfigPath !Text !Quoted !Span
+  | ConfigLit !ConfigPath !Literal !Span
+  | ConfigTemplate !ConfigPath ![ConfigPart] !Quoted !Span
+  | CmdArg !Text !Text !Text !Span
+  | UsesStorePath !StorePath !Span
+  | BareCommand !Text !Span
+  | DynamicCommand !Text !Span
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Fact
 instance ToJSON Fact
@@ -225,21 +225,21 @@ instance ToJSON Fact
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data Arg
-    = ArgLit !Text
-    | ArgVar !Text
-    | ArgFlag !Text
-    deriving stock (Eq, Show, Generic)
+  = ArgLit !Text
+  | ArgVar !Text
+  | ArgFlag !Text
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Arg
 instance ToJSON Arg
 
 data Command = Command
-    { cmdName :: !Text
-    , cmdPath :: !(Maybe StorePath)
-    , cmdArgs :: ![Arg]
-    , cmdSpan :: !Span
-    }
-    deriving stock (Eq, Show, Generic)
+  { cmdName :: !Text
+  , cmdPath :: !(Maybe StorePath)
+  , cmdArgs :: ![Arg]
+  , cmdSpan :: !Span
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Command
 instance ToJSON Command
@@ -249,115 +249,115 @@ instance ToJSON Command
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 newtype StorePath = StorePath {unStorePath :: Text}
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving newtype (FromJSON, ToJSON)
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (FromJSON, ToJSON)
 
 isStorePath :: Text -> Bool
 isStorePath text =
-    "/nix/store/" `T.isPrefixOf` text
-        && not (".." `T.isInfixOf` text)
-        && not ("//" `T.isInfixOf` text)
+  "/nix/store/" `T.isPrefixOf` text
+    && not (".." `T.isInfixOf` text)
+    && not ("//" `T.isInfixOf` text)
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Schema
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data EnvSpec = EnvSpec
-    { envType :: !Type
-    , envRequired :: !Bool
-    , envDefault :: !(Maybe Literal)
-    , envSpan :: !Span
-    }
-    deriving stock (Eq, Show, Generic)
+  { envType :: !Type
+  , envRequired :: !Bool
+  , envDefault :: !(Maybe Literal)
+  , envSpan :: !Span
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON EnvSpec
 instance ToJSON EnvSpec
 
 mergeEnvSpec :: EnvSpec -> EnvSpec -> EnvSpec
 mergeEnvSpec envSpec1 envSpec2 =
-    EnvSpec
-        { envType = envType envSpec1
-        , envRequired = envRequired envSpec1 || envRequired envSpec2
-        , envDefault = case envDefault envSpec1 of
-            Just _ -> envDefault envSpec1
-            Nothing -> envDefault envSpec2
-        , envSpan = envSpan envSpec1
-        }
+  EnvSpec
+    { envType = envType envSpec1
+    , envRequired = envRequired envSpec1 || envRequired envSpec2
+    , envDefault = case envDefault envSpec1 of
+        Just _ -> envDefault envSpec1
+        Nothing -> envDefault envSpec2
+    , envSpan = envSpan envSpec1
+    }
 
 mergeConfigSpec :: ConfigSpec -> ConfigSpec -> ConfigSpec
 mergeConfigSpec _ configSpec2 = configSpec2
 
 data ConfigSpec = ConfigSpec
-    { cfgType :: !Type
-    , cfgFrom :: !(Maybe Text)
-    , cfgQuoted :: !(Maybe Quoted)
-    , cfgLit :: !(Maybe Literal)
-    , cfgTemplate :: !(Maybe [ConfigPart])
-    , cfgSpan :: !Span
-    }
-    deriving stock (Eq, Show, Generic)
+  { cfgType :: !Type
+  , cfgFrom :: !(Maybe Text)
+  , cfgQuoted :: !(Maybe Quoted)
+  , cfgLit :: !(Maybe Literal)
+  , cfgTemplate :: !(Maybe [ConfigPart])
+  , cfgSpan :: !Span
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON ConfigSpec
 instance ToJSON ConfigSpec
 
 data CommandSpec = CommandSpec
-    { cmdSpecName :: !Text
-    , cmdSpecPath :: !(Maybe StorePath)
-    , cmdSpecSpan :: !Span
-    }
-    deriving stock (Eq, Show, Generic)
+  { cmdSpecName :: !Text
+  , cmdSpecPath :: !(Maybe StorePath)
+  , cmdSpecSpan :: !Span
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON CommandSpec
 instance ToJSON CommandSpec
 
 data Schema = Schema
-    { schemaEnv :: !(Map Text EnvSpec)
-    , schemaConfig :: !(Map ConfigPath ConfigSpec)
-    , schemaCommands :: ![CommandSpec]
-    , schemaStorePaths :: !(Set StorePath)
-    , schemaBareCommands :: ![Text]
-    , schemaDynamicCommands :: ![Text]
-    , schemaDefaultedVars :: ![Text]
-    }
-    deriving stock (Eq, Show, Generic)
+  { schemaEnv :: !(Map Text EnvSpec)
+  , schemaConfig :: !(Map ConfigPath ConfigSpec)
+  , schemaCommands :: ![CommandSpec]
+  , schemaStorePaths :: !(Set StorePath)
+  , schemaBareCommands :: ![Text]
+  , schemaDynamicCommands :: ![Text]
+  , schemaDefaultedVars :: ![Text]
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Schema
 instance ToJSON Schema
 
 emptySchema :: Schema
 emptySchema =
-    Schema
-        { schemaEnv = Map.empty
-        , schemaConfig = Map.empty
-        , schemaCommands = []
-        , schemaStorePaths = Set.empty
-        , schemaBareCommands = []
-        , schemaDynamicCommands = []
-        , schemaDefaultedVars = []
-        }
+  Schema
+    { schemaEnv = Map.empty
+    , schemaConfig = Map.empty
+    , schemaCommands = []
+    , schemaStorePaths = Set.empty
+    , schemaBareCommands = []
+    , schemaDynamicCommands = []
+    , schemaDefaultedVars = []
+    }
 
 mergeSchemas :: Schema -> Schema -> Schema
 mergeSchemas schema1 schema2 =
-    Schema
-        { schemaEnv = Map.unionWith mergeEnvSpec (schemaEnv schema1) (schemaEnv schema2)
-        , schemaConfig = schemaConfig schema1 `Map.union` schemaConfig schema2
-        , schemaCommands = schemaCommands schema1 ++ schemaCommands schema2
-        , schemaStorePaths = schemaStorePaths schema1 `Set.union` schemaStorePaths schema2
-        , schemaBareCommands = schemaBareCommands schema1 ++ schemaBareCommands schema2
-        , schemaDynamicCommands = schemaDynamicCommands schema1 ++ schemaDynamicCommands schema2
-        , schemaDefaultedVars = schemaDefaultedVars schema1 ++ schemaDefaultedVars schema2
-        }
+  Schema
+    { schemaEnv = Map.unionWith mergeEnvSpec (schemaEnv schema1) (schemaEnv schema2)
+    , schemaConfig = schemaConfig schema1 `Map.union` schemaConfig schema2
+    , schemaCommands = schemaCommands schema1 ++ schemaCommands schema2
+    , schemaStorePaths = schemaStorePaths schema1 `Set.union` schemaStorePaths schema2
+    , schemaBareCommands = schemaBareCommands schema1 ++ schemaBareCommands schema2
+    , schemaDynamicCommands = schemaDynamicCommands schema1 ++ schemaDynamicCommands schema2
+    , schemaDefaultedVars = schemaDefaultedVars schema1 ++ schemaDefaultedVars schema2
+    }
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Scripts
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data Script = Script
-    { scriptSource :: !Text
-    , scriptFacts :: ![Fact]
-    , scriptSchema :: !Schema
-    }
-    deriving stock (Eq, Show, Generic)
+  { scriptSource :: !Text
+  , scriptFacts :: ![Fact]
+  , scriptSchema :: !Schema
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Script
 instance ToJSON Script
@@ -367,31 +367,31 @@ instance ToJSON Script
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data TypeError
-    = Mismatch !Type !Type !Span
-    | OccursCheck !TypeVar !Type !Span
-    | Ambiguous !TypeVar !Span
-    deriving stock (Eq, Show, Generic)
+  = Mismatch !Type !Type !Span
+  | OccursCheck !TypeVar !Type !Span
+  | Ambiguous !TypeVar !Span
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON TypeError
 instance ToJSON TypeError
 
 data Severity
-    = SevError
-    | SevWarning
-    | SevInfo
-    deriving stock (Eq, Ord, Show, Generic)
+  = SevError
+  | SevWarning
+  | SevInfo
+  deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON Severity
 instance ToJSON Severity
 
 data LintError = LintError
-    { lintCode :: !Text
-    , lintMessage :: !Text
-    , lintSeverity :: !Severity
-    , lintSpan :: !Span
-    , lintSuggestion :: !(Maybe Text)
-    }
-    deriving stock (Eq, Show, Generic)
+  { lintCode :: !Text
+  , lintMessage :: !Text
+  , lintSeverity :: !Severity
+  , lintSpan :: !Span
+  , lintSuggestion :: !(Maybe Text)
+  }
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON LintError
 instance ToJSON LintError

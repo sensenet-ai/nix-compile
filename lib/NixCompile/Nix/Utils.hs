@@ -17,15 +17,15 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Nix.Utils (
-    -- * VarName extraction
-    varNameText,
+  -- * VarName extraction
+  varNameText,
 
-    -- * Key extraction
-    keyText,
+  -- * Key extraction
+  keyText,
 
-    -- * Span conversion
-    toSpan,
-    srcSpanToSpan,
+  -- * Span conversion
+  toSpan,
+  srcSpanToSpan,
 )
 where
 
@@ -49,25 +49,25 @@ keyText (DynamicKey _) = ""
 -- | Convert hnix SrcSpan to our Span type
 srcSpanToSpan :: SrcSpan -> Span
 srcSpanToSpan srcSpan =
-    let begin = getSpanBegin srcSpan
-        end = getSpanEnd srcSpan
-        fileFromBegin = case begin of
-            NSourcePos path _ _ -> Just (coerce path)
-     in Span
-            { spanStart = Loc (sourceLine begin) (sourceCol begin)
-            , spanEnd = Loc (sourceLine end) (sourceCol end)
-            , spanFile = fileFromBegin
-            }
-  where
-    getSpanBegin (SrcSpan begin _) = begin
-    getSpanEnd (SrcSpan _ end) = end
-    sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-    sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
+  let begin = getSpanBegin srcSpan
+      end = getSpanEnd srcSpan
+      fileFromBegin = case begin of
+        NSourcePos path _ _ -> Just (coerce path)
+   in Span
+        { spanStart = Loc (sourceLine begin) (sourceCol begin)
+        , spanEnd = Loc (sourceLine end) (sourceCol end)
+        , spanFile = fileFromBegin
+        }
+ where
+  getSpanBegin (SrcSpan begin _) = begin
+  getSpanEnd (SrcSpan _ end) = end
+  sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
+  sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
 
 -- | Alias for srcSpanToSpan with different argument order
 toSpan :: SrcSpan -> Maybe FilePath -> Span
 toSpan srcSpan mFile =
-    let sp = srcSpanToSpan srcSpan
-     in case mFile of
-            Just f -> sp{spanFile = Just f}
-            Nothing -> sp
+  let sp = srcSpanToSpan srcSpan
+   in case mFile of
+        Just f -> sp{spanFile = Just f}
+        Nothing -> sp

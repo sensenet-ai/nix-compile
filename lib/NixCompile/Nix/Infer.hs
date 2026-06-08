@@ -15,13 +15,13 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Nix.Infer (
-    -- * Type-annotation injection (the @infer@ command)
-    annotateFile,
-    annotateFileWithEnv,
-    annotateExpr,
+  -- * Type-annotation injection (the @infer@ command)
+  annotateFile,
+  annotateFileWithEnv,
+  annotateExpr,
 
-    -- * Low-level
-    annotateSource,
+  -- * Low-level
+  annotateSource,
 )
 where
 
@@ -46,57 +46,57 @@ knowledge by inferring with the empty env.
 -}
 annotateFileWithEnv :: TypeEnv -> FilePath -> IO (Either Text Text)
 annotateFileWithEnv env path = do
-    readResult <- Safety.safeReadFile path
-    case readResult of
-        Left e -> pure $ Left (Safety.renderSafetyError e)
-        Right src -> do
-            parseResult <- parseNixFile path
-            case parseResult of
-                Left err -> pure (Left err)
-                Right expr -> pure (annotateExprWithEnv env src expr)
+  readResult <- Safety.safeReadFile path
+  case readResult of
+    Left e -> pure $ Left (Safety.renderSafetyError e)
+    Right src -> do
+      parseResult <- parseNixFile path
+      case parseResult of
+        Left err -> pure (Left err)
+        Right expr -> pure (annotateExprWithEnv env src expr)
 
 annotateExpr :: Text -> Either Text Text
 annotateExpr src = case parseNix "<input>" src of
-    Left err -> Left err
-    Right expr -> annotateExprWithEnv builtinEnv src expr
+  Left err -> Left err
+  Right expr -> annotateExprWithEnv builtinEnv src expr
 
 annotateExprWithEnv :: TypeEnv -> Text -> NExprLoc -> Either Text Text
 annotateExprWithEnv env src expr =
-    case Safety.analyzeDepth expr of
-        Left de -> Left (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
-        Right () -> case inferExprWithEnv env expr of
-            Left err -> Left err
-            Right (_, bindings) ->
-                let res = InferResult bindings []
-                 in Right $ annotateSource src res
+  case Safety.analyzeDepth expr of
+    Left de -> Left (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+    Right () -> case inferExprWithEnv env expr of
+      Left err -> Left err
+      Right (_, bindings) ->
+        let res = InferResult bindings []
+         in Right $ annotateSource src res
 
 annotateSource :: Text -> InferResult -> Text
 annotateSource src InferResult{..} =
-    let
-        bindingAnns = map mkBindingAnn irBindings
-        anns = sortBy (flip (comparing annLoc)) bindingAnns
-     in
-        foldl' (flip applyAnn) src anns
+  let
+    bindingAnns = map mkBindingAnn irBindings
+    anns = sortBy (flip (comparing annLoc)) bindingAnns
+   in
+    foldl' (flip applyAnn) src anns
 
 data Ann = Ann
-    { annLoc :: !Loc
-    , annText :: !Text
-    }
-    deriving (Eq, Show)
+  { annLoc :: !Loc
+  , annText :: !Text
+  }
+  deriving (Eq, Show)
 
 mkBindingAnn :: Binding -> Ann
 mkBindingAnn Binding{..} =
-    Ann
-        { annLoc = spanStart bindSpan
-        , annText = "# :: " <> prettyType bindType
-        }
+  Ann
+    { annLoc = spanStart bindSpan
+    , annText = "# :: " <> prettyType bindType
+    }
 
 applyAnn :: Ann -> Text -> Text
 applyAnn Ann{..} src =
-    let lines_ = T.lines src
-        (before, after) = splitAt (locLine annLoc - 1) lines_
-        indent = getIndent (headSafe after)
-     in T.unlines $ before ++ [indent <> annText] ++ after
+  let lines_ = T.lines src
+      (before, after) = splitAt (locLine annLoc - 1) lines_
+      indent = getIndent (headSafe after)
+   in T.unlines $ before ++ [indent <> annText] ++ after
 
 getIndent :: Maybe Text -> Text
 getIndent Nothing = ""

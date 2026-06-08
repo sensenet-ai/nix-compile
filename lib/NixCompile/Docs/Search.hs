@@ -12,7 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module NixCompile.Docs.Search (
-    search,
+  search,
 )
 where
 
@@ -25,5 +25,5 @@ search query items = filter (matches (T.toLower query)) items
 
 matches :: Text -> DocItem -> Bool
 matches q item =
-    q `T.isInfixOf` T.toLower (docName item)
-        || q `T.isInfixOf` T.toLower (docDescription item)
+  q `T.isInfixOf` T.toLower (docName item)
+    || q `T.isInfixOf` T.toLower (docDescription item)

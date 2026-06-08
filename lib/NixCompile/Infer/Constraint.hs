@@ -17,8 +17,8 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Infer.Constraint (
-    factsToConstraints,
-    factToConstraints,
+  factsToConstraints,
+  factToConstraints,
 )
 where
 
@@ -32,29 +32,29 @@ factsToConstraints = concatMap factToConstraints
 -- | Convert a single fact to constraints
 factToConstraints :: Fact -> [Constraint]
 factToConstraints = \case
-    DefaultIs variable literal _ ->
-        [TVar (TypeVar variable) :~: literalType literal]
-    DefaultFrom variable otherVariable _ ->
-        [TVar (TypeVar variable) :~: TVar (TypeVar otherVariable)]
-    Required _ _ ->
-        []
-    AssignFrom variable otherVariable _ ->
-        [TVar (TypeVar variable) :~: TVar (TypeVar otherVariable)]
-    AssignLit variable literal _ ->
-        [TVar (TypeVar variable) :~: literalType literal]
-    ConfigAssign _ _ _ _ ->
-        []
-    ConfigLit _ _ _ ->
-        []
-    ConfigTemplate _ _ _ _ ->
-        []
-    CmdArg command argumentName variableName _ ->
-        case lookupArgType command argumentName of
-            Just resolvedType -> [TVar (TypeVar variableName) :~: resolvedType]
-            Nothing -> []
-    UsesStorePath _ _ ->
-        []
-    BareCommand _ _ ->
-        []
-    DynamicCommand _ _ ->
-        []
+  DefaultIs variable literal _ ->
+    [TVar (TypeVar variable) :~: literalType literal]
+  DefaultFrom variable otherVariable _ ->
+    [TVar (TypeVar variable) :~: TVar (TypeVar otherVariable)]
+  Required _ _ ->
+    []
+  AssignFrom variable otherVariable _ ->
+    [TVar (TypeVar variable) :~: TVar (TypeVar otherVariable)]
+  AssignLit variable literal _ ->
+    [TVar (TypeVar variable) :~: literalType literal]
+  ConfigAssign _ _ _ _ ->
+    []
+  ConfigLit _ _ _ ->
+    []
+  ConfigTemplate _ _ _ _ ->
+    []
+  CmdArg command argumentName variableName _ ->
+    case lookupArgType command argumentName of
+      Just resolvedType -> [TVar (TypeVar variableName) :~: resolvedType]
+      Nothing -> []
+  UsesStorePath _ _ ->
+    []
+  BareCommand _ _ ->
+    []
+  DynamicCommand _ _ ->
+    []

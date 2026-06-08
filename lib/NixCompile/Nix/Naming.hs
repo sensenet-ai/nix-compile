@@ -26,23 +26,23 @@ Conventions:
   * 'CamelCase': nixpkgsStyleNames
 -}
 module NixCompile.Nix.Naming (
-    -- * Conventions
-    NamingConvention (..),
+  -- * Conventions
+  NamingConvention (..),
 
-    -- * Validation
-    findNamingViolations,
-    checkIdentifier,
+  -- * Validation
+  findNamingViolations,
+  checkIdentifier,
 
-    -- * Results
-    NamingViolation (..),
+  -- * Results
+  NamingViolation (..),
 
-    -- * Utilities
-    toKebabCase,
-    toSnakeCase,
-    toCamelCase,
-    isKebabCase,
-    isSnakeCase,
-    isCamelCase,
+  -- * Utilities
+  toKebabCase,
+  toSnakeCase,
+  toCamelCase,
+  isKebabCase,
+  isSnakeCase,
+  isCamelCase,
 )
 where
 
@@ -65,26 +65,26 @@ import NixCompile.Types (Loc (..), Span (..))
 
 -- | Naming convention.
 data NamingConvention
-    = -- | kebab-case (straylight)
-      LispCase
-    | -- | snake_case
-      SnakeCase
-    | -- | camelCase (nixpkgs)
-      CamelCase
-    | NoConvention
-    deriving (Eq, Show)
+  = -- | kebab-case (straylight)
+    LispCase
+  | -- | snake_case
+    SnakeCase
+  | -- | camelCase (nixpkgs)
+    CamelCase
+  | NoConvention
+  deriving (Eq, Show)
 
 -- | A naming violation.
 data NamingViolation = NamingViolation
-    { nvIdentifier :: !Text
-    , nvExpected :: !NamingConvention
-    , nvSpan :: !Span
-    , nvContext :: !Text
-    -- ^ Where it appears (attr, let, param, option)
-    , nvSuggestion :: !Text
-    -- ^ Corrected name
-    }
-    deriving (Eq, Show)
+  { nvIdentifier :: !Text
+  , nvExpected :: !NamingConvention
+  , nvSpan :: !Span
+  , nvContext :: !Text
+  -- ^ Where it appears (attr, let, param, option)
+  , nvSuggestion :: !Text
+  -- ^ Corrected name
+  }
+  deriving (Eq, Show)
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                                // validation
@@ -94,67 +94,67 @@ data NamingViolation = NamingViolation
 findNamingViolations :: NamingConvention -> NExprLoc -> [NamingViolation]
 findNamingViolations NoConvention _ = []
 findNamingViolations conv expr = go expr
-  where
-    go :: NExprLoc -> [NamingViolation]
-    go (Fix (Compose (AnnUnit srcSpan e))) = case e of
-        -- Let bindings: let foo = ...; in ...
-        NLet bindings body ->
-            concatMap (checkBinding conv "let binding" srcSpan) bindings
-                ++ go body
-        -- Attribute set: { foo = ...; bar = ...; }
-        NSet _ bindings ->
-            concatMap (checkBinding conv "attribute" srcSpan) bindings
-        -- Function with pattern: { foo, bar, ... }: ...
-        NAbs (ParamSet _ _ params) body ->
-            mapMaybe (checkParam conv srcSpan) params ++ go body
-        -- Recurse into children
-        NAbs _ body -> go body
-        NWith _ body -> go body
-        NIf cond t f -> go cond ++ go t ++ go f
-        NApp f x -> go f ++ go x
-        NSelect _ e1 _ -> go e1
-        NHasAttr e1 _ -> go e1
-        NList xs -> concatMap go xs
-        NUnary _ e1 -> go e1
-        NBinary _ l r -> go l ++ go r
-        NAssert cond body -> go cond ++ go body
-        _ -> []
+ where
+  go :: NExprLoc -> [NamingViolation]
+  go (Fix (Compose (AnnUnit srcSpan e))) = case e of
+    -- Let bindings: let foo = ...; in ...
+    NLet bindings body ->
+      concatMap (checkBinding conv "let binding" srcSpan) bindings
+        ++ go body
+    -- Attribute set: { foo = ...; bar = ...; }
+    NSet _ bindings ->
+      concatMap (checkBinding conv "attribute" srcSpan) bindings
+    -- Function with pattern: { foo, bar, ... }: ...
+    NAbs (ParamSet _ _ params) body ->
+      mapMaybe (checkParam conv srcSpan) params ++ go body
+    -- Recurse into children
+    NAbs _ body -> go body
+    NWith _ body -> go body
+    NIf cond t f -> go cond ++ go t ++ go f
+    NApp f x -> go f ++ go x
+    NSelect _ e1 _ -> go e1
+    NHasAttr e1 _ -> go e1
+    NList xs -> concatMap go xs
+    NUnary _ e1 -> go e1
+    NBinary _ l r -> go l ++ go r
+    NAssert cond body -> go cond ++ go body
+    _ -> []
 
 -- | Check a binding name.
 checkBinding :: NamingConvention -> Text -> SrcSpan -> Binding NExprLoc -> [NamingViolation]
 checkBinding conv ctx srcSpan = \case
-    NamedVar (StaticKey name :| []) val _ ->
-        let ident = coerce name :: Text
-            violations = checkIdentifier conv ctx ident (toSpan srcSpan)
-            valViolations = case conv of
-                NoConvention -> []
-                _ -> findNamingViolations conv val
-         in violations ++ valViolations
-    NamedVar _ val _ -> findNamingViolations conv val
-    Inherit _ _ _ -> []
+  NamedVar (StaticKey name :| []) val _ ->
+    let ident = coerce name :: Text
+        violations = checkIdentifier conv ctx ident (toSpan srcSpan)
+        valViolations = case conv of
+          NoConvention -> []
+          _ -> findNamingViolations conv val
+     in violations ++ valViolations
+  NamedVar _ val _ -> findNamingViolations conv val
+  Inherit _ _ _ -> []
 
 -- | Check a parameter name.
 checkParam :: NamingConvention -> SrcSpan -> (VarName, Maybe NExprLoc) -> Maybe NamingViolation
 checkParam conv srcSpan (name, _) =
-    let ident = coerce name :: Text
-     in case checkIdentifier conv "parameter" ident (toSpan srcSpan) of
-            (v : _) -> Just v
-            [] -> Nothing
+  let ident = coerce name :: Text
+   in case checkIdentifier conv "parameter" ident (toSpan srcSpan) of
+        (v : _) -> Just v
+        [] -> Nothing
 
 -- | Check a single identifier against the convention.
 checkIdentifier :: NamingConvention -> Text -> Text -> Span -> [NamingViolation]
 checkIdentifier conv ctx ident sp
-    | isExempt ident = []
-    | matchesConvention conv (T.unpack ident) = []
-    | otherwise =
-        [ NamingViolation
-            { nvIdentifier = ident
-            , nvExpected = conv
-            , nvSpan = sp
-            , nvContext = ctx
-            , nvSuggestion = T.pack $ convertTo conv (T.unpack ident)
-            }
-        ]
+  | isExempt ident = []
+  | matchesConvention conv (T.unpack ident) = []
+  | otherwise =
+      [ NamingViolation
+          { nvIdentifier = ident
+          , nvExpected = conv
+          , nvSpan = sp
+          , nvContext = ctx
+          , nvSuggestion = T.pack $ convertTo conv (T.unpack ident)
+          }
+      ]
 
 -- | Check if identifier matches convention.
 matchesConvention :: NamingConvention -> String -> Bool
@@ -173,97 +173,97 @@ convertTo CamelCase s = toCamelCase s
 -- | Identifiers exempt from naming rules.
 isExempt :: Text -> Bool
 isExempt ident = ident `elem` exemptList || T.isPrefixOf "_" ident
-  where
-    exemptList =
-        [ -- Nix builtins and common attrs
-          "inherit"
-        , "self"
-        , "super"
-        , "final"
-        , "prev"
-        , "config"
-        , "lib"
-        , "pkgs"
-        , "options"
-        , "imports"
-        , "stdenv"
-        , "fetchurl"
-        , "fetchFromGitHub"
-        , "fetchgit"
-        , "buildInputs"
-        , "nativeBuildInputs"
-        , "propagatedBuildInputs"
-        , "pname"
-        , "version"
-        , "src"
-        , "meta"
-        , "description"
-        , "homepage"
-        , "license"
-        , "maintainers"
-        , "platforms"
-        , "configurePhase"
-        , "buildPhase"
-        , "installPhase"
-        , "checkPhase"
-        , "postInstall"
-        , "postBuild"
-        , "preBuild"
-        , "preInstall"
-        , "passthru"
-        , "overrideAttrs"
-        , "override"
-        , -- flake-parts
-          "perSystem"
-        , "flake"
-        , "withSystem"
-        , "inputsFrom"
-        , -- home-manager / NixOS
-          "enable"
-        , "package"
-        , "extraConfig"
-        , "extraOptions"
-        , "systemd"
-        , "services"
-        , "programs"
-        , "environment"
-        , -- Common functions
-          "mkShell"
-        , "writeShellApplication"
-        , "mkDerivation"
-        , "mkOption"
-        , "mkEnableOption"
-        , "shellHook"
-        , "runtimeInputs"
-        , "haskellPackages"
-        , "mkCheck"
-        , "mkHook"
-        , "mkPreCommitHook"
-        , "mkIntegration"
-        , -- Flake outputs
-          "packages"
-        , "checks"
-        , "devShells"
-        , "apps"
-        , "overlays"
-        , "nixosModules"
-        , "homeModules"
-        , "flakeModules"
-        , -- Special
-          "true"
-        , "false"
-        , "null"
-        , "or"
-        , "if"
-        , "then"
-        , "else"
-        , "let"
-        , "in"
-        , "with"
-        , "rec"
-        , "assert"
-        , "inherit"
-        ]
+ where
+  exemptList =
+    [ -- Nix builtins and common attrs
+      "inherit"
+    , "self"
+    , "super"
+    , "final"
+    , "prev"
+    , "config"
+    , "lib"
+    , "pkgs"
+    , "options"
+    , "imports"
+    , "stdenv"
+    , "fetchurl"
+    , "fetchFromGitHub"
+    , "fetchgit"
+    , "buildInputs"
+    , "nativeBuildInputs"
+    , "propagatedBuildInputs"
+    , "pname"
+    , "version"
+    , "src"
+    , "meta"
+    , "description"
+    , "homepage"
+    , "license"
+    , "maintainers"
+    , "platforms"
+    , "configurePhase"
+    , "buildPhase"
+    , "installPhase"
+    , "checkPhase"
+    , "postInstall"
+    , "postBuild"
+    , "preBuild"
+    , "preInstall"
+    , "passthru"
+    , "overrideAttrs"
+    , "override"
+    , -- flake-parts
+      "perSystem"
+    , "flake"
+    , "withSystem"
+    , "inputsFrom"
+    , -- home-manager / NixOS
+      "enable"
+    , "package"
+    , "extraConfig"
+    , "extraOptions"
+    , "systemd"
+    , "services"
+    , "programs"
+    , "environment"
+    , -- Common functions
+      "mkShell"
+    , "writeShellApplication"
+    , "mkDerivation"
+    , "mkOption"
+    , "mkEnableOption"
+    , "shellHook"
+    , "runtimeInputs"
+    , "haskellPackages"
+    , "mkCheck"
+    , "mkHook"
+    , "mkPreCommitHook"
+    , "mkIntegration"
+    , -- Flake outputs
+      "packages"
+    , "checks"
+    , "devShells"
+    , "apps"
+    , "overlays"
+    , "nixosModules"
+    , "homeModules"
+    , "flakeModules"
+    , -- Special
+      "true"
+    , "false"
+    , "null"
+    , "or"
+    , "if"
+    , "then"
+    , "else"
+    , "let"
+    , "in"
+    , "with"
+    , "rec"
+    , "assert"
+    , "inherit"
+    ]
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                            // case utilities
@@ -273,42 +273,42 @@ isExempt ident = ident `elem` exemptList || T.isPrefixOf "_" ident
 isKebabCase :: String -> Bool
 isKebabCase [] = False
 isKebabCase s@(c : _) =
-    all validChar s
-        && not ("--" `isInfixOf` s)
-        && c /= '-'
-        && last s /= '-'
-  where
-    validChar ch = isLower ch || ch == '-' || (ch >= '0' && ch <= '9')
-    isInfixOf needle haystack = any (needle `isPrefixOf`) (tails haystack)
-    isPrefixOf [] _ = True
-    isPrefixOf _ [] = False
-    isPrefixOf (x : xs) (y : ys) = x == y && isPrefixOf xs ys
-    tails [] = [[]]
-    tails xs@(_ : xs') = xs : tails xs'
+  all validChar s
+    && not ("--" `isInfixOf` s)
+    && c /= '-'
+    && last s /= '-'
+ where
+  validChar ch = isLower ch || ch == '-' || (ch >= '0' && ch <= '9')
+  isInfixOf needle haystack = any (needle `isPrefixOf`) (tails haystack)
+  isPrefixOf [] _ = True
+  isPrefixOf _ [] = False
+  isPrefixOf (x : xs) (y : ys) = x == y && isPrefixOf xs ys
+  tails [] = [[]]
+  tails xs@(_ : xs') = xs : tails xs'
 
 -- | Check if string is snake_case.
 isSnakeCase :: String -> Bool
 isSnakeCase [] = False
 isSnakeCase s@(c : _) =
-    all validChar s
-        && not ("__" `isInfixOf` s)
-        && c /= '_'
-        && last s /= '_'
-  where
-    validChar ch = isLower ch || ch == '_' || (ch >= '0' && ch <= '9')
-    isInfixOf needle haystack = any (needle `isPrefixOf`) (tails haystack)
-    isPrefixOf [] _ = True
-    isPrefixOf _ [] = False
-    isPrefixOf (x : xs) (y : ys) = x == y && isPrefixOf xs ys
-    tails [] = [[]]
-    tails xs@(_ : xs') = xs : tails xs'
+  all validChar s
+    && not ("__" `isInfixOf` s)
+    && c /= '_'
+    && last s /= '_'
+ where
+  validChar ch = isLower ch || ch == '_' || (ch >= '0' && ch <= '9')
+  isInfixOf needle haystack = any (needle `isPrefixOf`) (tails haystack)
+  isPrefixOf [] _ = True
+  isPrefixOf _ [] = False
+  isPrefixOf (x : xs) (y : ys) = x == y && isPrefixOf xs ys
+  tails [] = [[]]
+  tails xs@(_ : xs') = xs : tails xs'
 
 -- | Check if string is camelCase.
 isCamelCase :: String -> Bool
 isCamelCase [] = False
 isCamelCase (c : cs) = isLower c && all validChar cs
-  where
-    validChar x = isAlphaNum x
+ where
+  validChar x = isAlphaNum x
 
 -- | Convert to kebab-case.
 toKebabCase :: String -> String
@@ -321,32 +321,32 @@ toSnakeCase = intercalate "_" . splitWords . map toLower
 -- | Convert to camelCase.
 toCamelCase :: String -> String
 toCamelCase s = case splitWords s of
-    [] -> ""
-    (w : ws) -> map toLower w ++ concatMap capitalize ws
-  where
-    capitalize [] = []
-    capitalize (c : cs) = toUpper c : map toLower cs
+  [] -> ""
+  (w : ws) -> map toLower w ++ concatMap capitalize ws
+ where
+  capitalize [] = []
+  capitalize (c : cs) = toUpper c : map toLower cs
 
 -- | Split a string into words (handles camelCase, snake_case, kebab-case).
 splitWords :: String -> [String]
 splitWords [] = []
 splitWords s =
-    let (word, rest) = span isWordChar $ dropWhile isSeparator s
-     in if null word
-            then splitCamel rest
-            else word : splitWords rest
-  where
-    isSeparator c = c == '-' || c == '_'
-    isWordChar c = isAlphaNum c && not (isUpper c)
+  let (word, rest) = span isWordChar $ dropWhile isSeparator s
+   in if null word
+        then splitCamel rest
+        else word : splitWords rest
+ where
+  isSeparator c = c == '-' || c == '_'
+  isWordChar c = isAlphaNum c && not (isUpper c)
 
-    -- Handle camelCase by splitting on uppercase
-    splitCamel [] = []
-    splitCamel (c : cs)
-        | isUpper c =
-            let (upper, rest) = span isUpper cs
-                (lower, rest') = span isLower rest
-             in (toLower c : map toLower upper ++ lower) : splitWords rest'
-        | otherwise = splitWords (c : cs)
+  -- Handle camelCase by splitting on uppercase
+  splitCamel [] = []
+  splitCamel (c : cs)
+    | isUpper c =
+        let (upper, rest) = span isUpper cs
+            (lower, rest') = span isLower rest
+         in (toLower c : map toLower upper ++ lower) : splitWords rest'
+    | otherwise = splitWords (c : cs)
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                                   // helpers
@@ -354,14 +354,14 @@ splitWords s =
 
 toSpan :: SrcSpan -> Span
 toSpan srcSpan =
-    let begin = getSpanBegin srcSpan
-        end = getSpanEnd srcSpan
-     in Span
-            { spanStart = Loc (sourceLine begin) (sourceCol begin)
-            , spanEnd = Loc (sourceLine end) (sourceCol end)
-            , spanFile = case begin of
-                NSourcePos path _ _ -> Just (coerce path)
-            }
-  where
-    sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-    sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
+  let begin = getSpanBegin srcSpan
+      end = getSpanEnd srcSpan
+   in Span
+        { spanStart = Loc (sourceLine begin) (sourceCol begin)
+        , spanEnd = Loc (sourceLine end) (sourceCol end)
+        , spanFile = case begin of
+            NSourcePos path _ _ -> Just (coerce path)
+        }
+ where
+  sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
+  sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)

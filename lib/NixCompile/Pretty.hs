@@ -14,30 +14,30 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Pretty (
-    -- * Re-exports
-    module Prettyprinter,
-    module Prettyprinter.Render.Terminal,
+  -- * Re-exports
+  module Prettyprinter,
+  module Prettyprinter.Render.Terminal,
 
-    -- * Standard Styles
-    styleType,
-    styleVar,
-    styleKeyword,
-    styleString,
-    stylePath,
-    styleError,
-    styleWarning,
-    styleInfo,
-    styleSuccess,
-    styleMuted,
+  -- * Standard Styles
+  styleType,
+  styleVar,
+  styleKeyword,
+  styleString,
+  stylePath,
+  styleError,
+  styleWarning,
+  styleInfo,
+  styleSuccess,
+  styleMuted,
 
-    -- * Helpers
-    renderStdOut,
-    renderStdErr,
-    toText,
+  -- * Helpers
+  renderStdOut,
+  renderStdErr,
+  toText,
 
-    -- * Layout Helpers
-    block,
-    property,
+  -- * Layout Helpers
+  block,
+  property,
 )
 where
 
@@ -100,11 +100,11 @@ toText = renderStrict . layoutSmart defaultLayoutOptions
 
 block :: Doc AnsiStyle -> Doc AnsiStyle -> Doc AnsiStyle
 block header body =
-    vsep
-        [ header <+> lbrace
-        , indent 2 body
-        , rbrace
-        ]
+  vsep
+    [ header <+> lbrace
+    , indent 2 body
+    , rbrace
+    ]
 
 property :: Doc AnsiStyle -> Doc AnsiStyle -> Doc AnsiStyle
 property key value = key <+> equals <+> value <> semi

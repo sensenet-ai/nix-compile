@@ -23,8 +23,8 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Nix.Formatter (
-    formatNix,
-    formatNixFile,
+  formatNix,
+  formatNixFile,
 )
 where
 
@@ -40,9 +40,9 @@ input verbatim.
 -}
 nixfmtFormat :: FilePath -> Text -> Text
 nixfmtFormat path srcTxt =
-    case Nixfmt.format (layout 100 2 False) path srcTxt of
-        Right formatted -> formatted
-        Left _ -> srcTxt
+  case Nixfmt.format (layout 100 2 False) path srcTxt of
+    Right formatted -> formatted
+    Left _ -> srcTxt
 
 formatNix :: Text -> NExprLoc -> Text
 formatNix srcTxt _expr = nixfmtFormat "<nix>" srcTxt

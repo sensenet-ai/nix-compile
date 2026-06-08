@@ -18,38 +18,38 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Nix.Types (
-    -- * Types
-    NixType (..),
-    RowTail (..),
-    pattern TAttrs,
-    pattern TAttrsOpen,
-    tRecOpenAnon,
-    anonRowVar,
-    isAnonRowVar,
-    rowTailVars,
-    TypeVar (..),
+  -- * Types
+  NixType (..),
+  RowTail (..),
+  pattern TAttrs,
+  pattern TAttrsOpen,
+  tRecOpenAnon,
+  anonRowVar,
+  isAnonRowVar,
+  rowTailVars,
+  TypeVar (..),
 
-    -- * Type schemes (polymorphic types)
-    Scheme (..),
+  -- * Type schemes (polymorphic types)
+  Scheme (..),
 
-    -- * Constraints
-    Constraint (..),
+  -- * Constraints
+  Constraint (..),
 
-    -- * Substitution
-    Subst,
-    emptySubst,
-    singleSubst,
-    composeSubst,
-    applySubst,
-    applySubstScheme,
+  -- * Substitution
+  Subst,
+  emptySubst,
+  singleSubst,
+  composeSubst,
+  applySubst,
+  applySubstScheme,
 
-    -- * Free variables
-    freeTypeVars,
-    freeTypeVarsScheme,
+  -- * Free variables
+  freeTypeVars,
+  freeTypeVarsScheme,
 
-    -- * Pretty printing
-    prettyType,
-    prettyScheme,
+  -- * Pretty printing
+  prettyType,
+  prettyScheme,
 )
 where
 
@@ -67,26 +67,26 @@ import GHC.Generics (Generic)
 -- ═════════════════════════════════════════════════════════════════════════════
 
 newtype TypeVar = TypeVar {unTypeVar :: Int}
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving newtype (FromJSON, ToJSON)
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (FromJSON, ToJSON)
 
 data NixType
-    = TVar !TypeVar
-    | TInt
-    | TFloat
-    | TBool
-    | TString
-    | TStrLit !Text
-    | TPath
-    | TNull
-    | TList !NixType
-    | -- | records: known fields (type, isOptional) + a row tail
-      TRec !(Map Text (NixType, Bool)) !RowTail
-    | TFun !NixType !NixType
-    | TDerivation
-    | TUnion ![NixType]
-    | TAny
-    deriving stock (Eq, Ord, Show, Generic)
+  = TVar !TypeVar
+  | TInt
+  | TFloat
+  | TBool
+  | TString
+  | TStrLit !Text
+  | TPath
+  | TNull
+  | TList !NixType
+  | -- | records: known fields (type, isOptional) + a row tail
+    TRec !(Map Text (NixType, Bool)) !RowTail
+  | TFun !NixType !NixType
+  | TDerivation
+  | TUnion ![NixType]
+  | TAny
+  deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON NixType
 
@@ -99,7 +99,7 @@ lacks-constraints (which labels it must NOT gain) live in a side store in the
 inference state ('NixCompile.Nix.Inference').
 -}
 data RowTail = RClosed | ROpen !TypeVar
-    deriving stock (Eq, Ord, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
 
 instance FromJSON RowTail
 
@@ -118,29 +118,29 @@ FRESH @r@ instead (see 'NixCompile.Nix.Inference.mkOpenRec').
 -}
 pattern TAttrsOpen :: Map Text (NixType, Bool) -> NixType
 pattern TAttrsOpen fields <- TRec fields (ROpen _)
-    where
-        TAttrsOpen fields = TRec fields (ROpen anonRowVar)
+  where
+    TAttrsOpen fields = TRec fields (ROpen anonRowVar)
 
 {-# COMPLETE
-    TVar
-    , TInt
-    , TFloat
-    , TBool
-    , TString
-    , TStrLit
-    , TPath
-    , TNull
-    , TList
-    , TAttrs
-    , TAttrsOpen
-    , TFun
-    , TDerivation
-    , TUnion
-    , TAny
-    #-}
+  TVar
+  , TInt
+  , TFloat
+  , TBool
+  , TString
+  , TStrLit
+  , TPath
+  , TNull
+  , TList
+  , TAttrs
+  , TAttrsOpen
+  , TFun
+  , TDerivation
+  , TUnion
+  , TAny
+  #-}
 
 data Scheme = Forall ![TypeVar] !NixType
-    deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
 
 instance FromJSON Scheme
 
@@ -151,8 +151,8 @@ instance ToJSON Scheme
 -- ═════════════════════════════════════════════════════════════════════════════
 
 data Constraint
-    = NixType :~: NixType
-    deriving stock (Eq, Show, Generic)
+  = NixType :~: NixType
+  deriving stock (Eq, Show, Generic)
 
 infix 4 :~:
 
@@ -170,7 +170,7 @@ singleSubst = Map.singleton
 
 composeSubst :: Subst -> Subst -> Subst
 composeSubst substitution1 substitution2 =
-    Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
+  Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
 
 -- | the row variable in an open tail, if any
 rowTailVars :: RowTail -> Set TypeVar
@@ -197,37 +197,37 @@ tRecOpenAnon m = TRec m (ROpen anonRowVar)
 
 applySubst :: Subst -> NixType -> NixType
 applySubst s = go
-  where
-    go = \case
-        TVar v -> case Map.lookup v s of
-            -- a self-map {v ↦ TVar v} is the identity; returning it (instead of
-            -- chasing) avoids an infinite loop. `instantiate` produces such maps
-            -- whenever a fresh var collides with a scheme's quantified var index
-            -- (both draw from 0,1,…), which is why applying ANY polymorphic builtin
-            -- (head/map/filter/…) to an argument used to hang inference.
-            Just (TVar v') | v' == v -> TVar v
-            Just t -> go t
-            Nothing -> TVar v
-        TList t -> TList (go t)
-        TRec m tail_ ->
-            let m' = Map.map (\(t, o) -> (go t, o)) m
-             in case tail_ of
-                    RClosed -> TRec m' RClosed
-                    ROpen r -> case Map.lookup r s of
-                        Nothing -> TRec m' (ROpen r)
-                        Just (TVar r') | r' == r -> TRec m' (ROpen r) -- self-map: identity
-                        Just (TVar r') -> TRec m' (ROpen r') -- tail var renamed
-                        -- row var bound to a record: merge known fields (disjoint by
-                        -- lacks) and continue resolving the bound row's own tail
-                        Just (TRec m2 tail2) -> go (TRec (Map.union m' m2) tail2)
-                        Just _ -> TRec m' (ROpen r) -- defensive: non-row binding
-        TFun a b -> TFun (go a) (go b)
-        TUnion ts -> TUnion (map go ts)
-        t -> t
+ where
+  go = \case
+    TVar v -> case Map.lookup v s of
+      -- a self-map {v ↦ TVar v} is the identity; returning it (instead of
+      -- chasing) avoids an infinite loop. `instantiate` produces such maps
+      -- whenever a fresh var collides with a scheme's quantified var index
+      -- (both draw from 0,1,…), which is why applying ANY polymorphic builtin
+      -- (head/map/filter/…) to an argument used to hang inference.
+      Just (TVar v') | v' == v -> TVar v
+      Just t -> go t
+      Nothing -> TVar v
+    TList t -> TList (go t)
+    TRec m tail_ ->
+      let m' = Map.map (\(t, o) -> (go t, o)) m
+       in case tail_ of
+            RClosed -> TRec m' RClosed
+            ROpen r -> case Map.lookup r s of
+              Nothing -> TRec m' (ROpen r)
+              Just (TVar r') | r' == r -> TRec m' (ROpen r) -- self-map: identity
+              Just (TVar r') -> TRec m' (ROpen r') -- tail var renamed
+              -- row var bound to a record: merge known fields (disjoint by
+              -- lacks) and continue resolving the bound row's own tail
+              Just (TRec m2 tail2) -> go (TRec (Map.union m' m2) tail2)
+              Just _ -> TRec m' (ROpen r) -- defensive: non-row binding
+    TFun a b -> TFun (go a) (go b)
+    TUnion ts -> TUnion (map go ts)
+    t -> t
 
 applySubstScheme :: Subst -> Scheme -> Scheme
 applySubstScheme s (Forall vars t) =
-    Forall vars (applySubst (foldr Map.delete s vars) t)
+  Forall vars (applySubst (foldr Map.delete s vars) t)
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- free type variables
@@ -235,18 +235,18 @@ applySubstScheme s (Forall vars t) =
 
 freeTypeVars :: NixType -> Set TypeVar
 freeTypeVars = \case
-    TVar v -> Set.singleton v
-    TList t -> freeTypeVars t
-    TRec m tail_ ->
-        Set.unions (map (freeTypeVars . fst) (Map.elems m))
-            `Set.union` rowTailVars tail_
-    TFun a b -> freeTypeVars a `Set.union` freeTypeVars b
-    TUnion ts -> Set.unions (map freeTypeVars ts)
-    _ -> Set.empty
+  TVar v -> Set.singleton v
+  TList t -> freeTypeVars t
+  TRec m tail_ ->
+    Set.unions (map (freeTypeVars . fst) (Map.elems m))
+      `Set.union` rowTailVars tail_
+  TFun a b -> freeTypeVars a `Set.union` freeTypeVars b
+  TUnion ts -> Set.unions (map freeTypeVars ts)
+  _ -> Set.empty
 
 freeTypeVarsScheme :: Scheme -> Set TypeVar
 freeTypeVarsScheme (Forall vars t) =
-    freeTypeVars t `Set.difference` Set.fromList vars
+  freeTypeVars t `Set.difference` Set.fromList vars
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- pretty printing
@@ -254,56 +254,56 @@ freeTypeVarsScheme (Forall vars t) =
 
 prettyType :: NixType -> Text
 prettyType t = prettyTypeWith mapping t
-  where
-    vars = Set.toAscList (freeTypeVars t)
-    names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
-    mapping = Map.fromList $ zip vars names
+ where
+  vars = Set.toAscList (freeTypeVars t)
+  names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
+  mapping = Map.fromList $ zip vars names
 
 prettyScheme :: Scheme -> Text
 prettyScheme (Forall [] t) = prettyType t
 prettyScheme (Forall vars t) =
-    let
-        free = Set.toAscList (freeTypeVars t `Set.difference` Set.fromList vars)
-        allVars = vars ++ free
-        names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
-        mapping = Map.fromList $ zip allVars names
+  let
+    free = Set.toAscList (freeTypeVars t `Set.difference` Set.fromList vars)
+    allVars = vars ++ free
+    names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
+    mapping = Map.fromList $ zip allVars names
 
-        prettyVar v = Map.findWithDefault "?" v mapping
-     in
-        "forall " <> T.intercalate " " (map prettyVar vars) <> ". " <> prettyTypeWith mapping t
+    prettyVar v = Map.findWithDefault "?" v mapping
+   in
+    "forall " <> T.intercalate " " (map prettyVar vars) <> ". " <> prettyTypeWith mapping t
 
 prettyTypeWith :: Map TypeVar Text -> NixType -> Text
 prettyTypeWith mapping = go
-  where
-    go = \case
-        TVar v -> Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
-        TInt -> "Int"
-        TFloat -> "Float"
-        TBool -> "Bool"
-        TString -> "String"
-        TStrLit s -> "\"" <> truncLit s <> "\""
-        TPath -> "Path"
-        TNull -> "Null"
-        TList t -> "[" <> go t <> "]"
-        TRec m RClosed -> prettyAttrs m
-        TRec m (ROpen r) -> prettyAttrs m <> " | " <> Map.findWithDefault ".." r mapping
-        TFun a b -> prettyArg a <> " -> " <> go b
-        TDerivation -> "Derivation"
-        TUnion ts -> T.intercalate " | " (map go ts)
-        TAny -> "Any"
+ where
+  go = \case
+    TVar v -> Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
+    TInt -> "Int"
+    TFloat -> "Float"
+    TBool -> "Bool"
+    TString -> "String"
+    TStrLit s -> "\"" <> truncLit s <> "\""
+    TPath -> "Path"
+    TNull -> "Null"
+    TList t -> "[" <> go t <> "]"
+    TRec m RClosed -> prettyAttrs m
+    TRec m (ROpen r) -> prettyAttrs m <> " | " <> Map.findWithDefault ".." r mapping
+    TFun a b -> prettyArg a <> " -> " <> go b
+    TDerivation -> "Derivation"
+    TUnion ts -> T.intercalate " | " (map go ts)
+    TAny -> "Any"
 
-    prettyArg t@(TFun _ _) = "(" <> go t <> ")"
-    prettyArg t = go t
+  prettyArg t@(TFun _ _) = "(" <> go t <> ")"
+  prettyArg t = go t
 
-    -- A 'TStrLit' carries the literal's full text; cap it in type display so a
-    -- giant string literal doesn't become a giant type (e.g. `infer` on a file
-    -- with a 200 KB string was emitting a 200 KB `# :: "…"` annotation).
-    truncLit s
-        | T.length s <= 40 = s
-        | otherwise = T.take 39 s <> "…"
+  -- A 'TStrLit' carries the literal's full text; cap it in type display so a
+  -- giant string literal doesn't become a giant type (e.g. `infer` on a file
+  -- with a 200 KB string was emitting a 200 KB `# :: "…"` annotation).
+  truncLit s
+    | T.length s <= 40 = s
+    | otherwise = T.take 39 s <> "…"
 
-    prettyAttrs m
-        | Map.null m = "{}"
-        | otherwise = "{ " <> T.intercalate ", " (map prettyField (Map.toList m)) <> " }"
+  prettyAttrs m
+    | Map.null m = "{}"
+    | otherwise = "{ " <> T.intercalate ", " (map prettyField (Map.toList m)) <> " }"
 
-    prettyField (k, (v, opt)) = k <> (if opt then "?" else "") <> " : " <> go v
+  prettyField (k, (v, opt)) = k <> (if opt then "?" else "") <> " : " <> go v

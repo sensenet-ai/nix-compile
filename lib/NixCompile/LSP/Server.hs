@@ -32,14 +32,14 @@ import NixCompile.LSP.Handlers (handlers)
 
 run :: IO Int
 run =
-    runServer $
-        ServerDefinition
-            { parseConfig = \_old _val -> Right ()
-            , onConfigChange = const $ pure ()
-            , doInitialize = \env _req -> pure (Right env)
-            , staticHandlers = \_caps -> handlers
-            , interpretHandler = \env -> Iso (runLspT env) liftIO
-            , options = defaultOptions
-            , defaultConfig = ()
-            , configSection = "nix-compile"
-            }
+  runServer $
+    ServerDefinition
+      { parseConfig = \_old _val -> Right ()
+      , onConfigChange = const $ pure ()
+      , doInitialize = \env _req -> pure (Right env)
+      , staticHandlers = \_caps -> handlers
+      , interpretHandler = \env -> Iso (runLspT env) liftIO
+      , options = defaultOptions
+      , defaultConfig = ()
+      , configSection = "nix-compile"
+      }
