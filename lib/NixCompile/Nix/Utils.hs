@@ -20,6 +20,7 @@
 module NixCompile.Nix.Utils (
   -- * AST views
   pattern Layer,
+  pattern LayerAnn,
 
   -- * VarName extraction
   varNameText,
@@ -61,6 +62,14 @@ pattern Layer :: NExprF NExprLoc -> NExprLoc
 pattern Layer e <- Fix (Compose (AnnUnit _ e))
 
 {-# COMPLETE Layer #-}
+
+{- | 'Layer', but also binding the node's source span. For the dispatches that
+need the location as well as the shape — @extractString (LayerAnn s (NStr …))@.
+-}
+pattern LayerAnn :: SrcSpan -> NExprF NExprLoc -> NExprLoc
+pattern LayerAnn s e <- Fix (Compose (AnnUnit s e))
+
+{-# COMPLETE LayerAnn #-}
 
 -- | Extract Text from the VarName newtype.
 varNameText :: VarName -> Text

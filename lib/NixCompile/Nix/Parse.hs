@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -42,7 +41,6 @@ module NixCompile.Nix.Parse (
 )
 where
 
-import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -50,7 +48,7 @@ import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Parser qualified
-import NixCompile.Nix.Utils (toSpan, varNameText)
+import NixCompile.Nix.Utils (toSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Span (..))
 
@@ -91,36 +89,26 @@ parseNixFile path = either (Left . Safety.renderSafetyError) Right <$> Safety.sa
 n.b. this is the safe variant — exception-handling lives in Safety.
 -}
 parseNixExpr :: Text -> Either Text NExprLoc
-parseNixExpr src =
-  let parseResult =
-        ( case Safety.safeAnalyze =<< parseNoIO src of
-            Left e -> Left (Safety.renderSafetyError e)
-            Right expr -> Right expr
-        )
-   in parseResult
+parseNixExpr src = either (Left . Safety.renderSafetyError) Right (Safety.safeAnalyze =<< parseNoIO src)
  where
   parseNoIO :: Text -> Either Safety.SafetyError NExprLoc
-  parseNoIO s = case Nix.Parser.parseNixTextLoc s of
-    Left doc -> Left (Safety.SafetyParseFailed (T.pack (show doc)))
-    Right expr -> Right expr
+  parseNoIO s = either (Left . Safety.SafetyParseFailed . T.pack . show) Right (Nix.Parser.parseNixTextLoc s)
 
 -- | Parse a Nix expression from text with filepath for error context
 parseNix :: FilePath -> Text -> Either Text NExprLoc
-parseNix _path src = parseNixExpr src
+parseNix _path = parseNixExpr
 
 -- | Extract all bash scripts from a Nix file
 extractBashScripts :: FilePath -> IO (Either Text [BashScript])
 extractBashScripts path = do
   result <- parseNixFile path
-  case result of
-    Left err -> pure $ Left err
-    Right expr -> pure $ Right $ concatMap extractFromCall (findShellScriptCalls expr)
+  pure (concatMap extractFromCall . findShellScriptCalls <$> result)
 
 -- | Extract bash content from a shell script call
 extractFromCall :: ShellScriptCall -> [BashScript]
-extractFromCall ssc = case extractString (sscBody ssc) of
-  Nothing -> []
-  Just (content, interps, span') ->
+extractFromCall ssc = maybe [] build (extractString (sscBody ssc))
+ where
+  build (content, interps, span') =
     [ BashScript
         { bsName = sscName ssc
         , bsContent = content
@@ -131,14 +119,15 @@ extractFromCall ssc = case extractString (sscBody ssc) of
 
 -- | Extract string content and interpolations from an expression
 extractString :: NExprLoc -> Maybe (Text, [Interpolation], Span)
-extractString (Fix (Compose (AnnUnit srcSpan expr))) = case expr of
-  NStr (DoubleQuoted parts) ->
-    let (content, interps) = extractPartsWithInterps parts
-     in Just (content, interps, toSpan srcSpan Nothing)
-  NStr (Indented _ parts) ->
-    let (content, interps) = extractPartsWithInterps parts
-     in Just (content, interps, toSpan srcSpan Nothing)
-  _ -> Nothing
+extractString (LayerAnn srcSpan (NStr (DoubleQuoted parts))) = Just (withSpan srcSpan parts)
+extractString (LayerAnn srcSpan (NStr (Indented _ parts))) = Just (withSpan srcSpan parts)
+extractString _ = Nothing
+
+-- | The content, interpolations, and span of a string's parts.
+withSpan :: SrcSpan -> [Antiquoted Text NExprLoc] -> (Text, [Interpolation], Span)
+withSpan srcSpan parts =
+  let (content, interps) = extractPartsWithInterps parts
+   in (content, interps, toSpan srcSpan Nothing)
 
 -- | Generate a placeholder string for an interpolation site
 injectPlaceholders :: Bool -> Int -> Text
@@ -168,65 +157,65 @@ extractPartsWithInterps :: [Antiquoted Text NExprLoc] -> (Text, [Interpolation])
 extractPartsWithInterps = go 0
  where
   go _ [] = ("", [])
-  go n (part : rest) =
-    let (restText, restInterps) = go n' rest
-     in case part of
-          Plain txt -> (txt <> restText, restInterps)
-          EscapedNewline -> ("\n" <> restText, restInterps)
-          Antiquoted expr ->
-            let (placeholder, interp) = extractInterpolations n expr
-             in (placeholder <> restText, interp : restInterps)
+  go n (part : rest) = combine part
    where
-    n' = case part of
-      Antiquoted _ -> n + 1
-      _ -> n
+    (restText, restInterps) = go (bump part) rest
+    combine (Plain txt) = (txt <> restText, restInterps)
+    combine EscapedNewline = ("\n" <> restText, restInterps)
+    combine (Antiquoted expr) =
+      let (placeholder, interp) = extractInterpolations n expr
+       in (placeholder <> restText, interp : restInterps)
+    -- the interpolation counter advances only past an antiquotation
+    bump (Antiquoted _) = n + 1
+    bump _ = n
 
 {- | Check if an expression looks like a store path access
 e.g., ${pkgs.curl} or ${lib.getExe pkgs.ripgrep}
 -}
 isStorePathExpr :: NExprLoc -> Bool
-isStorePathExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NSelect _ base (k :| _) -> isPackageBase base || keyTextIs "pkgs" k || keyTextIs "lib" k
-  NApp func arg -> isStorePathExpr func || isStorePathExpr arg
-  NSym name -> isLikelyPackageVar (varNameText name)
-  NLiteralPath p -> "/nix/store" `T.isPrefixOf` T.pack (show p)
-  _ -> False
- where
-  isPackageBase (Fix (Compose (AnnUnit _ (NSym n)))) = varNameText n `elem` ["pkgs", "lib"]
-  isPackageBase (Fix (Compose (AnnUnit _ (NSelect _ b _)))) = isPackageBase b
-  isPackageBase _ = False
+isStorePathExpr (Layer (NSelect _ base (k :| _))) = isPackageBase base || keyTextIs "pkgs" k || keyTextIs "lib" k
+isStorePathExpr (Layer (NApp func arg)) = isStorePathExpr func || isStorePathExpr arg
+isStorePathExpr (Layer (NSym name)) = isLikelyPackageVar (varNameText name)
+isStorePathExpr (Layer (NLiteralPath p)) = "/nix/store" `T.isPrefixOf` T.pack (show p)
+isStorePathExpr _ = False
 
-  keyTextIs name (StaticKey k) = varNameText k == name
-  keyTextIs _ (DynamicKey _) = False
+isPackageBase :: NExprLoc -> Bool
+isPackageBase (Layer (NSym n)) = varNameText n `elem` ["pkgs", "lib"]
+isPackageBase (Layer (NSelect _ b _)) = isPackageBase b
+isPackageBase _ = False
 
-  isLikelyPackageVar name =
-    T.isPrefixOf "pkgs" name
-      || T.isPrefixOf "lib" name
-      || T.isSuffixOf "Pkg" name
-      || T.isSuffixOf "Package" name
-      || name == "nix-compile"
+keyTextIs :: Text -> NKeyName r -> Bool
+keyTextIs name (StaticKey k) = varNameText k == name
+keyTextIs _ (DynamicKey _) = False
+
+isLikelyPackageVar :: Text -> Bool
+isLikelyPackageVar name =
+  T.isPrefixOf "pkgs" name
+    || T.isPrefixOf "lib" name
+    || T.isSuffixOf "Pkg" name
+    || T.isSuffixOf "Package" name
+    || name == "nix-compile"
 
 -- | Get a simple text representation of an expression
 prettyExpr :: NExprLoc -> Text
-prettyExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NSym name -> varNameText name
-  NSelect _ base (attr :| rest) ->
-    prettyExpr base <> "." <> T.intercalate "." (map keyText (attr : rest))
-  NApp func arg -> prettyExpr func <> " " <> prettyExpr arg
-  NConstant (NInt n) -> T.pack (show n)
-  NConstant (NFloat f) -> T.pack (show f)
-  NConstant (NBool b) -> if b then "true" else "false"
-  NConstant NNull -> "null"
-  NStr _ -> "<string>"
-  NList _ -> "<list>"
-  NSet _ _ -> "<attrset>"
-  NLiteralPath p -> T.pack (show p)
-  NEnvPath p -> "<" <> T.pack (show p) <> ">"
-  _ -> "<expr>"
+prettyExpr (Layer (NSym name)) = varNameText name
+prettyExpr (Layer (NSelect _ base (attr :| rest))) =
+  prettyExpr base <> "." <> T.intercalate "." (map keyText (attr : rest))
+prettyExpr (Layer (NApp func arg)) = prettyExpr func <> " " <> prettyExpr arg
+prettyExpr (Layer (NConstant (NInt n))) = T.pack (show n)
+prettyExpr (Layer (NConstant (NFloat f))) = T.pack (show f)
+prettyExpr (Layer (NConstant (NBool b))) = if b then "true" else "false"
+prettyExpr (Layer (NConstant NNull)) = "null"
+prettyExpr (Layer (NStr _)) = "<string>"
+prettyExpr (Layer (NList _)) = "<list>"
+prettyExpr (Layer (NSet _ _)) = "<attrset>"
+prettyExpr (Layer (NLiteralPath p)) = T.pack (show p)
+prettyExpr (Layer (NEnvPath p)) = "<" <> T.pack (show p) <> ">"
+prettyExpr _ = "<expr>"
 
 -- | Get the source span of an expression
 exprSpan :: NExprLoc -> Span
-exprSpan (Fix (Compose (AnnUnit srcSpan _))) = toSpan srcSpan Nothing
+exprSpan (LayerAnn srcSpan _) = toSpan srcSpan Nothing
 
 -- | Find all writeShellScript* calls in an expression
 findShellScriptCalls :: NExprLoc -> [ShellScriptCall]
@@ -234,38 +223,29 @@ findShellScriptCalls = walkExpression
 
 -- | Walk the Nix AST, collecting shell script calls
 walkExpression :: NExprLoc -> [ShellScriptCall]
-walkExpression expr =
-  case extractScriptCall expr of
-    Just call -> [call]
-    Nothing -> walkSubExprs expr
+walkExpression expr = maybe (walkSubExprs expr) pure (extractScriptCall expr)
 
 -- | Walk sub-expressions of a node
 walkSubExprs :: NExprLoc -> [ShellScriptCall]
-walkSubExprs (Fix (Compose (AnnUnit _ e))) = case e of
-  NConstant _ -> []
-  NStr _ -> []
-  NSym _ -> []
-  NList xs -> concatMap walkExpression xs
-  NSet _ bindings -> concatMap walkBinding bindings
-  NLiteralPath _ -> []
-  NEnvPath _ -> []
-  NLet bindings body -> concatMap walkBinding bindings ++ walkExpression body
-  NIf cond t f -> walkExpression cond ++ walkExpression t ++ walkExpression f
-  NWith scope body -> walkExpression scope ++ walkExpression body
-  NAssert cond body -> walkExpression cond ++ walkExpression body
-  NAbs _ body -> walkExpression body
-  NApp f x -> walkExpression f ++ walkExpression x
-  NSelect alt base _ -> walkExpression base ++ maybe [] walkExpression alt
-  NHasAttr base _ -> walkExpression base
-  NUnary _ x -> walkExpression x
-  NBinary _ x y -> walkExpression x ++ walkExpression y
-  NSynHole _ -> []
+walkSubExprs (Layer (NList xs)) = concatMap walkExpression xs
+walkSubExprs (Layer (NSet _ bindings)) = concatMap walkBinding bindings
+walkSubExprs (Layer (NLet bindings body)) = concatMap walkBinding bindings ++ walkExpression body
+walkSubExprs (Layer (NIf cond t f)) = walkExpression cond ++ walkExpression t ++ walkExpression f
+walkSubExprs (Layer (NWith scope body)) = walkExpression scope ++ walkExpression body
+walkSubExprs (Layer (NAssert cond body)) = walkExpression cond ++ walkExpression body
+walkSubExprs (Layer (NAbs _ body)) = walkExpression body
+walkSubExprs (Layer (NApp f x)) = walkExpression f ++ walkExpression x
+walkSubExprs (Layer (NSelect alt base _)) = walkExpression base ++ maybe [] walkExpression alt
+walkSubExprs (Layer (NHasAttr base _)) = walkExpression base
+walkSubExprs (Layer (NUnary _ x)) = walkExpression x
+walkSubExprs (Layer (NBinary _ x y)) = walkExpression x ++ walkExpression y
+-- leaves and holes carry no sub-expressions to walk
+walkSubExprs _ = []
 
 -- | Process a binding node
 walkBinding :: Binding NExprLoc -> [ShellScriptCall]
-walkBinding = \case
-  NamedVar _ expr _ -> walkExpression expr
-  Inherit _ _ _ -> []
+walkBinding (NamedVar _ expr _) = walkExpression expr
+walkBinding Inherit{} = []
 
 -- | Check if a function name is a writeShellScript variant
 isShellScriptFunction :: Text -> Bool
@@ -278,12 +258,10 @@ isShellScriptFunction name =
 
 -- | Unwrap nested applications to find the function name and all arguments
 unwrapApp :: NExprLoc -> [NExprLoc] -> Maybe (Text, [NExprLoc])
-unwrapApp (Fix (Compose (AnnUnit _ e))) args = case e of
-  NApp func arg -> unwrapApp func (arg : args)
-  NSym name -> Just (varNameText name, args)
-  NSelect _ _ (attr :| rest) ->
-    Just (keyText (last (attr : rest)), args)
-  _ -> Nothing
+unwrapApp (Layer (NApp func arg)) args = unwrapApp func (arg : args)
+unwrapApp (Layer (NSym name)) args = Just (varNameText name, args)
+unwrapApp (Layer (NSelect _ _ (attr :| rest))) args = Just (keyText (last (attr : rest)), args)
+unwrapApp _ _ = Nothing
 
 -- | Extract key name text from a key node
 keyText :: NKeyName NExprLoc -> Text
@@ -292,14 +270,11 @@ keyText (DynamicKey _) = ""
 
 -- | Extract name and text from a record: { name = "foo"; text = ''body''; }
 extractFromRecord :: NExprLoc -> Maybe (Text, NExprLoc)
-extractFromRecord (Fix (Compose (AnnUnit _ e))) = case e of
-  NSet _ bindings ->
-    let nameVal = findBinding "name" bindings >>= extractStringLit
-        textVal = findBinding "text" bindings
-     in case (nameVal, textVal) of
-          (Just n, Just t) -> Just (n, t)
-          _ -> Nothing
-  _ -> Nothing
+extractFromRecord (Layer (NSet _ bindings)) = liftA2 (,) nameVal textVal
+ where
+  nameVal = findBinding "name" bindings >>= extractStringLit
+  textVal = findBinding "text" bindings
+extractFromRecord _ = Nothing
 
 -- | Find a binding by name in a binding list
 findBinding :: Text -> [Binding NExprLoc] -> Maybe NExprLoc
@@ -312,16 +287,15 @@ findBinding name = foldr check Nothing
 
 -- | Extract a string literal from an expression
 extractStringLit :: NExprLoc -> Maybe Text
-extractStringLit (Fix (Compose (AnnUnit _ e))) = case e of
-  NStr (DoubleQuoted [Plain t]) -> Just t
-  NStr (Indented _ [Plain t]) -> Just t
-  _ -> Nothing
+extractStringLit (Layer (NStr (DoubleQuoted [Plain t]))) = Just t
+extractStringLit (Layer (NStr (Indented _ [Plain t]))) = Just t
+extractStringLit _ = Nothing
 
 -- | Extract a ShellScriptCall from an expression node if it matches
 extractScriptCall :: NExprLoc -> Maybe ShellScriptCall
-extractScriptCall expr@(Fix (Compose (AnnUnit srcSpan e))) = case e of
-  NApp _ _ -> processApp (unwrapApp expr [])
-  _ -> Nothing
+extractScriptCall expr@(LayerAnn srcSpan e)
+  | NApp{} <- e = processApp (unwrapApp expr [])
+  | otherwise = Nothing
  where
   processApp (Just (name, args))
     | not (isShellScriptFunction name) = Nothing
@@ -338,18 +312,16 @@ extractScriptCall expr@(Fix (Compose (AnnUnit srcSpan e))) = case e of
     | otherwise = Nothing
 
   extractShellApp name args
-    | [recordArg] <- args =
-        case extractFromRecord recordArg of
-          Just (n, body) ->
-            Just
-              ShellScriptCall
-                { sscFunction = name
-                , sscName = n
-                , sscBody = body
-                , sscSpan = toSpan srcSpan Nothing
-                }
-          Nothing -> Nothing
+    | [recordArg] <- args = fmap (build name) (extractFromRecord recordArg)
     | otherwise = Nothing
+
+  build name (n, body) =
+    ShellScriptCall
+      { sscFunction = name
+      , sscName = n
+      , sscBody = body
+      , sscSpan = toSpan srcSpan Nothing
+      }
 
   positionalFuncs =
     [ "writeShellScript"
