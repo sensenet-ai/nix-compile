@@ -63,6 +63,7 @@
               "lib/NixCompile/Nix/ModuleKind.hs"
               "lib/NixCompile/Nix/ModuleSystem.hs"
               "lib/NixCompile/Nix/Parse.hs"
+              "lib/NixCompile/Nix/Scope.hs"
               "lib/NixCompile/Nix/Utils.hs"
             ];
           in

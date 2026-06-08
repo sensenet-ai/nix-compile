@@ -3,8 +3,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StrictData #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -64,7 +64,6 @@ where
 import Control.Monad (forM_)
 import Control.Monad.State.Strict
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
@@ -87,6 +86,7 @@ import Nix.Expr.Types hiding (Binding, SourcePos)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
+import NixCompile.Nix.Utils (pattern Layer, pattern LayerAnn)
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                     // core // types
@@ -447,133 +447,114 @@ extractExpr _ = Nothing
 each scope-creating AST form (let, set, lambda, with) opens a child scope
 -}
 buildExpr :: NExprLoc -> Build ()
-buildExpr (Fix (Compose (AnnUnit srcSpan e))) = case e of
-  -- ── let ... in ...: child scope, declare all bindings in it ──
-  NLet bindings body ->
-    withChildScope LetScope $ \letScope -> do
-      mapM_ (addBindingDecl letScope) bindings
-      mapM_ buildBinding bindings
-      buildExpr body
-  -- ── non-recursive set: child scope ──
-  NSet NonRecursive bindings ->
-    withChildScope AttrSetScope $ \attrScope -> do
-      mapM_ (addBindingDecl attrScope) bindings
-      mapM_ buildBinding bindings
-  -- ── recursive set: separate scope kind so we can distinguish ──
-  NSet Recursive bindings ->
-    withChildScope RecAttrSetScope $ \attrScope -> do
-      mapM_ (addBindingDecl attrScope) bindings
-      mapM_ buildBinding bindings
-  -- ── lambda: function scope with parameter declarations ──
-  NAbs params body ->
-    withChildScope FunctionScope $ \funScope -> do
-      addParamDecls funScope params
-      buildExpr body
-  -- ── with expr; body: special With-scope linked to expr scope ──
-  NWith withExpr body -> buildWithExpr srcSpan withExpr body
-  -- ── symbol reference ──
-  NSym name -> buildSymbolRef srcSpan name
-  -- ── attribute select: base + attr references ──
-  NSelect _ base (attr :| rest) -> do
-    buildExpr base
-    scope <- currentScope
-    addAttrRef srcSpan scope attr
-    mapM_ (addAttrRef srcSpan scope) rest
-  -- ── application: both sides ──
-  NApp func arg -> do
-    buildExpr func
-    buildExpr arg
-  -- ── binary / unary: recurse ──
-  NBinary _ left right -> do
-    buildExpr left
-    buildExpr right
-  NUnary _ operand -> buildExpr operand
-  -- ── conditional: all branches ──
-  NIf cond thenBranch elseBranch -> do
-    buildExpr cond
-    buildExpr thenBranch
-    buildExpr elseBranch
-  -- ── assertion: cond + body ──
-  NAssert cond body -> do
-    buildExpr cond
+-- let ... in ...: child scope, declare all bindings in it
+buildExpr (Layer (NLet bindings body)) =
+  withChildScope LetScope $ \letScope -> do
+    mapM_ (addBindingDecl letScope) bindings
+    mapM_ buildBinding bindings
     buildExpr body
-  -- ── list: every element ──
-  NList elements -> mapM_ buildExpr elements
-  -- ── string: traverse antiquoted expressions (e.g. ${srv.host}) ──
-  NStr strParts -> mapM_ buildExpr (exprsFromString strParts)
-  -- ── path: walk any embedded expressions ──
-  NLiteralPath _ -> pure ()
-  NEnvPath _ -> pure ()
-  -- ── has-attr: walk base expression ──
-  NHasAttr base _pat -> buildExpr base
-  -- ── synonym hole (editor placeholder) ──
-  NSynHole _ -> pure ()
-  _ -> pure ()
+-- non-recursive set: child scope
+buildExpr (Layer (NSet NonRecursive bindings)) =
+  withChildScope AttrSetScope $ \attrScope -> do
+    mapM_ (addBindingDecl attrScope) bindings
+    mapM_ buildBinding bindings
+-- recursive set: a separate scope kind so we can distinguish it
+buildExpr (Layer (NSet Recursive bindings)) =
+  withChildScope RecAttrSetScope $ \attrScope -> do
+    mapM_ (addBindingDecl attrScope) bindings
+    mapM_ buildBinding bindings
+-- lambda: function scope with parameter declarations
+buildExpr (Layer (NAbs params body)) =
+  withChildScope FunctionScope $ \funScope -> do
+    addParamDecls funScope params
+    buildExpr body
+-- with expr; body: a With-scope linked to the expr scope
+buildExpr (LayerAnn srcSpan (NWith withExpr body)) = buildWithExpr srcSpan withExpr body
+-- symbol reference
+buildExpr (LayerAnn srcSpan (NSym name)) = buildSymbolRef srcSpan name
+-- attribute select: base + attr references
+buildExpr (LayerAnn srcSpan (NSelect _ base (attr :| rest))) = do
+  buildExpr base
+  scope <- currentScope
+  addAttrRef srcSpan scope attr
+  mapM_ (addAttrRef srcSpan scope) rest
+-- application / binary / unary / conditional / assert: recurse into subexprs
+buildExpr (Layer (NApp func arg)) = buildExpr func >> buildExpr arg
+buildExpr (Layer (NBinary _ left right)) = buildExpr left >> buildExpr right
+buildExpr (Layer (NUnary _ operand)) = buildExpr operand
+buildExpr (Layer (NIf cond thenBranch elseBranch)) = do
+  buildExpr cond
+  buildExpr thenBranch
+  buildExpr elseBranch
+buildExpr (Layer (NAssert cond body)) = buildExpr cond >> buildExpr body
+-- list: every element; string: each antiquoted expression (e.g. ${srv.host})
+buildExpr (Layer (NList elements)) = mapM_ buildExpr elements
+buildExpr (Layer (NStr strParts)) = mapM_ buildExpr (exprsFromString strParts)
+-- has-attr: walk the base; leaves (paths, holes) and everything else: nothing
+buildExpr (Layer (NHasAttr base _pat)) = buildExpr base
+buildExpr _ = pure ()
 
 addBindingDecl :: ScopeId -> Nix.Binding NExprLoc -> Build ()
-addBindingDecl scope = \case
-  Nix.NamedVar (StaticKey name :| []) _ srcSpan -> do
-    addDecl $
+addBindingDecl scope (Nix.NamedVar (StaticKey name :| []) _ srcSpan) =
+  addDecl
+    Declaration
+      { declName = coerce name
+      , declSpan = toSourceSpan' srcSpan
+      , declScope = scope
+      , declAssocScope = Nothing
+      , declType = Nothing
+      , declDoc = Nothing
+      }
+addBindingDecl scope (Nix.Inherit _ names srcSpan) =
+  forM_ names $ \varName ->
+    addDecl
       Declaration
-        { declName = coerce name
+        { declName = coerce varName
         , declSpan = toSourceSpan' srcSpan
         , declScope = scope
         , declAssocScope = Nothing
         , declType = Nothing
         , declDoc = Nothing
         }
-  Nix.Inherit _ names srcSpan ->
-    forM_ names $ \varName ->
-      addDecl $
-        Declaration
-          { declName = coerce varName
-          , declSpan = toSourceSpan' srcSpan
-          , declScope = scope
-          , declAssocScope = Nothing
-          , declType = Nothing
-          , declDoc = Nothing
-          }
-  _ -> pure ()
+addBindingDecl _ _ = pure ()
 
 buildBinding :: Nix.Binding NExprLoc -> Build ()
-buildBinding = \case
-  Nix.NamedVar _ expr _ -> buildExpr expr
-  Nix.Inherit (Just expr) _ _ -> buildExpr expr
-  Nix.Inherit Nothing _ _ -> pure ()
+buildBinding (Nix.NamedVar _ expr _) = buildExpr expr
+buildBinding (Nix.Inherit (Just expr) _ _) = buildExpr expr
+buildBinding (Nix.Inherit Nothing _ _) = pure ()
 
 -- ── register parameter declarations in the function's scope ─────────
 
 -- | declare lambda parameters: simple name, or set-pattern (with optional @-bind)
 addParamDecls :: ScopeId -> Params NExprLoc -> Build ()
-addParamDecls scope = \case
-  -- simple param: f = x: ...
-  Param name ->
-    addDecl $
+-- simple param: f = x: ...
+addParamDecls scope (Param name) =
+  addDecl
+    Declaration
+      { declName = coerce name
+      , declSpan = emptySpan
+      , declScope = scope
+      , declAssocScope = Nothing
+      , declType = Nothing
+      , declDoc = Nothing
+      }
+-- set pattern: { name ? default, ... } @ self ->
+addParamDecls scope (ParamSet mname _variadic pset) = do
+  addParamSetAtName scope mname
+  forM_ pset $ \(pname, mdefault) -> do
+    addDecl
       Declaration
-        { declName = coerce name
+        { declName = coerce pname
         , declSpan = emptySpan
         , declScope = scope
         , declAssocScope = Nothing
         , declType = Nothing
         , declDoc = Nothing
         }
-  -- set pattern: { name ? default, ... } @ self ->
-  ParamSet mname _variadic pset -> do
-    addParamSetAtName scope mname
-    forM_ pset $ \(pname, mdefault) -> do
-      addDecl $
-        Declaration
-          { declName = coerce pname
-          , declSpan = emptySpan
-          , declScope = scope
-          , declAssocScope = Nothing
-          , declType = Nothing
-          , declDoc = Nothing
-          }
-      mapM_ buildExpr mdefault
+    mapM_ buildExpr mdefault
  where
   addParamSetAtName sc (Just pname) =
-    addDecl $
+    addDecl
       Declaration
         { declName = coerce pname
         , declSpan = emptySpan
@@ -597,11 +578,11 @@ data ResolutionError
 
 -- | resolve a single reference to its declaration
 resolve :: ScopeGraph -> Reference -> Either ResolutionError Declaration
-resolve scopeGraph ref =
-  case findPaths scopeGraph (refScope ref) (refName ref) of
-    [] -> Left (Unresolved ref)
-    [d] -> Right d
-    ds -> Left (Ambiguous ref ds)
+resolve scopeGraph ref = decide (findPaths scopeGraph (refScope ref) (refName ref))
+ where
+  decide [] = Left (Unresolved ref)
+  decide [d] = Right d
+  decide ds = Left (Ambiguous ref ds)
 
 -- | resolve all references in a graph, collecting errors
 resolveAll :: ScopeGraph -> Either [ResolutionError] [(Reference, Declaration)]
@@ -623,19 +604,18 @@ findPaths scopeGraph startScope targetName = searchScope Set.empty startScope
   searchScope :: Set ScopeId -> ScopeId -> [Declaration]
   searchScope visited scopeId
     | Set.member scopeId visited = [] -- cycle guard
-    | otherwise =
-        case Map.lookup scopeId (sgScopes scopeGraph) of
-          Nothing -> []
-          Just scope ->
-            let updatedVisited = Set.insert scopeId visited
-                localDeclarations = filter (\d -> declName d == targetName) (scopeDeclarations scope)
-                -- try each edge label group in order; stop at the first group that yields results
-                fromEdges =
-                  firstNonEmptyGroup
-                    [ concatMap (searchScope updatedVisited . edgeTarget) group
-                    | group <- groupEdgesByLabel (scopeEdges scope)
-                    ]
-             in if not (null localDeclarations) then localDeclarations else fromEdges
+    | otherwise = maybe [] inScope (Map.lookup scopeId (sgScopes scopeGraph))
+   where
+    inScope scope =
+      let updatedVisited = Set.insert scopeId visited
+          localDeclarations = filter (\d -> declName d == targetName) (scopeDeclarations scope)
+          -- try each edge label group in order; stop at the first group that yields results
+          fromEdges =
+            firstNonEmptyGroup
+              [ concatMap (searchScope updatedVisited . edgeTarget) group
+              | group <- groupEdgesByLabel (scopeEdges scope)
+              ]
+       in if not (null localDeclarations) then localDeclarations else fromEdges
 
 -- | group edges by their label, maintaining priority order within each group
 groupEdgesByLabel :: [Edge] -> [[Edge]]
@@ -662,22 +642,19 @@ firstNonEmptyGroup (group : rest)
 
 -- | all declarations reachable from a scope (walking edges transitively)
 declarationsInScope :: ScopeGraph -> ScopeId -> [Declaration]
-declarationsInScope scopeGraph outerScopeId = go Set.empty outerScopeId
+declarationsInScope scopeGraph = go Set.empty
  where
   go visited currentScopeId
     | Set.member currentScopeId visited = []
-    | otherwise = case Map.lookup currentScopeId (sgScopes scopeGraph) of
-        Nothing -> []
-        Just scope ->
-          let visited' = Set.insert currentScopeId visited
-           in scopeDeclarations scope
-                ++ concatMap (go visited' . edgeTarget) (scopeEdges scope)
+    | otherwise = maybe [] inScope (Map.lookup currentScopeId (sgScopes scopeGraph))
+   where
+    inScope scope =
+      let visited' = Set.insert currentScopeId visited
+       in scopeDeclarations scope ++ concatMap (go visited' . edgeTarget) (scopeEdges scope)
 
 -- | all references in a specific scope
 referencesInScope :: ScopeGraph -> ScopeId -> [Reference]
-referencesInScope scopeGraph scopeId = case Map.lookup scopeId (sgScopes scopeGraph) of
-  Nothing -> []
-  Just scope -> scopeReferences scope
+referencesInScope scopeGraph scopeId = maybe [] scopeReferences (Map.lookup scopeId (sgScopes scopeGraph))
 
 -- | find all declarations with a given name across the whole graph
 findDeclaration :: ScopeGraph -> Text -> [Declaration]
@@ -698,9 +675,11 @@ findReferences scopeGraph decl =
   , resolvesToDecl ref
   ]
  where
-  resolvesToDecl ref = case resolve scopeGraph ref of
-    Right d -> declScope d == declScope decl && declSpan d == declSpan decl
-    Left _ -> False
+  resolvesToDecl ref =
+    either
+      (const False)
+      (\d -> declScope d == declScope decl && declSpan d == declSpan decl)
+      (resolve scopeGraph ref)
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                     // json // export
@@ -918,14 +897,13 @@ toSourceSpan :: SrcSpan -> SourceSpan
 toSourceSpan srcSpan =
   let begin = getSpanBegin srcSpan
       end = getSpanEnd srcSpan
-      fileFromBegin = case begin of
-        NSourcePos path _ _ -> Just (coerce path)
    in SourceSpan
         { spanStart = SourcePos (sourceLine begin) (sourceCol begin)
         , spanEnd = SourcePos (sourceLine end) (sourceCol end)
-        , spanFile = fileFromBegin
+        , spanFile = Just (coerce (sourcePath begin))
         }
  where
+  sourcePath (NSourcePos path _ _) = path
   sourceLine (NSourcePos _ (NPos l) _) = unPos l
   sourceCol (NSourcePos _ _ (NPos c)) = unPos c
 
