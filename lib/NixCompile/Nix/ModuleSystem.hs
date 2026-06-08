@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -31,7 +31,6 @@ module NixCompile.Nix.ModuleSystem (
 where
 
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -42,6 +41,7 @@ import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
 import NixCompile.Nix.Types
+import NixCompile.Nix.Utils (pattern Layer)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -72,59 +72,50 @@ data ModuleOptions = ModuleOptions
 extractOptions :: NExprLoc -> Map Text OptionInfo
 extractOptions expr = goOptions [] expr Map.empty
  where
-  goOptions pathPrefix e acc = case unwrap e of
-    NSet _ bindings ->
-      foldr (collectOption pathPrefix) acc bindings
-    NAbs _ body -> goOptions pathPrefix body acc
-    NLet _ body -> goOptions pathPrefix body acc
-    NWith _ body -> goOptions pathPrefix body acc
-    _ -> acc
+  goOptions pathPrefix (Layer (NSet _ bindings)) acc = foldr (collectOption pathPrefix) acc bindings
+  goOptions pathPrefix (Layer (NAbs _ body)) acc = goOptions pathPrefix body acc
+  goOptions pathPrefix (Layer (NLet _ body)) acc = goOptions pathPrefix body acc
+  goOptions pathPrefix (Layer (NWith _ body)) acc = goOptions pathPrefix body acc
+  goOptions _ _ acc = acc
 
-  collectOption pathPrefix binding acc = case binding of
-    NamedVar (StaticKey name :| []) val _ ->
-      let fullPath = buildPath pathPrefix (coerceVarName name)
-       in if "options" `T.isPrefixOf` fullPath
-            then case collectOneOption fullPath val of
-              Just oi -> Map.insert (optPath oi) oi acc
-              Nothing -> goOptions (coerceVarName name : pathPrefix) val acc
-            else acc
-    _ -> acc
+  collectOption pathPrefix (NamedVar (StaticKey name :| []) val _) acc
+    | "options" `T.isPrefixOf` fullPath =
+        maybe
+          (goOptions (coerceVarName name : pathPrefix) val acc)
+          (\oi -> Map.insert (optPath oi) oi acc)
+          (collectOneOption fullPath val)
+    | otherwise = acc
+   where
+    fullPath = buildPath pathPrefix (coerceVarName name)
+  collectOption _ _ acc = acc
 
-  buildPath prefix name =
-    T.intercalate "." (reverse (name : prefix))
+  buildPath prefix name = T.intercalate "." (reverse (name : prefix))
 
 -- | collect a single option from a mkOption/mkEnableOption call
 collectOneOption :: Text -> NExprLoc -> Maybe OptionInfo
-collectOneOption path expr = case unwrap expr of
-  NApp func _ -> case funcName func of
-    Just "mkOption" -> parseMkOption path expr
-    Just "mkEnableOption" -> parseMkEnableOption path expr
-    _ -> Nothing
-  _ -> Nothing
+collectOneOption path expr@(Layer (NApp func _)) = dispatch (funcName func)
+ where
+  dispatch (Just "mkOption") = parseMkOption path expr
+  dispatch (Just "mkEnableOption") = parseMkEnableOption path expr
+  dispatch _ = Nothing
+collectOneOption _ _ = Nothing
 
 -- | parse mkOption { type = ..., default = ..., description = ... }
 parseMkOption :: Text -> NExprLoc -> Maybe OptionInfo
-parseMkOption path expr = case unwrap expr of
-  NApp _ arg -> case unwrap arg of
-    NSet _ bindings -> do
-      let optType = case findAttr "type" bindings of
-            Just t -> inferTypeExpr t
-            Nothing -> TAny
-      let optDefault = findAttr "default" bindings
-      let optDescription = findAttr "description" bindings >>= extractStringLit
-      let optSpan = spanFromExpr arg
-      pure $ OptionInfo path optType optDefault optDescription optSpan
-    _ -> Nothing
-  _ -> Nothing
+parseMkOption path (Layer (NApp _ arg@(Layer (NSet _ bindings)))) =
+  Just (OptionInfo path optType optDefault optDescription optSpan)
+ where
+  optType = maybe TAny inferTypeExpr (findAttr "type" bindings)
+  optDefault = findAttr "default" bindings
+  optDescription = findAttr "description" bindings >>= extractStringLit
+  optSpan = spanFromExpr arg
+parseMkOption _ _ = Nothing
 
 -- | parse mkEnableOption "description" → Bool option
 parseMkEnableOption :: Text -> NExprLoc -> Maybe OptionInfo
-parseMkEnableOption path expr = case unwrap expr of
-  NApp _ arg -> do
-    let description = extractStringLit arg
-    let optSpan = spanFromExpr expr
-    pure $ OptionInfo path TBool Nothing description optSpan
-  _ -> Nothing
+parseMkEnableOption path expr@(Layer (NApp _ arg)) =
+  Just (OptionInfo path TBool Nothing (extractStringLit arg) (spanFromExpr expr))
+parseMkEnableOption _ _ = Nothing
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- type inference for option types
@@ -132,85 +123,74 @@ parseMkEnableOption path expr = case unwrap expr of
 
 -- | infer NixType from a lib.types.* expression
 inferTypeExpr :: NExprLoc -> NixType
-inferTypeExpr e = case unwrap e of
-  -- lib.types.bool → Bool
-  NSelect _ base (StaticKey name :| [])
-    | Just "types" <- attrLastName base -> inferTypeFromName (coerceVarName name)
-  -- lib.types.str → String
-  NApp func arg -> case funcName func of
-    Just "types.listOf" -> TList (inferTypeExpr arg)
-    Just "types.attrsOf" -> tRecOpenAnon (Map.singleton "_" (inferTypeExpr arg, False))
-    Just "types.nullOr" -> TUnion [TNull, inferTypeExpr arg]
-    Just "types.either" -> TUnion (collectEitherTypes arg)
-    Just "types.enum" -> inferEnumType arg
-    Just "types.submodule" -> inferSubmoduleType arg
-    _ -> TAny
-  -- lib.types.listOf lib.types.str → [String]
-  _ -> TAny
+-- lib.types.bool → Bool
+inferTypeExpr (Layer (NSelect _ base (StaticKey name :| [])))
+  | Just "types" <- attrLastName base = inferTypeFromName (coerceVarName name)
+-- lib.types.listOf lib.types.str → [String], etc.
+inferTypeExpr (Layer (NApp func arg)) = dispatchApp (funcName func)
+ where
+  dispatchApp (Just "types.listOf") = TList (inferTypeExpr arg)
+  dispatchApp (Just "types.attrsOf") = tRecOpenAnon (Map.singleton "_" (inferTypeExpr arg, False))
+  dispatchApp (Just "types.nullOr") = TUnion [TNull, inferTypeExpr arg]
+  dispatchApp (Just "types.either") = TUnion (collectEitherTypes arg)
+  dispatchApp (Just "types.enum") = inferEnumType arg
+  dispatchApp (Just "types.submodule") = inferSubmoduleType arg
+  dispatchApp _ = TAny
+inferTypeExpr _ = TAny
 
 -- | find the last StaticKey name in a NSelect chain
 attrLastName :: NExprLoc -> Maybe Text
-attrLastName (Fix (Compose (AnnUnit _ e))) = case e of
-  NSelect _ _ (StaticKey name :| []) -> Just (coerceVarName name)
-  _ -> Nothing
+attrLastName (Layer (NSelect _ _ (StaticKey name :| []))) = Just (coerceVarName name)
+attrLastName _ = Nothing
 
 -- | get the function name from an expression (lib.types.listOf → "listOf")
 funcName :: NExprLoc -> Maybe Text
-funcName (Fix (Compose (AnnUnit _ e))) = case e of
-  NSym name -> Just (coerceVarName name)
-  NSelect _ _ (StaticKey name :| []) -> Just (coerceVarName name)
-  _ -> Nothing
+funcName (Layer (NSym name)) = Just (coerceVarName name)
+funcName (Layer (NSelect _ _ (StaticKey name :| []))) = Just (coerceVarName name)
+funcName _ = Nothing
 
 -- | map common NixOS type names to NixType
 inferTypeFromName :: Text -> NixType
-inferTypeFromName = \case
-  "bool" -> TBool
-  "str" -> TString
-  "int" -> TInt
-  "float" -> TFloat
-  "path" -> TPath
-  "string" -> TString
-  "number" -> TUnion [TInt, TFloat]
-  "anything" -> TAny
-  "unspecified" -> TAny
-  "derivation" -> TDerivation
-  "package" -> TDerivation
-  "lines" -> TString
-  "commas" -> TString
-  "envVar" -> TString
-  _ -> TAny
+inferTypeFromName "bool" = TBool
+inferTypeFromName "str" = TString
+inferTypeFromName "int" = TInt
+inferTypeFromName "float" = TFloat
+inferTypeFromName "path" = TPath
+inferTypeFromName "string" = TString
+inferTypeFromName "number" = TUnion [TInt, TFloat]
+inferTypeFromName "anything" = TAny
+inferTypeFromName "unspecified" = TAny
+inferTypeFromName "derivation" = TDerivation
+inferTypeFromName "package" = TDerivation
+inferTypeFromName "lines" = TString
+inferTypeFromName "commas" = TString
+inferTypeFromName "envVar" = TString
+inferTypeFromName _ = TAny
 
 -- | collect types from either a b → Union [typeOf a, typeOf b]
 collectEitherTypes :: NExprLoc -> [NixType]
-collectEitherTypes e = case unwrap e of
-  NApp f a -> case funcName f of
-    Just "lib.types.either" -> inferTypeExpr a : collectEitherTypes f
-    _ -> map inferTypeExpr (nixListExprs e)
-  _ -> []
+collectEitherTypes e@(Layer (NApp f a))
+  | Just "lib.types.either" <- funcName f = inferTypeExpr a : collectEitherTypes f
+  | otherwise = map inferTypeExpr (nixListExprs e)
+collectEitherTypes _ = []
 
 -- | infer enum type from list of strings
 inferEnumType :: NExprLoc -> NixType
-inferEnumType e = case unwrap e of
-  NList literals ->
-    let values = mapMaybe extractStringLit literals
-     in if not (null values)
-          then TUnion (map TStrLit values)
-          else TString
-  _ -> TString
+inferEnumType (Layer (NList literals))
+  | not (null values) = TUnion (map TStrLit values)
+  | otherwise = TString
+ where
+  values = mapMaybe extractStringLit literals
+inferEnumType _ = TString
 
 -- | infer submodule type from import or options set
 inferSubmoduleType :: NExprLoc -> NixType
-inferSubmoduleType e = case unwrap e of
-  NSet _ bindings ->
-    let opts =
-          mapMaybe
-            ( \(k, v) -> case k of
-                StaticKey name -> Just (coerceVarName name, inferTypeExpr v)
-                _ -> Nothing
-            )
-            (mapMaybe bindingToPair bindings)
-     in TAttrs (Map.map (\(t) -> (t, True)) (Map.fromList opts))
-  _ -> tRecOpenAnon Map.empty
+inferSubmoduleType (Layer (NSet _ bindings)) = TAttrs (Map.map (,True) (Map.fromList opts))
+ where
+  opts = mapMaybe pairToOpt (mapMaybe bindingToPair bindings)
+  pairToOpt (StaticKey name, v) = Just (coerceVarName name, inferTypeExpr v)
+  pairToOpt _ = Nothing
+inferSubmoduleType _ = tRecOpenAnon Map.empty
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- module-level collection
@@ -226,30 +206,25 @@ collectModuleOptions expr =
 
 -- | get top-level bindings, unwrapping lambdas and lets
 topBindings :: NExprLoc -> [Binding NExprLoc]
-topBindings (Fix (Compose (AnnUnit _ e))) = case e of
-  NSet _ bs -> bs
-  NAbs _ body -> topBindings body
-  NLet _ body -> topBindings body
-  NWith _ body -> topBindings body
-  _ -> []
+topBindings (Layer (NSet _ bs)) = bs
+topBindings (Layer (NAbs _ body)) = topBindings body
+topBindings (Layer (NLet _ body)) = topBindings body
+topBindings (Layer (NWith _ body)) = topBindings body
+topBindings _ = []
 
 -- | find imports from the top-level `imports` binding
 findImports' :: NExprLoc -> [FilePath]
-findImports' expr = case findAttr "imports" (topBindings expr) of
-  Just importExpr -> extractImportPaths importExpr
-  Nothing -> []
+findImports' expr = maybe [] extractImportPaths (findAttr "imports" (topBindings expr))
 
 extractImportPaths :: NExprLoc -> [FilePath]
-extractImportPaths (Fix (Compose (AnnUnit _ e))) = case e of
-  NList exprs -> mapMaybe extractLiteralPath exprs
-  NApp func arg -> extractImportPaths func ++ extractImportPaths arg
-  _ -> []
+extractImportPaths (Layer (NList exprs)) = mapMaybe extractLiteralPath exprs
+extractImportPaths (Layer (NApp func arg)) = extractImportPaths func ++ extractImportPaths arg
+extractImportPaths _ = []
 
 extractLiteralPath :: NExprLoc -> Maybe FilePath
-extractLiteralPath (Fix (Compose (AnnUnit _ e))) = case e of
-  NLiteralPath (Path p) -> Just p
-  NStr (DoubleQuoted [Plain t]) -> Just (T.unpack t)
-  _ -> Nothing
+extractLiteralPath (Layer (NLiteralPath (Path p))) = Just p
+extractLiteralPath (Layer (NStr (DoubleQuoted [Plain t]))) = Just (T.unpack t)
+extractLiteralPath _ = Nothing
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- queries
@@ -265,9 +240,6 @@ allOptionPaths mos = Map.keys (moOptions mos)
 -- helpers
 -- ═════════════════════════════════════════════════════════════════════════════
 
-unwrap :: NExprLoc -> NExprF NExprLoc
-unwrap (Fix (Compose (AnnUnit _ e))) = e
-
 coerceVarName :: VarName -> Text
 coerceVarName = coerce
 
@@ -282,23 +254,19 @@ findAttr name = foldr check Nothing
 
 -- | extract a string literal from an expression
 extractStringLit :: NExprLoc -> Maybe Text
-extractStringLit e = case unwrap e of
-  NStr (DoubleQuoted [Plain t]) -> Just t
-  NStr (Indented _ [Plain t]) -> Just t
-  NConstant _ -> Nothing
-  _ -> Nothing
+extractStringLit (Layer (NStr (DoubleQuoted [Plain t]))) = Just t
+extractStringLit (Layer (NStr (Indented _ [Plain t]))) = Just t
+extractStringLit _ = Nothing
 
 -- | extract binding as (key, value) pair if it has a static key
 bindingToPair :: Binding NExprLoc -> Maybe (NKeyName NExprLoc, NExprLoc)
-bindingToPair = \case
-  NamedVar (StaticKey _ :| []) val _ -> Just (StaticKey "", val) -- placeholder
-  _ -> Nothing
+bindingToPair (NamedVar (StaticKey _ :| []) val _) = Just (StaticKey "", val) -- placeholder
+bindingToPair _ = Nothing
 
 -- | extract all expressions from a list literal
 nixListExprs :: NExprLoc -> [NExprLoc]
-nixListExprs (Fix (Compose (AnnUnit _ e))) = case e of
-  NList es -> es
-  _ -> []
+nixListExprs (Layer (NList es)) = es
+nixListExprs _ = []
 
 -- | crude span extraction from an expression
 spanFromExpr :: NExprLoc -> Span

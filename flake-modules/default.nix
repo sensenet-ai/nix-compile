@@ -61,6 +61,7 @@
               "lib/NixCompile/Nix/Flake.hs"
               "lib/NixCompile/Nix/Module.hs"
               "lib/NixCompile/Nix/ModuleKind.hs"
+              "lib/NixCompile/Nix/ModuleSystem.hs"
               "lib/NixCompile/Nix/Parse.hs"
               "lib/NixCompile/Nix/Utils.hs"
             ];
