@@ -49,6 +49,24 @@
           ${nix-compile}/bin/nix-compile --config ${self}/.nix-compile.dhall check ${self}/flake.nix
           touch $out
         '';
+        # straylint case-ban gate. Enforces zero `case` / `\case` over the
+        # ALLOWLIST of modules already swept to the house style — they cannot
+        # regress. The list grows as the sweep proceeds; when it covers the tree,
+        # the whole codebase is case-free by construction. (~433 survivors today
+        # across 48 files; run `straylint lib app` to see the rest.)
+        "nix-compile:case-ban" =
+          let
+            # files swept clean of `case` / `\case` (guards & equations only)
+            sweptClean = [
+              "lib/NixCompile/Nix/ModuleKind.hs"
+            ];
+          in
+          pkgs.runCommandLocal "nix-compile-case-ban" { } ''
+            ${nix-compile}/bin/straylint --strict ${
+              lib.concatMapStringsSep " " (f: "${self}/${f}") sweptClean
+            }
+            touch $out
+          '';
       };
       formatter = lib.mkIf (nix-compile != null) (
         builtins.derivation {

@@ -45,8 +45,14 @@ the correct understanding on the first pass.
 ## The binding law: guards and equations over `case`
 
 This is the one rule that overrides taste, habit, and convenience. **If a `case`
-can be written another way, it is written another way.** We are moving toward
-enforcing this mechanically (ast-grep), so write as if it is already enforced.
+can be written another way, it is written another way.** It is enforced
+mechanically by **`straylint`** — our own linter, built on GHC's real parser
+(`ghc-lib-parser`, so it sees Template Haskell correctly where tree-sitter /
+ast-grep do not). `straylint` is the seed of a larger analyzer, the nix-compile
+of Haskell; today it carries one rule, this one. The `nix-compile:case-ban` flake
+check runs it `--strict` over the set of modules already swept clean, so they
+cannot regress; the allowlist grows until it covers the tree. Write as if it is
+already enforced everywhere — because on the cleaned files it is.
 
 `case` is not banned because it is wrong — it is demoted because nearly every
 `case` is a flatter, more honest construct wearing a disguise. The alternatives
@@ -114,10 +120,12 @@ equations. A bare `\case` lambda passed to `maybe`/`either`/`foldr` should becom
 a named, type-signed helper.
 
 **The narrow exception.** A `case` is acceptable only when there is genuinely no
-equation or eliminator form — typically deep matching on a value produced
-mid-expression that cannot be lifted to the function head without contortion. When
-you reach for it, leave a one-line `-- n.b.` saying why the flatter forms didn't
-fit. Reviewers (human and ast-grep) should be able to count the survivors.
+equation or eliminator form — typically a small, single-use, local match on a
+value produced mid-expression (often monadically bound) where lifting it to a
+named `where`-helper costs more in naming and non-locality than it buys in
+flatness. When you reach for it, mark the line with **`CASE-OK`** (and a reason):
+`straylint` honours that marker as the sanctioned escape, so the survivors stay
+counted, visible, and few — not forbidden and smuggled.
 
 ## Comments: expository, almost literate
 
