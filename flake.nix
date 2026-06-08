@@ -16,7 +16,7 @@
       {
         imports = [
           treefmt-nix.flakeModule
-          ./flake-module.nix
+          ./flake-modules
         ];
 
         systems = [

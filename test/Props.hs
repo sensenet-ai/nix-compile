@@ -4135,8 +4135,8 @@ prop_cli_tcresult_reflexive =
 -- | CICounts field-wise addition is correct
 prop_cli_cicounts_merge :: Bool
 prop_cli_cicounts_merge =
-    let a = CICounts 1 2 3 4 5 6 7 8
-        b = CICounts 9 10 11 12 13 14 15 16
+    let a = CICounts 1 2 3 4 5 6 7 8 9
+        b = CICounts 9 10 11 12 13 14 15 16 17
         c =
             CICounts
                 (ciFilesScanned a + ciFilesScanned b)
@@ -4147,6 +4147,7 @@ prop_cli_cicounts_merge =
                 (ciPackageViolations a + ciPackageViolations b)
                 (ciBashViolations a + ciBashViolations b)
                 (ciGraphFailures a + ciGraphFailures b)
+                (ciLayoutViolations a + ciLayoutViolations b)
      in ciFilesScanned c == 10
             && ciTypePass c == 12
             && ciTypeFail c == 14
@@ -4155,6 +4156,7 @@ prop_cli_cicounts_merge =
             && ciPackageViolations c == 20
             && ciBashViolations c == 22
             && ciGraphFailures c == 24
+            && ciLayoutViolations c == 26
 
 -- ============================================================================
 -- Properties: CLI Report

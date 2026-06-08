@@ -31,10 +31,11 @@ data CICounts = CICounts
     , ciPackageViolations :: !Int
     , ciBashViolations :: !Int
     , ciGraphFailures :: !Int
+    , ciLayoutViolations :: !Int
     }
 
 emptyCICounts :: CICounts
-emptyCICounts = CICounts 0 0 0 0 0 0 0 0
+emptyCICounts = CICounts 0 0 0 0 0 0 0 0 0
 
 -- ── status markers ──────────────────────────────────────────────────
 

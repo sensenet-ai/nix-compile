@@ -32,9 +32,13 @@ import NixCompile.CLI.Check
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
+import NixCompile.Diagnostic qualified as Diag
 import NixCompile.Log
+import NixCompile.Nix.LayoutConvention qualified as Layout
 import NixCompile.Nix.LintPackages qualified as LintPackages
 import NixCompile.Nix.Module qualified as Mod
+import NixCompile.Safety qualified as Safety
+import NixCompile.Types (Loc (..), Span (..))
 
 cmdCI :: Config.Config -> FilePath -> AppM ()
 cmdCI config dir = do
@@ -46,28 +50,32 @@ runCIPhases config dir = do
     let flakePath = dir </> "flake.nix"
     hasFlake <- liftIO $ doesFileExist flakePath
 
-    $(logTM) DebugS $ logStr "Phase 1/4: type-check"
+    $(logTM) DebugS $ logStr "Phase 1/5: type-check"
 
     typeCounts <- runTypeCheckPhase config dir
 
-    $(logTM) DebugS $ logStr $ "Phase 2/4: graph  (hasFlake=" <> T.pack (show hasFlake) <> ")"
+    $(logTM) DebugS $ logStr $ "Phase 2/5: graph  (hasFlake=" <> T.pack (show hasFlake) <> ")"
 
     graphCounts <-
         if hasFlake
             then runGraphPhase config flakePath
             else pure emptyCICounts
 
-    $(logTM) DebugS $ logStr "Phase 3/4: bash"
+    $(logTM) DebugS $ logStr "Phase 3/5: bash"
 
     bashCounts <-
         if hasFlake
             then runNixPhase config flakePath
             else pure emptyCICounts
 
-    $(logTM) DebugS $ logStr "Phase 4/4: packages"
+    $(logTM) DebugS $ logStr "Phase 4/5: packages"
 
     files <- liftIO $ collectFiles config dir
     pkgCounts <- runPackagePhase config files
+
+    $(logTM) DebugS $ logStr "Phase 5/5: layout"
+
+    layoutCount <- runLayoutPhase config dir
 
     pure $
         CICounts
@@ -79,6 +87,7 @@ runCIPhases config dir = do
             , ciPackageViolations = pkgCounts
             , ciBashViolations = ciBashViolations bashCounts
             , ciGraphFailures = ciGraphFailures graphCounts
+            , ciLayoutViolations = layoutCount
             }
 
 runTypeCheckPhase :: Config.Config -> FilePath -> AppM CICounts
@@ -110,6 +119,7 @@ runTypeCheckPhase config dir = do
             , ciPackageViolations = 0
             , ciBashViolations = 0
             , ciGraphFailures = 0
+            , ciLayoutViolations = 0
             }
 
 runGraphPhase :: Config.Config -> FilePath -> AppM CICounts
@@ -123,9 +133,11 @@ runGraphPhase config flakePath = do
             $(logTM) ErrorS $ logStr $ "Graph error: " <> err
             pure $ emptyCICounts{ciGraphFailures = 1}
         Right graph ->
+            -- n.b. layout is enforced by runLayoutPhase (a tree walk rooted at the
+            -- project dir, so relative paths and orphan files are handled correctly);
+            -- the graph phase covers only the import-reachable lint findings.
             let lintCount = sum (map (length . Mod.lfViolations) (Mod.mgLintFailures graph))
-                layoutCount = sum (map (length . Mod.layViolations) (Mod.mgLayoutFailures graph))
-             in if Mod.hasViolations graph
+             in if lintCount > 0 || not (null (Mod.mgFailures graph))
                     then do
                         -- n.b. the per-file type-check phase already prints the
                         -- detailed lint violations for every on-disk file, so the
@@ -136,15 +148,12 @@ runGraphPhase config flakePath = do
                             logStr $
                                 "\nGraph violations: "
                                     <> T.pack (show lintCount)
-                                    <> " lint, "
-                                    <> T.pack (show layoutCount)
-                                    <> " layout"
-                                    <> " across "
+                                    <> " lint across "
                                     <> T.pack (show (length (Mod.mgLintFailures graph)))
                                     <> " files"
                         pure $
                             emptyCICounts
-                                { ciLintViolations = lintCount + layoutCount
+                                { ciLintViolations = lintCount
                                 , ciGraphFailures = length (Mod.mgFailures graph)
                                 }
                     else pure emptyCICounts
@@ -172,6 +181,47 @@ runPackagePhase config files = do
         $(logTM) ErrorS $ logStr $ formatPackageViolations active
     pure $ length active
 
+{- | Enforce the directory-layout convention across the whole project tree.
+
+n.b. this walks every on-disk .nix file (via 'collectFiles', honoring the
+configured ignores) and validates each against @effectiveLayout@ using the
+PROJECT ROOT — so a file's path relative to the root is what the convention's
+location rules see, and stray/orphan files are caught too. This is distinct from
+the import-following module graph, which only reaches files wired via @import@.
+-}
+runLayoutPhase :: Config.Config -> FilePath -> AppM Int
+runLayoutPhase config dir = do
+    let conv = Config.effectiveLayout config
+    files <- liftIO $ collectFiles config dir
+    sum <$> mapM (checkFileLayout conv dir) files
+
+-- | Validate a single file's placement/shape; emit a diagnostic per violation.
+checkFileLayout :: Layout.Convention -> FilePath -> FilePath -> AppM Int
+checkFileLayout conv root path = do
+    parsed <- liftIO $ Safety.safeParseNixFile path
+    case parsed of
+        -- parse failures are already surfaced by the type-check phase; don't
+        -- double-report them here.
+        Left _ -> pure 0
+        Right expr -> do
+            let errs = Layout.validateFileFromExpr conv root path expr
+            mapM_ (emitDiagnostic . layoutDiagnostic) errs
+            pure (length errs)
+
+{- | A 'Layout.LayoutError' as a unified clippy 'Diagnostic'. Layout findings are
+file-level (placement/shape), so they carry the file path but no caret span.
+-}
+layoutDiagnostic :: Layout.LayoutError -> Diag.Diagnostic
+layoutDiagnostic e =
+    Diag.Diagnostic
+        { Diag.diagSeverity = ErrorS
+        , Diag.diagCode = Just (T.pack (show (Layout.errCode e)))
+        , Diag.diagSpan = Just (Span (Loc 1 1) (Loc 1 1) (Just (Layout.errPath e)))
+        , Diag.diagSummary = Layout.errMessage e
+        , Diag.diagHelp = maybe [] (\x -> ["expected: " <> x]) (Layout.errExpected e)
+        , Diag.diagSnippet = Nothing
+        }
+
 reportCISummary :: CICounts -> AppM ()
 reportCISummary counts = do
     let totalFailures =
@@ -180,6 +230,7 @@ reportCISummary counts = do
                 + ciPackageViolations counts
                 + ciBashViolations counts
                 + ciGraphFailures counts
+                + ciLayoutViolations counts
     let n = T.pack . show
         plural one count = n count <> " " <> one <> (if count == 1 then "" else "s")
         violations =
@@ -187,6 +238,7 @@ reportCISummary counts = do
                 + ciPackageViolations counts
                 + ciBashViolations counts
                 + ciGraphFailures counts
+                + ciLayoutViolations counts
         summary =
             "checked "
                 <> plural "file" (ciFilesScanned counts)

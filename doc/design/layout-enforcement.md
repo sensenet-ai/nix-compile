@@ -146,9 +146,47 @@ tree under `test/fixtures/layout/<convention>/`:
 All five run from one table in `test/Layout.hs`: 40 pass fixtures yield no errors,
 40 fail fixtures each yield ≥1.
 
-## Plan
+All five run from one table in `test/Layout.hs`: 40 pass fixtures yield no errors,
+40 fail fixtures each yield ≥1.
+
+## Self-enforcement (dogfooding)
+
+The fixtures above test the layout *engine* (`validateFileFromExpr` called
+directly). Separately, the layout convention is now enforced against real
+project trees through the CLI:
+
+- **`runLayoutPhase`** (in `CLI/CI.hs`) is a new phase of `nix-compile check
+  <dir>`. It walks every on-disk `.nix` file via `collectFiles` (honoring
+  `extra-ignores`) and validates each against `effectiveLayout` using the
+  **project root** as the convention root — so a file's path relative to the
+  root is what the location rules see, and stray/orphan files are caught.
+  Violations render as unified clippy diagnostics (`error[E001] …`).
+- This fixed two bugs that made the prior wiring inert: the module graph only
+  reached files via `import ./x` applications (flake-parts wires modules as bare
+  path literals, so nothing was discovered), and it passed `takeDirectory path`
+  as the root (collapsing every relative path to its basename). Layout is no
+  longer routed through the import graph at all.
+- **This repo conforms to `flake-parts`** (`.nix-compile.dhall` sets `layout =
+  "flake-parts"`). Its flake-module lives at `flake-modules/default.nix`
+  (imported by `flake.nix`), which the convention accepts. `nix-compile check .`
+  reports zero layout violations; moving that file, adding a stray module at the
+  root, or dropping an `_index.nix` makes it fail.
+- **`tools/layoutcheck/check.sh`** is an end-to-end guard: it runs the real
+  binary against `test/fixtures/layout-projects/{good,perturbed}/` (two complete
+  flake-parts projects) and asserts the clean one emits no layout diagnostics
+  while the perturbed one emits the planted `E001`/`E007` violations and exits
+  non-zero. This exercises CLI → `cmdCI` → `runLayoutPhase` end to end.
+
+> Note: `nix-compile check .` still reports two `error[TYPE]` findings on the
+> flake-parts `mkFlake` entrypoint — a pre-existing limitation of the type
+> inferencer on flake-parts flakes, independent of layout. Layout enforcement is
+> green regardless.
+
+## Plan (done)
 
 1. **This doc** (committed first).
-2. **Fixtures** — author the `all-flake-module` pass/fail tree (then the others).
+2. **Fixtures** — `all-flake-module` pass/fail tree, then the other four.
 3. **Green** — relax `validateFlakeModReq` for `Package`, register the convention,
-   add the `nix-compile-layout` harness; pass `pass/` clean, `fail/` flagged.
+   add the `nix-compile-layout` harness; `pass/` clean, `fail/` flagged.
+4. **Self-enforcement** — `runLayoutPhase`, repo conformance to `flake-parts`,
+   and the `tools/layoutcheck` end-to-end guard.
