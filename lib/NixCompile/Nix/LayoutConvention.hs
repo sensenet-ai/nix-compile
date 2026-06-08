@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -65,17 +65,16 @@ where
 
 import Data.Char (isAlphaNum, isLower, isUpper, toLower)
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
-import Data.List (isPrefixOf, isSuffixOf)
+import Data.List (find, isPrefixOf, isSuffixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import Nix.Utils qualified as NixPath
 import NixCompile.Nix.ModuleKind
-import NixCompile.Types (Loc (..), Span (..))
+import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
+import NixCompile.Types (Span)
 import System.FilePath (makeRelative, splitDirectories, takeFileName)
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -377,13 +376,12 @@ allFlakeModule =
 
 -- | Look up a convention by name. Defaults to 'straylight' if unrecognised.
 layoutFromName :: Text -> Convention
-layoutFromName = \case
-  "straylight" -> straylight
-  "nixpkgs-by-name" -> nixpkgsByName
-  "flake-parts" -> flakeParts
-  "nixos-config" -> nixosConfig
-  "all-flake-module" -> allFlakeModule
-  _ -> straylight
+layoutFromName "straylight" = straylight
+layoutFromName "nixpkgs-by-name" = nixpkgsByName
+layoutFromName "flake-parts" = flakeParts
+layoutFromName "nixos-config" = nixosConfig
+layoutFromName "all-flake-module" = allFlakeModule
+layoutFromName _ = straylight
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                           // naming validation
@@ -520,78 +518,61 @@ classForPath path = findClass (splitDirectories path)
   dropSlash s
     | "/" `isSuffixOf` s = dropSlash (take (length s - 1) s)
     | otherwise = s
-  classForDir = \case
-    "flake" -> Just "flake"
-    "nixos" -> Just "nixos"
-    "home" -> Just "home"
-    "home-manager" -> Just "home"
-    "darwin" -> Just "darwin"
-    _ -> Nothing
+  classForDir "flake" = Just "flake"
+  classForDir "nixos" = Just "nixos"
+  classForDir "home" = Just "home"
+  classForDir "home-manager" = Just "home"
+  classForDir "darwin" = Just "darwin"
+  classForDir _ = Nothing
 
 findClassAttrWithSpan :: NExprLoc -> Maybe (Text, Span)
 findClassAttrWithSpan = go
  where
-  go (Fix (Compose (AnnUnit _ e))) = case e of
-    NSet _ bindings -> findInBindings bindings
-    NAbs _ body -> go body
-    NLet _ body -> go body
-    NWith _ body -> go body
-    _ -> Nothing
-  findInBindings bindings =
-    let classes = mapMaybe extractClass bindings
-     in listToMaybe classes
+  go (Layer (NSet _ bindings)) = listToMaybe (mapMaybe extractClass bindings)
+  go (Layer (NAbs _ body)) = go body
+  go (Layer (NLet _ body)) = go body
+  go (Layer (NWith _ body)) = go body
+  go _ = Nothing
+
   extractClass :: Binding NExprLoc -> Maybe (Text, Span)
-  extractClass = \case
-    NamedVar (StaticKey name :| []) valExpr _
-      | varNameText name == "_class" -> extractStringValue valExpr
-    _ -> Nothing
+  extractClass (NamedVar (StaticKey name :| []) valExpr _)
+    | varNameText name == "_class" = extractStringValue valExpr
+  extractClass _ = Nothing
+
   extractStringValue :: NExprLoc -> Maybe (Text, Span)
-  extractStringValue (Fix (Compose (AnnUnit srcSpan e'))) = case e' of
-    NStr (DoubleQuoted [Plain t]) -> Just (t, toSpan srcSpan)
-    NStr (Indented _ [Plain t]) -> Just (t, toSpan srcSpan)
-    _ -> Nothing
+  extractStringValue (LayerAnn srcSpan (NStr (DoubleQuoted [Plain t]))) = Just (t, srcSpanToSpan srcSpan)
+  extractStringValue (LayerAnn srcSpan (NStr (Indented _ [Plain t]))) = Just (t, srcSpanToSpan srcSpan)
+  extractStringValue _ = Nothing
+
   varNameText :: VarName -> Text
   varNameText = coerce
 
-toSpan :: SrcSpan -> Span
-toSpan srcSpan =
-  let begin = getSpanBegin srcSpan
-      end = getSpanEnd srcSpan
-   in Span
-        { spanStart = Loc (srcPosLine begin) (srcPosCol begin)
-        , spanEnd = Loc (srcPosLine end) (srcPosCol end)
-        , spanFile = case begin of
-            NSourcePos path _ _ -> Just (coerce path)
-        }
- where
-  srcPosLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-  srcPosCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
-
 checkClassAttr :: FilePath -> NExprLoc -> [LayoutError]
-checkClassAttr path expr = case classForPath path of
-  Nothing -> []
-  Just expected ->
-    case findClassAttrWithSpan expr of
-      Nothing ->
+checkClassAttr path expr = maybe [] check (classForPath path)
+ where
+  check expected = maybe (missing expected) (matched expected) (findClassAttrWithSpan expr)
+
+  missing expected =
+    [ LayoutError
+        { errCode = E009
+        , errPath = path
+        , errKind = Unknown
+        , errMessage = "Module missing _class attribute; expected _class = \"" <> expected <> "\""
+        , errExpected = Just expected
+        }
+    ]
+
+  matched expected (actual, _sp)
+    | actual /= expected =
         [ LayoutError
-            { errCode = E009
+            { errCode = E010
             , errPath = path
             , errKind = Unknown
-            , errMessage = "Module missing _class attribute; expected _class = \"" <> expected <> "\""
+            , errMessage = "Wrong _class: got \"" <> actual <> "\", expected \"" <> expected <> "\""
             , errExpected = Just expected
             }
         ]
-      Just (actual, _sp)
-        | actual /= expected ->
-            [ LayoutError
-                { errCode = E010
-                , errPath = path
-                , errKind = Unknown
-                , errMessage = "Wrong _class: got \"" <> actual <> "\", expected \"" <> expected <> "\""
-                , errExpected = Just expected
-                }
-            ]
-        | otherwise -> []
+    | otherwise = []
 
 {- | Validate a file with its parsed AST, running universal checks only.
 For use by the module graph builder which already has the AST.
@@ -636,39 +617,32 @@ validateLayout conv root files =
   concatMap (\(path, det) -> validateFile conv root path det) files
 
 validateLocation :: Convention -> FilePath -> [String] -> ModuleKind -> [LayoutError]
-validateLocation conv relPath components kind =
-  case findRuleForKind (convRules conv) kind of
-    Nothing -> []
-    Just rule ->
-      if matchesPattern (rulePattern rule) components
-        then []
-        else
-          [ LayoutError
-              { errCode = E001
-              , errPath = relPath
-              , errKind = kind
-              , errMessage = "File in wrong location for " <> T.pack (show kind)
-              , errExpected = Just $ patternDescription (rulePattern rule)
-              }
-          ]
+validateLocation conv relPath components kind = maybe [] check (findRuleForKind (convRules conv) kind)
+ where
+  check rule
+    | matchesPattern (rulePattern rule) components = []
+    | otherwise =
+        [ LayoutError
+            { errCode = E001
+            , errPath = relPath
+            , errKind = kind
+            , errMessage = "File in wrong location for " <> T.pack (show kind)
+            , errExpected = Just $ patternDescription (rulePattern rule)
+            }
+        ]
 
 validateForbidden :: Convention -> FilePath -> [String] -> ModuleKind -> [LayoutError]
-validateForbidden conv relPath components kind =
-  case findRuleForKind (convRules conv) kind of
-    Nothing -> []
-    Just rule ->
-      let violations = filter (`matchesPattern` components) (ruleForbidden rule)
-       in map
-            ( \pat ->
-                LayoutError
-                  { errCode = E002
-                  , errPath = relPath
-                  , errKind = kind
-                  , errMessage = "File in forbidden location"
-                  , errExpected = Just $ "not in " <> patternDescription pat
-                  }
-            )
-            violations
+validateForbidden conv relPath components kind = maybe [] check (findRuleForKind (convRules conv) kind)
+ where
+  check rule = map toError (filter (`matchesPattern` components) (ruleForbidden rule))
+  toError pat =
+    LayoutError
+      { errCode = E002
+      , errPath = relPath
+      , errKind = kind
+      , errMessage = "File in forbidden location"
+      , errExpected = Just $ "not in " <> patternDescription pat
+      }
 
 validateFileName :: Convention -> FilePath -> String -> [LayoutError]
 validateFileName conv relPath fileName =
@@ -707,10 +681,7 @@ validateFlakeModReq conv relPath kind _detection =
 -- ══════════════════════════════════════════════════════════════════════════════
 
 findRuleForKind :: [ConventionRule] -> ModuleKind -> Maybe ConventionRule
-findRuleForKind rules kind =
-  case filter ((== kind) . ruleKind) rules of
-    (r : _) -> Just r
-    [] -> Nothing
+findRuleForKind rules kind = find ((== kind) . ruleKind) rules
 
 matchesPattern :: PathPattern -> [String] -> Bool
 matchesPattern None _ = True
