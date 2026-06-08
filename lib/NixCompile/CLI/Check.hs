@@ -36,6 +36,7 @@ import NixCompile.Nix.Lint qualified as Lint
 import NixCompile.Nix.LintCombined qualified as Combined
 import NixCompile.Nix.LintDerivation qualified as Derivation
 import NixCompile.Nix.LintPatterns qualified as Patterns
+import NixCompile.Nix.ModuleKind (ModuleKind (..), detectKind, detectedKind)
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Types qualified
 import NixCompile.Safety qualified as Safety
@@ -106,7 +107,16 @@ performTypeCheck :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResu
 performTypeCheck config file expression skipTypeCheck
     | skipTypeCheck = return TCOk
     | otherwise = do
-        result <- liftIO $ try $ case NixCompile.Nix.Inference.inferExpr expression of
+        -- Flakes and module-system files take their top-level parameters
+        -- (self, inputs, config, pkgs, …) from the flake / module system, so we
+        -- infer them in module mode (those params are dynamic — see
+        -- 'inferModuleExpr'). Everything else uses the strict builtin env.
+        let kind = detectedKind (detectKind file expression)
+            infer_
+                | kind `elem` [Flake, FlakeModule, NixOSModule, HomeModule, DarwinModule] =
+                    NixCompile.Nix.Inference.inferModuleExpr
+                | otherwise = NixCompile.Nix.Inference.inferExpr
+        result <- liftIO $ try $ case infer_ expression of
             Left typeError -> return $ Left typeError
             Right (type_, _) -> return $ Right (NixCompile.Nix.Types.prettyType type_)
         case result of

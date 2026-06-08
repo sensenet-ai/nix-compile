@@ -17,6 +17,7 @@
 module NixCompile.Nix.Inference (
     -- * Inference
     inferExpr,
+    inferModuleExpr,
     inferExprWithEnv,
     inferFile,
     runInfer,
@@ -76,11 +77,20 @@ data TypeEnv = TypeEnv
     errors. Used for backwards compatibility with libraries that mention
     builtins we don't yet model. Default: False (strict).
     -}
+    , envModuleParams :: Bool
+    {- ^ when True, lambda parameters whose names are well-known external module
+    / flake inputs (self, inputs, config, pkgs, the @-bound input set, …) are
+    typed as dynamic ('TAny') rather than fresh inference vars. These values are
+    supplied by the flake / module system, not by the file under analysis, so
+    inferring precise types for them only produces false positives (e.g. the
+    self-referential @inputs in `mkFlake { inherit inputs; }`). Matched by name
+    so ordinary inner lambdas (`x: x + 1`) keep precise inference. Default: False.
+    -}
     }
     deriving (Eq, Show)
 
 emptyEnv :: TypeEnv
-emptyEnv = TypeEnv Map.empty Nothing Map.empty False
+emptyEnv = TypeEnv Map.empty Nothing Map.empty False False
 
 {- | extend the env with one name → scheme binding
 n.b. this shadows — if a name already exists the new scheme wins
@@ -210,6 +220,7 @@ builtinEnv =
         , envWith = Nothing
         , envImportTypes = Map.empty
         , envLenient = False
+        , envModuleParams = False
         }
   where
     -- ── core type scheme helpers ──────────────────────────────────
@@ -946,7 +957,7 @@ inferLambda :: TypeEnv -> Params NExprLoc -> NExprLoc -> Infer NixType
 inferLambda environment params body = case params of
     -- simple param: just one binder
     Param name -> do
-        paramT <- freshVar
+        paramT <- moduleParamVar environment (varNameText name)
         let environment' = extendEnv (varNameText name) (Forall [] paramT) environment
         resultT <- infer environment' body
         paramT' <- applyCurrentSubst paramT
@@ -956,7 +967,7 @@ inferLambda environment params body = case params of
         paramTypes <- forM paramList $ \(name, mDefault) -> do
             t <- case mDefault of
                 Just defaultExpr -> infer environment defaultExpr
-                Nothing -> freshVar
+                Nothing -> moduleParamVar environment (varNameText name)
             pure (varNameText name, (t, isJust mDefault))
 
         attrsT <-
@@ -967,13 +978,55 @@ inferLambda environment params body = case params of
         -- all param names are in scope in the body
         let environment' = foldr (\(n, (t, _)) e -> extendEnv n (Forall [] t) e) environment paramTypes
 
-        -- @-binding: the whole attrset is also in scope
+        -- @-binding: the whole attrset is in scope. In module mode it's the
+        -- externally-supplied input set (e.g. flake @inputs) — type it dynamic so
+        -- self-references like `mkFlake { inherit inputs; }` don't form a cyclic
+        -- (occurs-check-failing) row.
+        let boundType
+                | envModuleParams environment = TAny
+                | otherwise = attrsT
         let environment'' = case mName of
-                Just name -> extendEnv (varNameText name) (Forall [] attrsT) environment'
+                Just name -> extendEnv (varNameText name) (Forall [] boundType) environment'
                 Nothing -> environment'
 
         resultT <- infer environment'' body
         pure $ TFun attrsT resultT
+
+{- | Type for a lambda parameter. Normally a fresh inference var, but in module
+mode ('envModuleParams') a parameter whose name is a well-known external module /
+flake input is typed dynamically — those values come from the flake / module
+system, so inferring them precisely only yields false positives. Matched by name
+so ordinary inner lambdas keep precise inference.
+-}
+moduleParamVar :: TypeEnv -> Text -> Infer NixType
+moduleParamVar environment name
+    | envModuleParams environment && isExternalParam name = pure TAny
+    | otherwise = freshVar
+
+-- | Well-known parameter names supplied by the flake / module system.
+isExternalParam :: Text -> Bool
+isExternalParam name =
+    name
+        `elem` [ "self"
+               , "inputs"
+               , "self'"
+               , "inputs'"
+               , "config"
+               , "options"
+               , "lib"
+               , "pkgs"
+               , "pkgs'"
+               , "final"
+               , "prev"
+               , "super"
+               , "specialArgs"
+               , "modulesPath"
+               , "system"
+               , "withSystem"
+               , "moduleWithSystem"
+               , "getSystem"
+               , "flake-parts-lib"
+               ]
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- inference: main dispatch
@@ -1330,6 +1383,15 @@ data InferResult = InferResult
 -- | infer a single expression in the builtin environment
 inferExpr :: NExprLoc -> Either Text (NixType, [Binding])
 inferExpr expr = inferExprWithEnv builtinEnv expr
+
+{- | Infer a module / flake expression: like 'inferExpr' but well-known external
+parameter names (self, inputs, config, pkgs, the @-bound input set, …) are typed
+as dynamic rather than inferred precisely. Used for files detected as a flake or
+a module, whose top-level parameters are supplied by the flake / module system
+(see 'envModuleParams').
+-}
+inferModuleExpr :: NExprLoc -> Either Text (NixType, [Binding])
+inferModuleExpr = inferExprWithEnv builtinEnv{envModuleParams = True}
 
 -- | infer an expression with a specific type environment (for cross-module inference)
 inferExprWithEnv :: TypeEnv -> NExprLoc -> Either Text (NixType, [Binding])

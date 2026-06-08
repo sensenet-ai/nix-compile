@@ -8,6 +8,7 @@ module Main (main) where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Text qualified as T
+import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -18,6 +19,11 @@ import NixCompile.Log
 
 main :: IO ()
 main = do
+    -- Nix source is UTF-8 by spec; force UTF-8 for all file reads regardless of
+    -- the ambient locale. Without this the tool crashes ("hGetContents: invalid
+    -- argument") on any non-ASCII byte when run under a non-UTF-8 locale — e.g.
+    -- inside the `nix flake check` build sandbox, which sets no locale.
+    setLocaleEncoding utf8
     commandArguments <- getArgs
     let (minSev, rest) = parseVerbose commandArguments
         (maybeConfigPath, commandAndArgs) = parseConfigArg rest

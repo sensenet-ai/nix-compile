@@ -35,42 +35,20 @@
           bash ${self}/tools/layoutcheck/check.sh ${nix-compile}/bin/nix-compile
           touch $out
         '';
-        "nix-compile:ci" = builtins.derivation {
-          name = "nix-compile-ci";
-          builder = "${pkgs.bash}/bin/bash";
-          system = system;
-          args = [
-            "-euc"
-            ''
-              echo "running nix-compile check on ${self}"
-              ${nix-compile}/bin/nix-compile check ${self} 2>&1 | tee ci.log
-              if [ $? -eq 0 ]; then
-                touch $out
-              else
-                echo "FAILED: nix-compile check found issues"
-                exit 1
-              fi
-            ''
-          ];
-        };
-        "nix-compile:lint-flake" = builtins.derivation {
-          name = "nix-compile-lint-flake";
-          builder = "${pkgs.bash}/bin/bash";
-          system = system;
-          args = [
-            "-euc"
-            ''
-              echo "linting flake.nix and embedded bash"
-              ${nix-compile}/bin/nix-compile check ${self}/flake.nix 2>&1 | tee lint.log
-              if [ $? -eq 0 ]; then
-                touch $out
-              else
-                echo "FAILED: flake.nix has violations"
-                exit 1
-              fi
-            ''
-          ];
-        };
+        # nix-compile dogfoods itself: type-check, lint, and layout-check the
+        # whole source tree. Uses the repo's own .nix-compile.dhall (layout =
+        # flake-parts, ignores), so it must be run with --config pointing at it
+        # (the build CWD is not ${self}). A non-zero exit fails the check.
+        "nix-compile:ci" = pkgs.runCommandLocal "nix-compile-ci" { } ''
+          echo "running nix-compile check on ${self}"
+          ${nix-compile}/bin/nix-compile --config ${self}/.nix-compile.dhall check ${self}
+          touch $out
+        '';
+        "nix-compile:lint-flake" = pkgs.runCommandLocal "nix-compile-lint-flake" { } ''
+          echo "linting flake.nix and embedded bash"
+          ${nix-compile}/bin/nix-compile --config ${self}/.nix-compile.dhall check ${self}/flake.nix
+          touch $out
+        '';
       };
       formatter = lib.mkIf (nix-compile != null) (
         builtins.derivation {

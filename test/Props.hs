@@ -62,7 +62,7 @@ import NixCompile.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (annotateExpr)
-import NixCompile.Nix.Inference (Binding, inferExpr)
+import NixCompile.Nix.Inference (Binding, inferExpr, inferModuleExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
 import NixCompile.Nix.Lint
 import NixCompile.Nix.LintDerivation qualified as DerivLint
@@ -1235,6 +1235,12 @@ parseAndInfer src = case parseNixTextLoc src of
     Left _err -> Left "parse error"
     Right expr -> inferExpr expr
 
+-- | Like 'parseAndInfer' but in module mode (well-known external params dynamic).
+parseAndInferModule :: Text -> Either Text (NT.NixType, [Binding])
+parseAndInferModule src = case parseNixTextLoc src of
+    Left _err -> Left "parse error"
+    Right expr -> inferModuleExpr expr
+
 -- ============================================================================
 -- REVIEW-3 regression / bug-demonstration properties
 --
@@ -1563,6 +1569,26 @@ prop_lib_mkif_polymorphic =
 prop_lib_mkmerge_polymorphic :: Bool
 prop_lib_mkmerge_polymorphic =
     isRight (parseAndInfer "{ lib }: lib.mkMerge [ { a = 1; } { b = 2; } ]")
+
+-- In module mode, the self-referential flake @inputs (`mkFlake { inherit inputs;
+-- }`) no longer forms a cyclic row and so no longer false-positives with
+-- "infinite type". This is the exact shape of our own flake.nix outputs.
+prop_module_flake_selfref_ok :: Bool
+prop_module_flake_selfref_ok =
+    isRight (parseAndInferModule "{ flake-parts, ... }@inputs: flake-parts.lib.mkFlake { inherit inputs; } { }")
+
+-- Module mode only relaxes WELL-KNOWN external params; a self-reference through
+-- a non-external @-name is genuine infinite data and still errors.
+prop_module_selfref_nonexternal_still_errors :: Bool
+prop_module_selfref_nonexternal_still_errors =
+    case parseAndInferModule "f: f { inherit f; } { }" of
+        Left err -> "infinite type" `T.isInfixOf` err
+        Right _ -> False
+
+-- The strict (non-module) path is unchanged: `rec { x = x; }` is still rejected.
+prop_module_mode_keeps_strict_occurs :: Bool
+prop_module_mode_keeps_strict_occurs =
+    isLeft (parseAndInfer "rec { x = x; }")
 
 -- #6 (RC2 — FIXED): `[TInt ~ a, a ~ TBool]` is satisfiable as `a = TNumeric`.
 -- The new collect-then-join solver resolves it (the old left fold bound
@@ -4670,6 +4696,9 @@ main = do
             , run "review_builtins_hasattr_ok" (property prop_review_builtins_hasattr_ok)
             , run "lib_mkif_polymorphic" (property prop_lib_mkif_polymorphic)
             , run "lib_mkmerge_polymorphic" (property prop_lib_mkmerge_polymorphic)
+            , run "module_flake_selfref_ok" (property prop_module_flake_selfref_ok)
+            , run "module_selfref_nonexternal_still_errors" (property prop_module_selfref_nonexternal_still_errors)
+            , run "module_mode_keeps_strict_occurs" (property prop_module_mode_keeps_strict_occurs)
             , run "review_bash_subtype_resolves" (property prop_review_bash_subtype_resolves)
             , run "review_union_var_constrains" (property prop_review_union_var_constrains)
             , -- Bash AST edge cases
