@@ -57,7 +57,6 @@ module NixCompile.Nix.ModuleKind (
 where
 
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (listToMaybe, mapMaybe)
@@ -67,6 +66,7 @@ import Data.Text.IO qualified as TIO
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import NixCompile.Nix.Parse (parseNix)
+import NixCompile.Nix.Utils (pattern Layer)
 import System.FilePath (takeFileName)
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
@@ -113,16 +113,6 @@ data Detection = Detection
   -- ^ the hints that produced this kind
   }
   deriving (Eq, Show)
-
-{- | View an annotated expression as its underlying functor layer.
-
-hnix wraps every node in an annotation spine, @Fix (Compose (AnnUnit span) …)@.
-Matching that wrapper inline turns every structural decision into a @case@; this
-pattern lets us strip it in a clause /head/ instead, so dispatch reads as a set
-of equations (per the house rule, guards and equations over @case@).
--}
-pattern Layer :: NExprF NExprLoc -> NExprLoc
-pattern Layer e <- Fix (Compose (AnnUnit _ e))
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 --                                                                                      // detection
