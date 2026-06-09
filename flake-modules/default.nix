@@ -61,6 +61,7 @@
               "lib/NixCompile/CLI/Check.hs"
               "lib/NixCompile/LSP/Handlers.hs"
               "lib/NixCompile/Nix/Flake.hs"
+              "lib/NixCompile/Nix/Inference.hs"
               "lib/NixCompile/Nix/LayoutConvention.hs"
               "lib/NixCompile/Nix/Lint.hs"
               "lib/NixCompile/Nix/LintCombined.hs"
