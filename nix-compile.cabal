@@ -97,6 +97,7 @@ library
         NixCompile.Nix.Formatter
         NixCompile.Layout.Scope
         NixCompile.Inference.Nix.Type
+        NixCompile.Inference.Nix.Unify
         NixCompile.Syntax.Annotation
         NixCompile.Syntax.Pretty
         NixCompile.Core.Safety
