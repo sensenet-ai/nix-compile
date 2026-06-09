@@ -1,9 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                   // nix // module
+--                                                        // layout // graph
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "And the next. And ever was."
@@ -11,7 +9,10 @@
 --                                                                 — Count Zero
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                     // module // graph
+--   The module-dependency graph builder: walk a project from its root (or
+--   flake.nix), parse each file under the safety gate, run lint / layout / type
+--   checks, follow `import` edges (discovered by 'NixCompile.Layout.Import'),
+--   and infer types in topological order with cross-module propagation.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Layout.Graph (
@@ -41,28 +42,22 @@ module NixCompile.Layout.Graph (
 where
 
 import Control.Monad (foldM)
-import Data.Coerce (coerce)
 import Data.List (isPrefixOf)
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
-import Nix.Expr.Types hiding (Binding)
-import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
-import Nix.Utils qualified as NixPath
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Inference.Nix (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
 import NixCompile.Inference.Nix.Type
 import NixCompile.Layout.Convention (Convention, LayoutError, validateFileFromExpr)
+import NixCompile.Layout.Import (Import (..), findImports)
 import NixCompile.Lint.Nix (NixViolation, findNixViolations)
-import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Span)
 import System.Directory (canonicalizePath, doesFileExist)
-import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))
+import System.FilePath (pathSeparator, takeDirectory, (</>))
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- types
@@ -73,14 +68,6 @@ data Module = Module
   , modExpr :: !NExprLoc
   , modType :: !NixType
   , modImports :: ![Import]
-  }
-  deriving (Show)
-
-data Import = Import
-  { impPath :: !FilePath
-  , impRawPath :: !Text
-  , impArgs :: !(Maybe NExprLoc)
-  , impSpan :: !Span
   }
   deriving (Show)
 
@@ -252,109 +239,6 @@ processImport conv rootDir visited state importBinding = do
       if rootPrefix `isPrefixOf` canonPath || canonPath == rootDir
         then buildModules conv rootDir canonPath visited state
         else pure state
-
--- ═════════════════════════════════════════════════════════════════════════════
--- import finding
--- ═════════════════════════════════════════════════════════════════════════════
-
--- ── import finding: walk AST for `import ./path` calls ───────────
-
--- | walk an entire expression tree looking for import calls
-findImports :: FilePath -> NExprLoc -> [Import]
-findImports baseDir = walkExpr
- where
-  walkExpr :: NExprLoc -> [Import]
-  walkExpr (LayerAnn srcSpan (NApp func arg)) = processApplication baseDir srcSpan func arg walkExpr
-  walkExpr (Layer (NLet bindings body)) = concatMap walkBinding bindings ++ walkExpr body
-  walkExpr (Layer (NSet _ bindings)) = concatMap walkBinding bindings
-  walkExpr (Layer (NIf cond thenBranch elseBranch)) = walkExpr cond ++ walkExpr thenBranch ++ walkExpr elseBranch
-  walkExpr (Layer (NWith scope body)) = walkExpr scope ++ walkExpr body
-  walkExpr (Layer (NAssert cond body)) = walkExpr cond ++ walkExpr body
-  walkExpr (Layer (NAbs _ body)) = walkExpr body
-  walkExpr (Layer (NList elements)) = concatMap walkExpr elements
-  walkExpr (Layer (NSelect _ base _)) = walkExpr base
-  walkExpr (Layer (NBinary _ left right)) = walkExpr left ++ walkExpr right
-  walkExpr (Layer (NUnary _ operand)) = walkExpr operand
-  walkExpr _ = []
-
-  walkBinding :: Nix.Binding NExprLoc -> [Import]
-  walkBinding (Nix.NamedVar _ expr _) = walkExpr expr
-  walkBinding (Nix.Inherit (Just scope) _ _) = walkExpr scope
-  walkBinding (Nix.Inherit Nothing _ _) = []
-
--- ── import application analysis ──────────────────────────────────
-
-{- | given an application node, determine if it's an import and extract its parts
-handles: import ./path, builtins.import ./path, import ./path (arg)
--}
-processApplication :: FilePath -> SrcSpan -> NExprLoc -> NExprLoc -> (NExprLoc -> [Import]) -> [Import]
-processApplication baseDir srcSpan func arg continue
-  | Just (rawPath, Nothing) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue arg
-  | Just (rawPath, Just inner) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue inner ++ continue arg
-  | Just () <- checkImportBuiltin func = makeImport baseDir (extractImportPath arg) Nothing srcSpan
-  | otherwise = continue func ++ continue arg
-
--- | check if an expression is literally the `import` builtin (or builtins.import)
-checkImportBuiltin :: NExprLoc -> Maybe ()
-checkImportBuiltin (Layer (NSym name))
-  | nixVarNameText name == "import" = Just ()
-checkImportBuiltin (Layer (NSelect _ _ (attr :| rest)))
-  | nixVarNameText (nixKeyName (last (attr : rest))) == "import" = Just ()
-checkImportBuiltin _ = Nothing
-
-{- | try to unwrap a nested import expression: import (./path + args)
-returns (path, maybe inner-arg-expr)
--}
-unwrapImportExpression :: NExprLoc -> Maybe (Text, Maybe NExprLoc)
-unwrapImportExpression (Layer (NApp func pathExpr)) = unwrapImportHelper func pathExpr
-unwrapImportExpression _ = Nothing
-
--- | helper to unwrap import at the head of a chain of applications
-unwrapImportHelper :: NExprLoc -> NExprLoc -> Maybe (Text, Maybe NExprLoc)
-unwrapImportHelper func pathExpr
-  | Layer (NSym name) <- func
-  , nixVarNameText name == "import" =
-      Just (extractImportPath pathExpr, Nothing)
-  | Just (path, Nothing) <- unwrapImportExpression func
-  , not (T.null path) =
-      Just (path, Just pathExpr)
-  | Just () <- checkImportBuiltin func = Just (extractImportPath pathExpr, Nothing)
-  | otherwise = Nothing
-
--- | extract the file path text from an import argument expression
-extractImportPath :: NExprLoc -> Text
-extractImportPath (Layer (NLiteralPath (NixPath.Path p))) = T.pack p
-extractImportPath (Layer (NStr (DoubleQuoted [Plain t]))) = t
-extractImportPath (Layer (NStr (Indented _ [Plain t]))) = t
-extractImportPath _ = ""
-
--- ── key & name helpers ───────────────────────────────────────────
-
-nixKeyName :: NKeyName r -> VarName
-nixKeyName (StaticKey key) = key
-nixKeyName (DynamicKey _) = VarName ""
-
-nixVarNameText :: VarName -> Text
-nixVarNameText = coerce
-
--- | construct an Import record from a raw path string and source location
-makeImport :: FilePath -> Text -> Maybe NExprLoc -> SrcSpan -> [Import]
-makeImport baseDirectory rawPath arguments srcSpan
-  | T.null rawPath = []
-  | otherwise =
-      let resolvedPath = resolveImportPath baseDirectory (T.unpack rawPath)
-       in [ Import
-              { impPath = resolvedPath
-              , impRawPath = rawPath
-              , impArgs = arguments
-              , impSpan = srcSpanToSpan srcSpan
-              }
-          ]
-
--- | resolve a relative or absolute import path against the base directory
-resolveImportPath :: FilePath -> FilePath -> FilePath
-resolveImportPath _ path@('/' : _) = path
-resolveImportPath baseDir path = normalise (baseDir </> path)
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- queries

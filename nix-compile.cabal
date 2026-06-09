@@ -91,6 +91,7 @@ library
         NixCompile.Lint.Packages
         NixCompile.Lint.Patterns
         NixCompile.Layout.Graph
+        NixCompile.Layout.Import
         NixCompile.Layout.ModuleKind
         NixCompile.Layout.ModuleSystem
         NixCompile.Layout.Naming
