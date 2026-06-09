@@ -24,8 +24,8 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Docs.Types
-import NixCompile.Nix.Scope (Declaration (..), Scope (..), ScopeGraph (..), ScopeId, ScopeKind (..), SourcePos (..), SourceSpan (..))
-import NixCompile.Nix.Scope qualified as Scope
+import NixCompile.Layout.Scope (Declaration (..), Scope (..), ScopeGraph (..), ScopeId, ScopeKind (..), SourcePos (..), SourceSpan (..))
+import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Types (Loc (..), Span (..))
 
 extractDocs :: ScopeGraph -> Text -> [DocItem]

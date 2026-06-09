@@ -63,18 +63,18 @@ import NixCompile.Layout.Convention qualified as LC
 import NixCompile.Layout.Graph (buildModuleGraph, moduleTypes)
 import NixCompile.Layout.ModuleKind
 import NixCompile.Layout.Naming qualified as Naming
+import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Lint.Nix
 import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
-import NixCompile.Nix.Effect
 import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Inference (Binding, inferExpr, inferModuleExpr)
-import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
+import NixCompile.Syntax.Effect
 import ProjectCacheSpec qualified
 import Psychotic qualified
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)

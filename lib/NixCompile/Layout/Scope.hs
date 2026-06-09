@@ -21,7 +21,7 @@
 --                                                     // core // types
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Scope (
+module NixCompile.Layout.Scope (
   -- * Core Types
   ScopeGraph (..),
   Scope (..),

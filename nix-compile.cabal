@@ -76,7 +76,7 @@ library
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
         NixCompile.Nix.Inference
-        NixCompile.Nix.Effect
+        NixCompile.Syntax.Effect
         NixCompile.Nix.Flake
         NixCompile.Nix.Infer
         NixCompile.Layout.Convention
@@ -91,7 +91,7 @@ library
         NixCompile.Layout.Naming
         NixCompile.Syntax.Parse
         NixCompile.Nix.Formatter
-        NixCompile.Nix.Scope
+        NixCompile.Layout.Scope
         NixCompile.Nix.Types
         NixCompile.Syntax.Annotation
         NixCompile.Syntax.Pretty

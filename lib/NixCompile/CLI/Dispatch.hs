@@ -37,9 +37,9 @@ import NixCompile.Core.Log
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.LSP.Server qualified as LSP
+import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Nix.Formatter qualified as Formatter
 import NixCompile.Nix.Infer qualified as Annotate
-import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Syntax.Parse qualified as Nix
 
 cmdCheck :: Config.Config -> FilePath -> AppM ()

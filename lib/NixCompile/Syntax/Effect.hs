@@ -15,7 +15,7 @@
 --                                                     // effect // algebra
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Effect (
+module NixCompile.Syntax.Effect (
   -- * Core Types
   Coeffect (..),
   Effect (..),

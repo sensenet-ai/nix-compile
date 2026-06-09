@@ -266,6 +266,14 @@ connection <- createDatabaseConnection configuration
 `f`/`g` (functions in higher-order contexts), `t` (a `NixType` in a tight unify
 clause). Everywhere else, spell it.
 
+**Acronyms keep their capitalization.** A well-known acronym is one word and
+wears all caps wherever it appears — in module names (`NixCompile.CLI`,
+`NixCompile.LSP`), type names, and identifiers (`parseJSON`, `lspSafeParse`,
+the `LSP` in a constructor). We do **not** title-case them to `Cli` / `Lsp` /
+`Json`: the acronym is the word, and lowercasing its tail buries the very
+signal that makes it readable. (This is the one place the unabbreviated-naming
+rule yields — `LSP` is *more* legible than `LanguageServerProtocol`.)
+
 ## Make invalid states unrepresentable
 
 Push correctness into types so the wrong program does not compile.

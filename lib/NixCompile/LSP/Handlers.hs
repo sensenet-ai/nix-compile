@@ -45,13 +45,13 @@ import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.Convention (straylight)
 import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Layout.ModuleSystem qualified as MS
+import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Lint.Derivation qualified as Deriv
 import NixCompile.Lint.Forbidden qualified as Forbidden
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Nix.Inference qualified as Infer
-import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Syntax.Parse qualified as NixParse
