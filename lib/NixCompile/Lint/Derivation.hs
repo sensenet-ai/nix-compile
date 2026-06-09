@@ -32,7 +32,7 @@ import Katip (Severity (WarningS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated (NExprLoc, SrcSpan)
 import NixCompile.Diagnostic (Diagnostic (..))
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- | Derivation-quality violation as a unified 'Diagnostic' (a warning).

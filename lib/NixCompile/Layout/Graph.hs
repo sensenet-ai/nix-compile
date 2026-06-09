@@ -58,8 +58,8 @@ import NixCompile.Layout.Convention (Convention, LayoutError, validateFileFromEx
 import NixCompile.Lint.Nix (NixViolation, findNixViolations)
 import NixCompile.Nix.Inference (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
 import NixCompile.Nix.Types
-import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Span)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))

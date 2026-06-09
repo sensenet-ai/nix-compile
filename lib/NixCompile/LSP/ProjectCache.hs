@@ -84,8 +84,8 @@ import NixCompile.Nix.Inference (
   inferExprWithEnv,
  )
 import NixCompile.Nix.Types (NixType (..))
-import NixCompile.Nix.Utils (varNameText, pattern Layer)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, takeDirectory, (</>))
 

@@ -50,11 +50,11 @@ import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolat
 import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Nix.Inference qualified as Infer
-import NixCompile.Nix.Parse qualified as NixParse
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Parse qualified as NixParse
 import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (takeDirectory, (</>))

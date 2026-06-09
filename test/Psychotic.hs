@@ -36,8 +36,8 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Lint.Combined qualified as LC
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, inferExprWithEnv)
-import NixCompile.Nix.Parse (parseNixExpr)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Parse (parseNixExpr)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)

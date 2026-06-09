@@ -22,7 +22,7 @@
 --                                                // nix // parse // extract
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Parse (
+module NixCompile.Syntax.Parse (
   -- * Parsing
   parseNixFile,
   parseNixExpr,
@@ -48,8 +48,8 @@ import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Parser qualified
-import NixCompile.Nix.Utils (toSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Annotation (toSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Span (..))
 
 -- | A bash script extracted from a Nix file

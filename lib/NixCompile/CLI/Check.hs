@@ -35,10 +35,10 @@ import NixCompile.Lint.Nix qualified as Lint
 import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Log
 import NixCompile.Nix.Inference qualified
-import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Types qualified
-import NixCompile.Nix.Utils (pattern Layer)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Annotation (pattern Layer)
+import NixCompile.Syntax.Parse qualified as Nix
 
 checkFile :: Config.Config -> FilePath -> AppM TCResult
 checkFile config file = do

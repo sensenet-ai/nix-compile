@@ -89,12 +89,12 @@ library
         NixCompile.Layout.ModuleKind
         NixCompile.Layout.ModuleSystem
         NixCompile.Layout.Naming
-        NixCompile.Nix.Parse
+        NixCompile.Syntax.Parse
         NixCompile.Nix.Formatter
         NixCompile.Nix.Scope
         NixCompile.Nix.Types
-        NixCompile.Nix.Utils
-        NixCompile.Pretty
+        NixCompile.Syntax.Annotation
+        NixCompile.Syntax.Pretty
         NixCompile.Safety
         NixCompile.Schema.Build
         NixCompile.Types

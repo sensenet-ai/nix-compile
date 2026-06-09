@@ -41,7 +41,7 @@ import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
 import NixCompile.Nix.Types
-import NixCompile.Nix.Utils (pattern Layer)
+import NixCompile.Syntax.Annotation (pattern Layer)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- ═════════════════════════════════════════════════════════════════════════════

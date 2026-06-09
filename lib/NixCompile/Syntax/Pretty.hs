@@ -13,7 +13,7 @@
 --                                                     // output // rendering
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Pretty (
+module NixCompile.Syntax.Pretty (
   -- * Re-exports
   module Prettyprinter,
   module Prettyprinter.Render.Terminal,

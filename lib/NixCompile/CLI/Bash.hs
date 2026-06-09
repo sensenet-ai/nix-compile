@@ -30,8 +30,8 @@ import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
 import NixCompile.Lint.Forbidden (findViolations, violationDiagnostic)
 import NixCompile.Log
-import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Schema.Build (validateConfigPaths)
+import NixCompile.Syntax.Parse qualified as Nix
 import NixCompile.Types (Fact (BareCommand, DynamicCommand))
 
 checkBashFile :: Config.Config -> FilePath -> AppM ()

@@ -23,7 +23,7 @@ import NixCompile.Layout.Convention (
   straylight,
   validateFileFromExpr,
  )
-import NixCompile.Nix.Parse (parseNixFile)
+import NixCompile.Syntax.Parse (parseNixFile)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (takeExtension, (</>))

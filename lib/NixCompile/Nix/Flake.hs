@@ -49,7 +49,7 @@ import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
 import NixCompile.Nix.Inference (inferExpr)
 import NixCompile.Nix.Types
-import NixCompile.Nix.Utils (varNameText, pattern Layer)
+import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 

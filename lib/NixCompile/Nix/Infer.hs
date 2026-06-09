@@ -31,9 +31,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Nix.Inference (Binding (..), InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
-import NixCompile.Nix.Parse (parseNix, parseNixFile)
 import NixCompile.Nix.Types (prettyType)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Parse (parseNix, parseNixFile)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- | Annotate a file with inferred types using the default (no-import) env.

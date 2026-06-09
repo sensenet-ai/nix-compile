@@ -61,7 +61,7 @@ import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, nullSpan)
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
 import NixCompile.Nix.Types
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- ═════════════════════════════════════════════════════════════════════════════

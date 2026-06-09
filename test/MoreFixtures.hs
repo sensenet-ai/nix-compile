@@ -29,7 +29,7 @@ import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Lint.Nix (NixViolation (..), findNixViolations)
 import NixCompile.Lint.Nix qualified as NixLint
-import NixCompile.Nix.Parse (BashScript (..), extractBashScripts, parseNixFile)
+import NixCompile.Syntax.Parse (BashScript (..), extractBashScripts, parseNixFile)
 import NixCompile.Types (Fact (..))
 import System.Exit (exitFailure, exitSuccess)
 

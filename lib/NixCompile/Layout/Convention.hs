@@ -73,7 +73,7 @@ import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import NixCompile.Layout.ModuleKind
-import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Span)
 import System.FilePath (makeRelative, splitDirectories, takeFileName)
 

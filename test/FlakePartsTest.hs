@@ -25,7 +25,7 @@ import Control.Monad (forM)
 import Data.Text.IO qualified as TIO
 import NixCompile (parseScript)
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
-import NixCompile.Nix.Parse (parseNixFile)
+import NixCompile.Syntax.Parse (parseNixFile)
 import System.Directory (listDirectory)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (takeExtension, (</>))

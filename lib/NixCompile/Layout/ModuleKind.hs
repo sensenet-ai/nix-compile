@@ -65,8 +65,8 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import NixCompile.Nix.Parse (parseNix)
-import NixCompile.Nix.Utils (pattern Layer)
+import NixCompile.Syntax.Annotation (pattern Layer)
+import NixCompile.Syntax.Parse (parseNix)
 import System.FilePath (takeFileName)
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════

@@ -29,7 +29,7 @@ import Katip (Severity (ErrorS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import NixCompile.Diagnostic (Diagnostic (..))
-import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 {- | A lint violation as a unified 'Diagnostic': the rule code, a one-line

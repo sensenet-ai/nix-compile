@@ -38,9 +38,9 @@ import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Log
 import NixCompile.Nix.Formatter qualified as Formatter
 import NixCompile.Nix.Infer qualified as Annotate
-import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Parse qualified as Nix
 
 cmdCheck :: Config.Config -> FilePath -> AppM ()
 cmdCheck config path = do

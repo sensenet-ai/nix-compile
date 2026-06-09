@@ -17,7 +17,7 @@
 --                                                   // coordinate // transforms
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Utils (
+module NixCompile.Syntax.Annotation (
   -- * AST views
   pattern Layer,
   pattern LayerAnn,

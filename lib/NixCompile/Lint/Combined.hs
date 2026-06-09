@@ -42,8 +42,8 @@ import NixCompile.Lint.Patterns (
   PatternViolation (..),
   PatternViolationType (VAttrTranslation, VOrNullFallback),
  )
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
+import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 
 data LintBundle = LintBundle
   { lbNix :: ![NixViolation]

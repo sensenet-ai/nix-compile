@@ -86,7 +86,7 @@ import Nix.Expr.Types hiding (Binding, SourcePos)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
-import NixCompile.Nix.Utils (pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Annotation (pattern Layer, pattern LayerAnn)
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                     // core // types

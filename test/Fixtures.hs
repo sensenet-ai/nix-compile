@@ -28,7 +28,7 @@ import NixCompile (Schema (..), Script (..), parseScript)
 import NixCompile.Layout.Convention (ErrorCode (..), LayoutError (..), validateFileExpr)
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Nix.Inference (inferFile)
-import NixCompile.Nix.Parse (parseNixFile)
+import NixCompile.Syntax.Parse (parseNixFile)
 import NixCompile.Types (Fact (..))
 import System.Exit (exitFailure, exitSuccess)
 
