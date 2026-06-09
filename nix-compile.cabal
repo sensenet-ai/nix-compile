@@ -83,6 +83,7 @@ library
         NixCompile.Inference.Nix.Constraint
         NixCompile.Inference.Nix.Environment
         NixCompile.Inference.Nix.Lib
+        NixCompile.Inference.Nix.Scheme
         NixCompile.Layout.Convention
         NixCompile.Lint.Nix
         NixCompile.Lint.Combined

@@ -61,6 +61,7 @@ import Nix.Utils qualified as Nix
 import NixCompile.Inference.Nix.Builtins
 import NixCompile.Inference.Nix.Constraint
 import NixCompile.Inference.Nix.Environment
+import NixCompile.Inference.Nix.Scheme
 import NixCompile.Inference.Nix.Type
 import NixCompile.Inference.Nix.Unify
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
@@ -69,15 +70,6 @@ import NixCompile.Types (Loc (..), Span (..))
 -- ═════════════════════════════════════════════════════════════════════════════
 -- instantiation
 -- ═════════════════════════════════════════════════════════════════════════════
-
-{- | instantiate a polymorphic scheme by replacing each quantified var with a fresh type var
-this is HM-style let-polymorphism: each use-site gets its own copy
--}
-instantiate :: Scheme -> Infer NixType
-instantiate (Forall vars t) = do
-  freshVars <- mapM (const freshVar) vars
-  let subst = Map.fromList (zip vars freshVars)
-  pure $ applySubst subst t
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- inference: expression-level helpers
@@ -767,24 +759,6 @@ paramDefaults :: Params NExprLoc -> [Text]
 paramDefaults (Param _) = []
 paramDefaults (ParamSet _ _ formals) =
   concat [collectFreeVars e | (_, Just e) <- formals]
-
-{- | generalize (close over) free type vars not free in the environment
-this implements HM let-polymorphism: only quantify vars the env doesn't mention
--}
-generalize :: TypeEnv -> NixType -> Infer Scheme
-generalize environment t = do
-  t' <- applyCurrentSubst t
-  envSchemes <- mapM applyCurrentSubstScheme (Map.elems (envBindings environment))
-  let freeInEnv = Set.unions (map freeTypeVarsScheme envSchemes)
-  let freeInT = freeTypeVars t'
-  let vars = Set.toList (freeInT `Set.difference` freeInEnv)
-  pure $ Forall vars t'
-
--- | apply current subst to all type variables in a scheme
-applyCurrentSubstScheme :: Scheme -> Infer Scheme
-applyCurrentSubstScheme s = do
-  subst <- gets inferSubst
-  pure $ applySubstScheme subst s
 
 -- | map NAton to the corresponding NixType
 atomType :: NAtom -> NixType
