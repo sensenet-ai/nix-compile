@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -55,12 +54,11 @@ data Diagnostic = Diagnostic
   deriving (Eq, Show)
 
 severityWord :: Severity -> Text
-severityWord = \case
-  DebugS -> "debug"
-  InfoS -> "note"
-  WarningS -> "warning"
-  ErrorS -> "error"
-  _ -> "note"
+severityWord DebugS = "debug"
+severityWord InfoS = "note"
+severityWord WarningS = "warning"
+severityWord ErrorS = "error"
+severityWord _ = "note"
 
 tshow :: Int -> Text
 tshow = T.pack . show
@@ -87,44 +85,38 @@ renderDiagnostic color d =
   sty codes t
     | color = "\ESC[" <> codes <> "m" <> t <> "\ESC[0m"
     | otherwise = t
-  sevCodes = case diagSeverity d of
-    ErrorS -> "1;31" -- bold red
-    WarningS -> "1;33" -- bold yellow
-    DebugS -> "1;36" -- bold cyan
-    _ -> "1;36"
+  sevCodes = codesFor (diagSeverity d)
+  codesFor ErrorS = "1;31" -- bold red
+  codesFor WarningS = "1;33" -- bold yellow
+  codesFor DebugS = "1;36" -- bold cyan
+  codesFor _ = "1;36"
   sev = sty sevCodes
   bold = sty "1"
   blue = sty "1;34" -- gutter / arrow / `=`
   header = sev (severityWord (diagSeverity d) <> codePart) <> bold (": " <> diagSummary d)
   codePart = maybe "" (\c -> "[" <> c <> "]") (diagCode d)
 
-  gutterW = case diagSnippet d of
-    Just s -> T.length (tshow (snLine s))
-    Nothing -> case diagSpan d of
-      Just sp -> T.length (tshow (locLine (spanStart sp)))
-      Nothing -> 1
+  gutterW = maybe (maybe 1 (T.length . tshow . locLine . spanStart) (diagSpan d)) (T.length . tshow . snLine) (diagSnippet d)
   pad n = T.replicate (max 0 n) " "
   bar = blue (pad gutterW <> " |")
 
-  locLines = case diagSpan d of
-    Nothing -> []
-    Just sp ->
-      [ pad gutterW
-          <> blue "--> "
-          <> T.pack (stripDot (fromMaybe "<input>" (spanFile sp)))
-          <> ":"
-          <> tshow (locLine (spanStart sp))
-          <> ":"
-          <> tshow (locCol (spanStart sp))
-      ]
+  locLines = maybe [] locFor (diagSpan d)
+  locFor sp =
+    [ pad gutterW
+        <> blue "--> "
+        <> T.pack (stripDot (fromMaybe "<input>" (spanFile sp)))
+        <> ":"
+        <> tshow (locLine (spanStart sp))
+        <> ":"
+        <> tshow (locCol (spanStart sp))
+    ]
   stripDot p = fromMaybe p (stripPrefix "./" p)
 
-  snippetBlock = case diagSnippet d of
-    Nothing -> []
-    Just s ->
-      [ bar
-      , blue (T.justifyRight gutterW ' ' (tshow (snLine s)) <> " |") <> " " <> snText s
-      , bar <> " " <> pad (snCol s - 1) <> sev (T.replicate (max 1 (snWidth s)) "^")
-      ]
+  snippetBlock = maybe [] snippetFor (diagSnippet d)
+  snippetFor s =
+    [ bar
+    , blue (T.justifyRight gutterW ' ' (tshow (snLine s)) <> " |") <> " " <> snText s
+    , bar <> " " <> pad (snCol s - 1) <> sev (T.replicate (max 1 (snWidth s)) "^")
+    ]
 
   helpLines = map (\h -> blue (pad gutterW <> " =") <> " " <> bold "help:" <> " " <> h) (diagHelp d)

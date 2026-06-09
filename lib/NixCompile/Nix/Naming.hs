@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -48,15 +48,15 @@ where
 
 import Data.Char (isAlphaNum, isLower, isUpper, toLower, toUpper)
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List (intercalate)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (mapMaybe)
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
+import NixCompile.Nix.Utils (pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -96,50 +96,41 @@ findNamingViolations NoConvention _ = []
 findNamingViolations conv expr = go expr
  where
   go :: NExprLoc -> [NamingViolation]
-  go (Fix (Compose (AnnUnit srcSpan e))) = case e of
-    -- Let bindings: let foo = ...; in ...
-    NLet bindings body ->
-      concatMap (checkBinding conv "let binding" srcSpan) bindings
-        ++ go body
-    -- Attribute set: { foo = ...; bar = ...; }
-    NSet _ bindings ->
-      concatMap (checkBinding conv "attribute" srcSpan) bindings
-    -- Function with pattern: { foo, bar, ... }: ...
-    NAbs (ParamSet _ _ params) body ->
-      mapMaybe (checkParam conv srcSpan) params ++ go body
-    -- Recurse into children
-    NAbs _ body -> go body
-    NWith _ body -> go body
-    NIf cond t f -> go cond ++ go t ++ go f
-    NApp f x -> go f ++ go x
-    NSelect _ e1 _ -> go e1
-    NHasAttr e1 _ -> go e1
-    NList xs -> concatMap go xs
-    NUnary _ e1 -> go e1
-    NBinary _ l r -> go l ++ go r
-    NAssert cond body -> go cond ++ go body
-    _ -> []
+  -- Let bindings: let foo = ...; in ...
+  go (LayerAnn srcSpan (NLet bindings body)) =
+    concatMap (checkBinding conv "let binding" srcSpan) bindings ++ go body
+  -- Attribute set: { foo = ...; bar = ...; }
+  go (LayerAnn srcSpan (NSet _ bindings)) = concatMap (checkBinding conv "attribute" srcSpan) bindings
+  -- Function with pattern: { foo, bar, ... }: ...
+  go (LayerAnn srcSpan (NAbs (ParamSet _ _ params) body)) = mapMaybe (checkParam conv srcSpan) params ++ go body
+  -- Recurse into children
+  go (Layer (NAbs _ body)) = go body
+  go (Layer (NWith _ body)) = go body
+  go (Layer (NIf cond t f)) = go cond ++ go t ++ go f
+  go (Layer (NApp f x)) = go f ++ go x
+  go (Layer (NSelect _ e1 _)) = go e1
+  go (Layer (NHasAttr e1 _)) = go e1
+  go (Layer (NList xs)) = concatMap go xs
+  go (Layer (NUnary _ e1)) = go e1
+  go (Layer (NBinary _ l r)) = go l ++ go r
+  go (Layer (NAssert cond body)) = go cond ++ go body
+  go _ = []
 
 -- | Check a binding name.
 checkBinding :: NamingConvention -> Text -> SrcSpan -> Binding NExprLoc -> [NamingViolation]
-checkBinding conv ctx srcSpan = \case
-  NamedVar (StaticKey name :| []) val _ ->
-    let ident = coerce name :: Text
-        violations = checkIdentifier conv ctx ident (toSpan srcSpan)
-        valViolations = case conv of
-          NoConvention -> []
-          _ -> findNamingViolations conv val
-     in violations ++ valViolations
-  NamedVar _ val _ -> findNamingViolations conv val
-  Inherit _ _ _ -> []
+checkBinding conv ctx srcSpan (NamedVar (StaticKey name :| []) val _) =
+  checkIdentifier conv ctx (coerce name :: Text) (toSpan srcSpan) ++ valViolations
+ where
+  valViolations
+    | NoConvention <- conv = []
+    | otherwise = findNamingViolations conv val
+checkBinding conv _ _ (NamedVar _ val _) = findNamingViolations conv val
+checkBinding _ _ _ (Inherit _ _ _) = []
 
 -- | Check a parameter name.
 checkParam :: NamingConvention -> SrcSpan -> (VarName, Maybe NExprLoc) -> Maybe NamingViolation
 checkParam conv srcSpan (name, _) =
-  let ident = coerce name :: Text
-   in case checkIdentifier conv "parameter" ident (toSpan srcSpan) of
-        (v : _) -> Just v
-        [] -> Nothing
+  listToMaybe (checkIdentifier conv "parameter" (coerce name :: Text) (toSpan srcSpan))
 
 -- | Check a single identifier against the convention.
 checkIdentifier :: NamingConvention -> Text -> Text -> Span -> [NamingViolation]
@@ -320,10 +311,10 @@ toSnakeCase = intercalate "_" . splitWords . map toLower
 
 -- | Convert to camelCase.
 toCamelCase :: String -> String
-toCamelCase s = case splitWords s of
-  [] -> ""
-  (w : ws) -> map toLower w ++ concatMap capitalize ws
+toCamelCase s = camel (splitWords s)
  where
+  camel [] = ""
+  camel (w : ws) = map toLower w ++ concatMap capitalize ws
   capitalize [] = []
   capitalize (c : cs) = toUpper c : map toLower cs
 
@@ -359,9 +350,9 @@ toSpan srcSpan =
    in Span
         { spanStart = Loc (sourceLine begin) (sourceCol begin)
         , spanEnd = Loc (sourceLine end) (sourceCol end)
-        , spanFile = case begin of
-            NSourcePos path _ _ -> Just (coerce path)
+        , spanFile = sourceFile begin
         }
  where
   sourceLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
   sourceCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
+  sourceFile (NSourcePos path _ _) = Just (coerce path)

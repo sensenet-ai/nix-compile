@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -29,6 +28,7 @@ where
 import Data.List (tails)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (listToMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -43,11 +43,9 @@ Reject these prefix conflicts instead of silently dropping one side.
 -}
 validateConfigPaths :: [Fact] -> Either Text ()
 validateConfigPaths facts =
-  case [(a, b) | (a : rest) <- tails paths, b <- rest, conflicts a b] of
-    [] -> Right ()
-    ((a, b) : _) ->
-      Left $ "conflicting config paths: " <> pathText a <> " and " <> pathText b
+  maybe (Right ()) conflict (listToMaybe [(a, b) | (a : rest) <- tails paths, b <- rest, conflicts a b])
  where
+  conflict (a, b) = Left $ "conflicting config paths: " <> pathText a <> " and " <> pathText b
   paths = [p | ConfigAssign p _ _ _ <- facts] ++ [p | ConfigLit p _ _ <- facts] ++ [p | ConfigTemplate p _ _ _ <- facts]
 
   conflicts a b = a /= b && (a `isPrefixOfPath` b || b `isPrefixOfPath` a)
@@ -77,63 +75,61 @@ buildSchema facts subst =
 buildEnvSchema :: [Fact] -> Subst -> Map Text EnvSpec
 buildEnvSchema facts subst = Map.fromListWith mergeEnvSpec (concatMap factToEnvSpec facts)
  where
-  factToEnvSpec = \case
-    DefaultIs variable literal sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) False (Just literal) sourceSpan)]
-    DefaultFrom variable _ sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
-    Required variable sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) True Nothing sourceSpan)]
-    AssignLit variable literal sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) False (Just literal) sourceSpan)]
-    AssignFrom variable _ sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
-    ConfigAssign _ variable _ sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
-    ConfigTemplate _ parts _ sourceSpan ->
-      [ (variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)
-      | variable <- configPartVars parts
-      ]
-    CmdArg _ _ variable sourceSpan ->
-      [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
-    _ -> []
+  factToEnvSpec (DefaultIs variable literal sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) False (Just literal) sourceSpan)]
+  factToEnvSpec (DefaultFrom variable _ sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+  factToEnvSpec (Required variable sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) True Nothing sourceSpan)]
+  factToEnvSpec (AssignLit variable literal sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) False (Just literal) sourceSpan)]
+  factToEnvSpec (AssignFrom variable _ sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+  factToEnvSpec (ConfigAssign _ variable _ sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+  factToEnvSpec (ConfigTemplate _ parts _ sourceSpan) =
+    [ (variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)
+    | variable <- configPartVars parts
+    ]
+  factToEnvSpec (CmdArg _ _ variable sourceSpan) =
+    [(variable, EnvSpec (resolveType subst variable) False Nothing sourceSpan)]
+  factToEnvSpec _ = []
 
 configPartVars :: [ConfigPart] -> [Text]
-configPartVars = concatMap $ \case
-  ConfigVar var -> [var]
-  ConfigVarDefault var _ -> [var]
-  ConfigVarRequired var -> [var]
-  ConfigVarAlternate var _ -> [var]
-  ConfigText _ -> []
+configPartVars = concatMap partVar
+ where
+  partVar (ConfigVar var) = [var]
+  partVar (ConfigVarDefault var _) = [var]
+  partVar (ConfigVarRequired var) = [var]
+  partVar (ConfigVarAlternate var _) = [var]
+  partVar (ConfigText _) = []
 
 -- | Build config schema
 buildConfigSchema :: [Fact] -> Subst -> Map ConfigPath ConfigSpec
 buildConfigSchema facts subst = Map.fromListWith mergeConfigSpec (concatMap factToConfigSpec facts)
  where
-  factToConfigSpec = \case
-    ConfigAssign path variable quoted sourceSpan ->
-      [(path, ConfigSpec (resolveType subst variable) (Just variable) (Just quoted) Nothing Nothing sourceSpan)]
-    ConfigLit path literal sourceSpan ->
-      [(path, ConfigSpec (literalType literal) Nothing Nothing (Just literal) Nothing sourceSpan)]
-    ConfigTemplate path parts quoted sourceSpan ->
-      [(path, ConfigSpec TString Nothing (Just quoted) Nothing (Just parts) sourceSpan)]
-    _ -> []
+  factToConfigSpec (ConfigAssign path variable quoted sourceSpan) =
+    [(path, ConfigSpec (resolveType subst variable) (Just variable) (Just quoted) Nothing Nothing sourceSpan)]
+  factToConfigSpec (ConfigLit path literal sourceSpan) =
+    [(path, ConfigSpec (literalType literal) Nothing Nothing (Just literal) Nothing sourceSpan)]
+  factToConfigSpec (ConfigTemplate path parts quoted sourceSpan) =
+    [(path, ConfigSpec TString Nothing (Just quoted) Nothing (Just parts) sourceSpan)]
+  factToConfigSpec _ = []
 
 -- | Build command schema
 buildCommandSchema :: [Fact] -> [CommandSpec]
 buildCommandSchema facts = concatMap factToCommandSpec facts
  where
-  factToCommandSpec = \case
-    UsesStorePath storePath sourceSpan ->
-      [CommandSpec (extractName storePath) (Just storePath) sourceSpan]
-    BareCommand command sourceSpan ->
-      [CommandSpec command Nothing sourceSpan]
-    _ -> []
+  factToCommandSpec (UsesStorePath storePath sourceSpan) =
+    [CommandSpec (extractName storePath) (Just storePath) sourceSpan]
+  factToCommandSpec (BareCommand command sourceSpan) =
+    [CommandSpec command Nothing sourceSpan]
+  factToCommandSpec _ = []
   extractName :: StorePath -> Text
-  extractName (StorePath path) =
-    case reverse (T.splitOn "/" path) of
-      (command : _) | not (T.null command) -> command
-      _ -> path
+  extractName (StorePath path) = lastSegment (reverse (T.splitOn "/" path))
+   where
+    lastSegment (command : _) | not (T.null command) = command
+    lastSegment _ = path
 
 -- | Collect store paths
 collectStorePaths :: [Fact] -> Set StorePath
@@ -156,17 +152,15 @@ resolveType substitution variable =
 
 -- | Check whether a variable's type was defaulted (unresolved TVar -> TString).
 wasDefaulted :: Subst -> Text -> Bool
-wasDefaulted substitution variable =
-  case applySubst substitution (TVar (TypeVar variable)) of
-    TVar _ -> True
-    _ -> False
+wasDefaulted substitution variable
+  | TVar _ <- applySubst substitution (TVar (TypeVar variable)) = True
+  | otherwise = False
 
 {- | Apply defaults: TNumeric -> TInt, TVar -> TString.
 Unresolved type variables become TString as a conservative default.
 Use 'wasDefaulted' to detect when this occurs.
 -}
 applyDefaults :: Type -> Type
-applyDefaults = \case
-  TNumeric -> TInt
-  TVar _ -> TString
-  typeValue -> typeValue
+applyDefaults TNumeric = TInt
+applyDefaults (TVar _) = TString
+applyDefaults typeValue = typeValue

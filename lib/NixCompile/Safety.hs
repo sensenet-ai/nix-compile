@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -79,18 +78,17 @@ data SafetyError
 instance Exception SafetyError
 
 renderSafetyError :: SafetyError -> Text
-renderSafetyError = \case
-  SafetyDepthExceeded (DepthError d ctx) ->
-    "depth limit exceeded ("
-      <> T.pack (show d)
-      <> " > "
-      <> T.pack (show maxRecursionDepth)
-      <> ") at "
-      <> ctx
-  SafetyParseFailed t -> "parse error: " <> t
-  SafetyStackOverflow -> "stack overflow — input too deeply nested for parser"
-  SafetyInternalException t -> "internal exception: " <> t
-  SafetyIOError t -> "I/O error: " <> t
+renderSafetyError (SafetyDepthExceeded (DepthError d ctx)) =
+  "depth limit exceeded ("
+    <> T.pack (show d)
+    <> " > "
+    <> T.pack (show maxRecursionDepth)
+    <> ") at "
+    <> ctx
+renderSafetyError (SafetyParseFailed t) = "parse error: " <> t
+renderSafetyError SafetyStackOverflow = "stack overflow — input too deeply nested for parser"
+renderSafetyError (SafetyInternalException t) = "internal exception: " <> t
+renderSafetyError (SafetyIOError t) = "I/O error: " <> t
 
 -- ── depth analysis ────────────────────────────────────────────────
 -- Walks EVERY Fix unwrap. Cannot be bypassed by NWith/NStr/NSynHole.
@@ -108,26 +106,25 @@ analyzeDepthWith limit = go 0
     | otherwise = walk (d + 1) expr
 
   walk :: Int -> NExprF NExprLoc -> Either DepthError ()
-  walk d = \case
-    NConstant _ -> Right ()
-    NSym _ -> Right ()
-    NLiteralPath _ -> Right ()
-    NEnvPath _ -> Right ()
-    NSynHole _ -> Right ()
-    NStr (DoubleQuoted parts) -> mapM_ (goAnti d) parts
-    NStr (Indented _ parts) -> mapM_ (goAnti d) parts
-    NList xs -> mapM_ (go d) xs
-    NSet _ bs -> mapM_ (goBinding d) bs
-    NLet bs body -> mapM_ (goBinding d) bs >> go d body
-    NIf c t e -> go d c >> go d t >> go d e
-    NWith s b -> go d s >> go d b
-    NAssert c b -> go d c >> go d b
-    NAbs p b -> goParams d p >> go d b
-    NApp f a -> go d f >> go d a
-    NSelect alt b path -> go d b >> mapM_ (go d) alt >> goPath d path
-    NHasAttr b path -> go d b >> goPath d path
-    NUnary _ x -> go d x
-    NBinary _ x y -> go d x >> go d y
+  walk _ (NConstant _) = Right ()
+  walk _ (NSym _) = Right ()
+  walk _ (NLiteralPath _) = Right ()
+  walk _ (NEnvPath _) = Right ()
+  walk _ (NSynHole _) = Right ()
+  walk d (NStr (DoubleQuoted parts)) = mapM_ (goAnti d) parts
+  walk d (NStr (Indented _ parts)) = mapM_ (goAnti d) parts
+  walk d (NList xs) = mapM_ (go d) xs
+  walk d (NSet _ bs) = mapM_ (goBinding d) bs
+  walk d (NLet bs body) = mapM_ (goBinding d) bs >> go d body
+  walk d (NIf c t e) = go d c >> go d t >> go d e
+  walk d (NWith s b) = go d s >> go d b
+  walk d (NAssert c b) = go d c >> go d b
+  walk d (NAbs p b) = goParams d p >> go d b
+  walk d (NApp f a) = go d f >> go d a
+  walk d (NSelect alt b path) = go d b >> mapM_ (go d) alt >> goPath d path
+  walk d (NHasAttr b path) = go d b >> goPath d path
+  walk d (NUnary _ x) = go d x
+  walk d (NBinary _ x y) = go d x >> go d y
 
   goAnti d (Antiquoted e) = go d e
   goAnti _ _ = Right ()
@@ -146,26 +143,25 @@ analyzeDepthWith limit = go 0
 
   toList' (k :| ks) = k : ks
 
-  constructorTag = \case
-    NSet _ _ -> "attrset"
-    NList _ -> "list"
-    NApp _ _ -> "application"
-    NLet _ _ -> "let"
-    NWith _ _ -> "with"
-    NIf _ _ _ -> "if"
-    NStr (DoubleQuoted _) -> "string interpolation"
-    NStr (Indented _ _) -> "indented-string interpolation"
-    NAbs _ _ -> "lambda"
-    NBinary _ _ _ -> "binary operator"
-    NUnary _ _ -> "unary operator"
-    NSelect _ _ _ -> "attribute select"
-    NHasAttr _ _ -> "attribute test"
-    NAssert _ _ -> "assertion"
-    NSynHole _ -> "syntax hole"
-    NConstant _ -> "constant"
-    NSym _ -> "symbol"
-    NLiteralPath _ -> "path"
-    NEnvPath _ -> "env path"
+  constructorTag (NSet _ _) = "attrset"
+  constructorTag (NList _) = "list"
+  constructorTag (NApp _ _) = "application"
+  constructorTag (NLet _ _) = "let"
+  constructorTag (NWith _ _) = "with"
+  constructorTag (NIf _ _ _) = "if"
+  constructorTag (NStr (DoubleQuoted _)) = "string interpolation"
+  constructorTag (NStr (Indented _ _)) = "indented-string interpolation"
+  constructorTag (NAbs _ _) = "lambda"
+  constructorTag (NBinary _ _ _) = "binary operator"
+  constructorTag (NUnary _ _) = "unary operator"
+  constructorTag (NSelect _ _ _) = "attribute select"
+  constructorTag (NHasAttr _ _) = "attribute test"
+  constructorTag (NAssert _ _) = "assertion"
+  constructorTag (NSynHole _) = "syntax hole"
+  constructorTag (NConstant _) = "constant"
+  constructorTag (NSym _) = "symbol"
+  constructorTag (NLiteralPath _) = "path"
+  constructorTag (NEnvPath _) = "env path"
 
 -- ── exception-safe wrappers ───────────────────────────────────────
 -- Every parse/IO call goes through one of these. They catch StackOverflow
@@ -178,10 +174,9 @@ safeIO = safeIOWith mempty
 safeIOWith :: Text -> IO a -> IO (Either SafetyError a)
 safeIOWith prefix action = do
   result <- try (action >>= evaluate)
-  pure $ case result of
-    Right v -> Right v
-    Left (e :: SomeException) -> Left (classify prefix e)
+  pure $ either onErr Right result
  where
+  onErr (e :: SomeException) = Left (classify prefix e)
   classify pfx e
     | Just Exc.StackOverflow <- fromException e = SafetyStackOverflow
     | Just (ioe :: IOError) <- fromException e
@@ -199,19 +194,13 @@ safeReadFile path = safeIOWith (T.pack path <> ": ") (TIO.readFile path)
 safeParseNixText :: Text -> IO (Either SafetyError NExprLoc)
 safeParseNixText src = do
   r <- safeIO (evaluate (parseNixTextLoc src))
-  pure $ case r of
-    Left e -> Left e
-    Right (Left doc) -> Left (SafetyParseFailed (T.pack (show doc)))
-    Right (Right expr) -> Right expr
+  pure $ either Left (either (Left . SafetyParseFailed . T.pack . show) Right) r
 
 -- | safely parse a Nix file; catches stack overflows, missing files, parse errors.
 safeParseNixFile :: FilePath -> IO (Either SafetyError NExprLoc)
 safeParseNixFile path = do
   r <- safeIO (parseNixFileLoc (Path path))
-  pure $ case r of
-    Left e -> Left e
-    Right (Left doc) -> Left (SafetyParseFailed (T.pack (show doc)))
-    Right (Right expr) -> Right expr
+  pure $ either Left (either (Left . SafetyParseFailed . T.pack . show) Right) r
 
 -- ── combined: parse + depth ──────────────────────────────────────
 
@@ -220,6 +209,4 @@ Every public entry point should funnel through this (or 'analyzeDepth' if the
 AST is already in hand).
 -}
 safeAnalyze :: NExprLoc -> Either SafetyError NExprLoc
-safeAnalyze expr = case analyzeDepth expr of
-  Left de -> Left (SafetyDepthExceeded de)
-  Right () -> Right expr
+safeAnalyze expr = either (Left . SafetyDepthExceeded) (const (Right expr)) (analyzeDepth expr)

@@ -1,6 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -65,8 +65,6 @@ import Control.Exception (SomeException, try)
 import Control.Monad (forM_, replicateM, unless)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as BS
-import Data.Fix (Fix (..))
-import Data.Functor.Compose (Compose (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -77,7 +75,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import GHC.Conc (getNumCapabilities)
 import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
-import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
+import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Utils qualified as NixUtils
 import NixCompile.Nix.Inference (
   TypeEnv (..),
@@ -86,7 +84,7 @@ import NixCompile.Nix.Inference (
   inferExprWithEnv,
  )
 import NixCompile.Nix.Types (NixType (..))
-import NixCompile.Nix.Utils (varNameText)
+import NixCompile.Nix.Utils (varNameText, pattern Layer)
 import NixCompile.Safety qualified as Safety
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, takeDirectory, (</>))
@@ -205,51 +203,45 @@ processFile pc fp = do
   exists <- doesFileExist fp
   unless (not exists) $ do
     srcResult <- Safety.safeReadFile fp
-    case srcResult of
-      Left _ -> pure () -- IO failure; leave any existing entry alone
-      Right src -> do
-        let h = SHA256.hash (TE.encodeUtf8 src)
-        existing <- atomically $ Map.lookup fp <$> readTVar (pcFiles pc)
-        case existing of
-          Just e
-            | feStatus e == Fresh && feHash e == h ->
-                pure () -- already have a fresh entry for this content
-          _ -> recompute pc fp src h
+    -- Left: IO failure; leave any existing entry alone.
+    either (const (pure ())) fromSrc srcResult
  where
+  fromSrc src = do
+    let h = SHA256.hash (TE.encodeUtf8 src)
+    existing <- atomically $ Map.lookup fp <$> readTVar (pcFiles pc)
+    if maybe False (\e -> feStatus e == Fresh && feHash e == h) existing
+      then pure () -- already have a fresh entry for this content
+      else recompute pc fp src h
+
   recompute pcArg fpArg src h = do
     parseRes <- Safety.safeParseNixText src
-    case parseRes of
-      Left _ -> pure ()
-      Right expr -> case Safety.analyzeDepth expr of
-        Left _ -> pure ()
-        Right () -> do
-          let baseDir = takeDirectory fpArg
-          let imports = collectImports baseDir expr
-          canonImports <- mapM canonicalizePath imports
-          env <- envFromImports pcArg canonImports
-          let resultType = case inferExprWithEnv env expr of
-                Right (t, _) -> t
-                Left _ -> TAny
-          let entry =
-                FileEntry
-                  { feExpr = expr
-                  , feType = resultType
-                  , feImports = canonImports
-                  , feHash = h
-                  , feStatus = Fresh
-                  }
-          updateCache pcArg fpArg entry
-          -- BFS: enqueue any imports we don't yet have entries for
-          forM_ canonImports (enqueueFile pcArg)
+    either (const (pure ())) afterParse parseRes
+   where
+    afterParse expr = either (const (pure ())) (const (afterDepth expr)) (Safety.analyzeDepth expr)
+    afterDepth expr = do
+      let baseDir = takeDirectory fpArg
+      let imports = collectImports baseDir expr
+      canonImports <- mapM canonicalizePath imports
+      env <- envFromImports pcArg canonImports
+      let resultType = either (const TAny) fst (inferExprWithEnv env expr)
+      let entry =
+            FileEntry
+              { feExpr = expr
+              , feType = resultType
+              , feImports = canonImports
+              , feHash = h
+              , feStatus = Fresh
+              }
+      updateCache pcArg fpArg entry
+      -- BFS: enqueue any imports we don't yet have entries for
+      forM_ canonImports (enqueueFile pcArg)
 
 -- | Update both pcFiles and the reverse-dependency map atomically.
 updateCache :: ProjectCache -> FilePath -> FileEntry -> IO ()
 updateCache pc fp entry = atomically $ do
   -- Look up the prior entry so we can compute reverse-dep delta.
   oldFiles <- readTVar (pcFiles pc)
-  let oldImports = case Map.lookup fp oldFiles of
-        Just e -> Set.fromList (feImports e)
-        Nothing -> Set.empty
+  let oldImports = maybe Set.empty (Set.fromList . feImports) (Map.lookup fp oldFiles)
   let newImports = Set.fromList (feImports entry)
   -- Edges removed: stop tracking fp as a reverse-dep of those files.
   let removed = Set.difference oldImports newImports
@@ -270,15 +262,10 @@ them, but we don't block waiting).
 envFromImports :: ProjectCache -> [FilePath] -> IO TypeEnv
 envFromImports pc imports = do
   files <- atomically (readTVar (pcFiles pc))
-  let env =
-        foldr
-          ( \fp acc -> case Map.lookup fp files of
-              Just e | feStatus e == Fresh -> extendImport fp (feType e) acc
-              _ -> acc
-          )
-          builtinEnv
-          imports
-  pure env
+  let addImport fp acc
+        | Just e <- Map.lookup fp files, feStatus e == Fresh = extendImport fp (feType e) acc
+        | otherwise = acc
+  pure (foldr addImport builtinEnv imports)
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Public API
@@ -292,9 +279,10 @@ lookupFile :: ProjectCache -> FilePath -> IO (Maybe FileEntry)
 lookupFile pc fp = do
   canon <- canonicalizePath fp
   files <- atomically (readTVar (pcFiles pc))
-  pure $ case Map.lookup canon files of
-    Just e | feStatus e == Fresh -> Just e
-    _ -> Nothing
+  pure $ freshOnly (Map.lookup canon files)
+ where
+  freshOnly (Just e) | feStatus e == Fresh = Just e
+  freshOnly _ = Nothing
 
 snapshotFiles :: ProjectCache -> IO (Map FilePath FileEntry)
 snapshotFiles pc = atomically (readTVar (pcFiles pc))
@@ -311,17 +299,10 @@ buildEnvForFile pc fp = do
   -- Collect (canonical-path, raw-import-path-as-written) pairs for any
   -- import entries we have, and extend the env via 'extendImport' so that
   -- both keying conventions hit.
-  let env = case Map.lookup canon files of
-        Nothing -> builtinEnv
-        Just e ->
-          foldr
-            ( \impFp acc -> case Map.lookup impFp files of
-                Just ie | feStatus ie == Fresh -> extendImport impFp (feType ie) acc
-                _ -> acc
-            )
-            builtinEnv
-            (feImports e)
-  pure env
+  let addImport impFp acc
+        | Just ie <- Map.lookup impFp files, feStatus ie == Fresh = extendImport impFp (feType ie) acc
+        | otherwise = acc
+  pure $ maybe builtinEnv (\e -> foldr addImport builtinEnv (feImports e)) (Map.lookup canon files)
 
 {- | Enqueue a file for processing. If it's already in the queue (or in flight,
 or fresh), this is a no-op. Canonicalises the path before queueing.
@@ -332,9 +313,7 @@ enqueueFile pc fp = do
   atomically $ do
     files <- readTVar (pcFiles pc)
     inflight <- readTVar (pcInflight pc)
-    let alreadyFresh = case Map.lookup canon files of
-          Just e -> feStatus e == Fresh
-          Nothing -> False
+    let alreadyFresh = maybe False ((== Fresh) . feStatus) (Map.lookup canon files)
         inFlight = Set.member canon inflight
     unless (alreadyFresh || inFlight) $
       writeTQueue (pcQueue pc) canon
@@ -420,38 +399,34 @@ statsOf pc = atomically $ do
 collectImports :: FilePath -> NExprLoc -> [FilePath]
 collectImports baseDir = goExpr
  where
-  goExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
-    NApp f a -> processApp f a ++ goExpr f ++ goExpr a
-    NList xs -> concatMap goExpr xs
-    NSet _ bs -> concatMap goBinding bs
-    NLet bs body -> concatMap goBinding bs ++ goExpr body
-    NIf c t e -> goExpr c ++ goExpr t ++ goExpr e
-    NWith s b -> goExpr s ++ goExpr b
-    NAssert c b -> goExpr c ++ goExpr b
-    NAbs _ b -> goExpr b
-    NSelect _ b _ -> goExpr b
-    NBinary _ l r -> goExpr l ++ goExpr r
-    NUnary _ x -> goExpr x
-    _ -> []
+  goExpr (Layer (NApp f a)) = processApp f a ++ goExpr f ++ goExpr a
+  goExpr (Layer (NList xs)) = concatMap goExpr xs
+  goExpr (Layer (NSet _ bs)) = concatMap goBinding bs
+  goExpr (Layer (NLet bs body)) = concatMap goBinding bs ++ goExpr body
+  goExpr (Layer (NIf c t e)) = goExpr c ++ goExpr t ++ goExpr e
+  goExpr (Layer (NWith s b)) = goExpr s ++ goExpr b
+  goExpr (Layer (NAssert c b)) = goExpr c ++ goExpr b
+  goExpr (Layer (NAbs _ b)) = goExpr b
+  goExpr (Layer (NSelect _ b _)) = goExpr b
+  goExpr (Layer (NBinary _ l r)) = goExpr l ++ goExpr r
+  goExpr (Layer (NUnary _ x)) = goExpr x
+  goExpr _ = []
 
   goBinding (NamedVar _ e _) = goExpr e
   goBinding (Inherit (Just s) _ _) = goExpr s
   goBinding (Inherit Nothing _ _) = []
 
-  processApp f a = case isImportCall f of
-    True -> case extractPath a of
-      Just p -> [resolvePath baseDir (T.unpack p)]
-      Nothing -> []
-    False -> []
+  processApp f a
+    | isImportCall f = maybe [] (\p -> [resolvePath baseDir (T.unpack p)]) (extractPath a)
+    | otherwise = []
 
-  isImportCall (Fix (Compose (AnnUnit _ (NSym n)))) = varNameText n == ("import" :: Text)
-  isImportCall (Fix (Compose (AnnUnit _ (NSelect _ _ attrs))))
+  isImportCall (Layer (NSym n)) = varNameText n == ("import" :: Text)
+  isImportCall (Layer (NSelect _ _ attrs))
     | StaticKey k NE.:| _ <- attrs = varNameText k == ("import" :: Text)
   isImportCall _ = False
 
-  extractPath (Fix (Compose (AnnUnit _ e))) = case e of
-    NLiteralPath (NixUtils.Path p) -> Just (T.pack p)
-    _ -> Nothing
+  extractPath (Layer (NLiteralPath (NixUtils.Path p))) = Just (T.pack p)
+  extractPath _ = Nothing
 
   resolvePath base p
     | take 1 p == "/" = p
