@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                   // nix // formatter
+--                                                 // syntax // format
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "A year here and he still dreamed of cyberspace, hope fading nightly."
@@ -22,7 +22,7 @@
 --   safety/depth gate. Defaults match `nixfmt -`: width 100, indent 2, non-strict.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Formatter (
+module NixCompile.Syntax.Format (
   formatNix,
   formatNixFile,
 )

@@ -73,8 +73,8 @@ import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolat
 import NixCompile.Lint.Nix
 import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
-import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Syntax.Effect
+import NixCompile.Syntax.Format (formatNixFile)
 import ProjectCacheSpec qualified
 import Psychotic qualified
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)

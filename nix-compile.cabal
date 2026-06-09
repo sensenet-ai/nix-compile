@@ -77,7 +77,7 @@ library
         NixCompile.LSP.Server
         NixCompile.Inference.Nix
         NixCompile.Syntax.Effect
-        NixCompile.Nix.Flake
+        NixCompile.Flake
         NixCompile.Inference.Nix.Annotate
         NixCompile.Inference.Nix.Builtins
         NixCompile.Inference.Nix.Constraint
@@ -95,7 +95,7 @@ library
         NixCompile.Layout.ModuleSystem
         NixCompile.Layout.Naming
         NixCompile.Syntax.Parse
-        NixCompile.Nix.Formatter
+        NixCompile.Syntax.Format
         NixCompile.Layout.Scope
         NixCompile.Inference.Nix.Type
         NixCompile.Inference.Nix.Unify
