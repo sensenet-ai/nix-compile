@@ -64,9 +64,10 @@ parseBashWithFilename filename sourceText =
           , psScript = T.unpack sourceText
           }
       result = runIdentity $ parseScript sysInterface parseSpec
-   in case prRoot result of
-        Just astRoot -> Right $ BashAST astRoot (prTokenPositions result)
-        Nothing -> Left $ T.pack $ "Parse errors: " ++ show (length (prComments result))
+   in maybe
+        (Left $ T.pack $ "Parse errors: " ++ show (length (prComments result)))
+        (\astRoot -> Right $ BashAST astRoot (prTokenPositions result))
+        (prRoot result)
  where
   sysInterface :: SystemInterface Identity
   sysInterface =
@@ -81,10 +82,8 @@ that try @IOException misses.
 parseBashFile :: FilePath -> IO (Either Text BashAST)
 parseBashFile path = do
   readResult <- Safety.safeReadFile path
-  case readResult of
-    Left e -> pure $ Left $ Safety.renderSafetyError e
-    Right content -> do
-      parseAttempt <- Safety.safeIO (pure (parseBashWithFilename path content))
-      case parseAttempt of
-        Left e -> pure $ Left $ Safety.renderSafetyError e
-        Right res -> pure res
+  either (pure . Left . Safety.renderSafetyError) fromContent readResult
+ where
+  fromContent content = do
+    parseAttempt <- Safety.safeIO (pure (parseBashWithFilename path content))
+    either (pure . Left . Safety.renderSafetyError) pure parseAttempt

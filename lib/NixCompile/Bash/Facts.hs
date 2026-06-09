@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -56,17 +55,18 @@ traverseTokens (SA.OuterToken shellCheckId innerToken) = do
 factFromInnerToken :: SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Fact]
 factFromInnerToken shellCheckId innerToken = do
   sourceSpan <- mkSpan shellCheckId
-  case innerToken of
-    SA.Inner_T_Assignment _ name indices value ->
-      pure $ factFromAssignment sourceSpan (assignmentLhs name indices) value
-    SA.Inner_T_SimpleCommand assigns commandWords ->
-      factFromCommand sourceSpan assigns commandWords
-    SA.Inner_T_Pipeline _ _ -> factFromPipeline sourceSpan
-    SA.Inner_T_Subshell _ -> factFromSubshell sourceSpan
-    SA.Inner_T_Redirecting _ _ -> factFromRedirect sourceSpan
-    SA.Inner_T_IoFile _ _ -> factFromRedirect sourceSpan
-    SA.Inner_T_FdRedirect _ _ -> factFromRedirect sourceSpan
-    _ -> pure []
+  dispatch sourceSpan innerToken
+ where
+  dispatch sourceSpan (SA.Inner_T_Assignment _ name indices value) =
+    pure $ factFromAssignment sourceSpan (assignmentLhs name indices) value
+  dispatch sourceSpan (SA.Inner_T_SimpleCommand assigns commandWords) =
+    factFromCommand sourceSpan assigns commandWords
+  dispatch sourceSpan (SA.Inner_T_Pipeline _ _) = factFromPipeline sourceSpan
+  dispatch sourceSpan (SA.Inner_T_Subshell _) = factFromSubshell sourceSpan
+  dispatch sourceSpan (SA.Inner_T_Redirecting _ _) = factFromRedirect sourceSpan
+  dispatch sourceSpan (SA.Inner_T_IoFile _ _) = factFromRedirect sourceSpan
+  dispatch sourceSpan (SA.Inner_T_FdRedirect _ _) = factFromRedirect sourceSpan
+  dispatch _ _ = pure []
 
 -- ── assignment facts ─────────────────────────────────────────────
 
@@ -87,9 +87,10 @@ assignmentLhs name indices
 
 factFromAssignment :: Span -> Text -> SA.Token -> [Fact]
 factFromAssignment sourceSpan variableName valueToken =
-  case parseConfigArrayAssign variableName of
-    Just configPath -> configArrayFacts sourceSpan configPath valueToken
-    Nothing -> envVarFacts sourceSpan variableName valueToken
+  maybe
+    (envVarFacts sourceSpan variableName valueToken)
+    (\configPath -> configArrayFacts sourceSpan configPath valueToken)
+    (parseConfigArrayAssign variableName)
 
 -- ── command facts ────────────────────────────────────────────────
 
@@ -114,13 +115,12 @@ factFromRedirect _ = pure []
 
 -- | inspect command tokens: config.* commands vs regular command invocations
 commandFacts :: Span -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
-commandFacts sourceSpan tokens = case tokens of
-  [] -> pure []
-  (commandToken : arguments) ->
-    let commandText = tokenToText commandToken
-     in if "config." `T.isPrefixOf` commandText
-          then pure $ configFactsFromToken sourceSpan commandToken
-          else commandInvocationFacts sourceSpan commandText arguments
+commandFacts _ [] = pure []
+commandFacts sourceSpan (commandToken : arguments) =
+  let commandText = tokenToText commandToken
+   in if "config." `T.isPrefixOf` commandText
+        then pure $ configFactsFromToken sourceSpan commandToken
+        else commandInvocationFacts sourceSpan commandText arguments
 
 -- | collect invocation facts: store path usage + argument flag facts
 commandInvocationFacts :: Span -> Text -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
@@ -146,10 +146,11 @@ factFromStorePath sourceSpan command
 -- | extract short command name from a store path (e.g. /nix/store/xxx-curl/bin/curl -> curl)
 resolveCommandName :: Text -> Text
 resolveCommandName path
-  | isStorePath path = case reverse (T.splitOn "/" path) of
-      (name : _) | not (T.null name) -> name
-      _ -> path
+  | isStorePath path = lastSegment (reverse (T.splitOn "/" path))
   | otherwise = path
+ where
+  lastSegment (name : _) | not (T.null name) = name
+  lastSegment _ = path
 
 -- ── argument flag extraction (--flag=$VAR, --flag $VAR) ───────────
 
@@ -161,21 +162,18 @@ extractArgFacts command tokens = loop tokens
  where
   loop [] = pure []
   loop (token : remainingTokens) =
-    case factFromFlagArgument command token of
-      Just getFact -> do
-        sourceSpan <- mkSpan (tokenId token)
-        restFacts <- loop remainingTokens
-        pure (getFact sourceSpan : restFacts)
-      Nothing ->
-        case remainingTokens of
-          (valueToken : restAfterValue) ->
-            case factFromFlagValuePair command token valueToken of
-              Just getFact -> do
-                sourceSpan <- mkSpan (tokenId token)
-                restFacts <- loop restAfterValue
-                pure (getFact sourceSpan : restFacts)
-              Nothing -> loop remainingTokens
-          [] -> pure []
+    maybe afterFlag (emitWith remainingTokens) (factFromFlagArgument command token)
+   where
+    -- both the same-token (--flag=$VAR) and adjacent-token (--flag $VAR) emits
+    -- carry the FLAG token's span; only the tail to recurse on differs.
+    emitWith rest getFact = do
+      sourceSpan <- mkSpan (tokenId token)
+      restFacts <- loop rest
+      pure (getFact sourceSpan : restFacts)
+    afterFlag = pairCase remainingTokens
+    pairCase (valueToken : restAfterValue) =
+      maybe (loop remainingTokens) (emitWith restAfterValue) (factFromFlagValuePair command token valueToken)
+    pairCase [] = pure []
 
   tokenId (SA.OuterToken tokenId' _) = tokenId'
 
@@ -187,23 +185,19 @@ factFromFlagArgument command token =
   let text = tokenToText token
       (flag, eqRest) = T.breakOn "=" text
    in if isFlag flag && not (T.null eqRest)
-        then case extractVarRef (T.drop 1 eqRest) of
-          Just variableName -> Just (\sourceSpan -> CmdArg command flag variableName sourceSpan)
-          Nothing -> Nothing
+        then fmap (CmdArg command flag) (extractVarRef (T.drop 1 eqRest))
         else Nothing
  where
   isFlag f = "-" `T.isPrefixOf` f
 
 -- | detect --flag $VAR across two adjacent tokens
 factFromFlagValuePair :: Text -> SA.Token -> SA.Token -> Maybe (Span -> Fact)
-factFromFlagValuePair command flagToken valueToken =
-  let flagText = tokenToText flagToken
-      valueText = tokenToText valueToken
-   in case extractVarRef valueText of
-        Just variableName
-          | isFlag flagText -> Just (\sourceSpan -> CmdArg command flagText variableName sourceSpan)
-        _ -> Nothing
+factFromFlagValuePair command flagToken valueToken
+  | isFlag flagText, Just variableName <- extractVarRef valueText = Just (CmdArg command flagText variableName)
+  | otherwise = Nothing
  where
+  flagText = tokenToText flagToken
+  valueText = tokenToText valueToken
   isFlag f = "-" `T.isPrefixOf` f
 
 -- ── config[path.to.key] syntax ───────────────────────────────────
@@ -222,70 +216,60 @@ parseConfigArrayAssign name
 -- | extract facts from a config[...]=value assignment
 configArrayFacts :: Span -> ConfigPath -> SA.Token -> [Fact]
 configArrayFacts sourceSpan configPath valueToken =
-  let valueText = tokenToText valueToken
-      quoted = isQuotedToken valueToken
-   in case extractVarRef valueText of
-        Just variable -> [ConfigAssign configPath variable quoted sourceSpan]
-        Nothing
-          | "${" `T.isInfixOf` valueText ->
-              case parseConfigTemplate valueText of
-                Just parts -> [ConfigTemplate configPath parts quoted sourceSpan]
-                Nothing -> [ConfigLit configPath (parseLiteral valueText) sourceSpan]
-          | otherwise -> [ConfigLit configPath (parseLiteral valueText) sourceSpan]
+  maybe noVar withVar (extractVarRef valueText)
+ where
+  valueText = tokenToText valueToken
+  quoted = isQuotedToken valueToken
+  withVar variable = [ConfigAssign configPath variable quoted sourceSpan]
+  litFact = [ConfigLit configPath (parseLiteral valueText) sourceSpan]
+  noVar
+    | "${" `T.isInfixOf` valueText =
+        maybe litFact (\parts -> [ConfigTemplate configPath parts quoted sourceSpan]) (parseConfigTemplate valueText)
+    | otherwise = litFact
 
 -- ── quoting detection ────────────────────────────────────────────
 
 -- | determine if a token is quoted or unquoted (for config value semantics)
 isQuotedToken :: SA.Token -> Quoted
-isQuotedToken (SA.OuterToken _ inner) = case inner of
-  SA.Inner_T_DoubleQuoted _ -> Quoted
-  SA.Inner_T_NormalWord [SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)] -> Quoted
-  _ -> Unquoted
+isQuotedToken (SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)) = Quoted
+isQuotedToken (SA.OuterToken _ (SA.Inner_T_NormalWord [SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)])) = Quoted
+isQuotedToken _ = Unquoted
 
 -- ── env var facts: ${var:-default}, ${var:=default}, ${var:?err} ──
 
 -- | extract facts from a regular (non-config) shell variable assignment
 envVarFacts :: Span -> Text -> SA.Token -> [Fact]
 envVarFacts sourceSpan variableName valueToken =
-  case extractParamExpansion valueToken of
-    Just (DefaultValue _var (Just defaultValue)) ->
-      defaultFacts defaultValue
-    Just (AssignDefault _var (Just defaultValue)) ->
-      defaultFacts defaultValue
-    Just (AssignDefault _var Nothing) ->
-      [DefaultIs variableName (LitString "") sourceSpan]
-    Just (DefaultValue _var Nothing) ->
-      [DefaultIs variableName (LitString "") sourceSpan]
-    Just (ErrorIfUnset _var _) ->
-      [Required variableName sourceSpan]
-    Just (SimpleRef variable) ->
-      [AssignFrom variableName variable sourceSpan]
-    Just (UseAlternate _var _) ->
-      []
-    Nothing ->
-      case extractLiteral valueToken of
-        Just lit -> [AssignLit variableName lit sourceSpan]
-        Nothing -> []
+  maybe fromLiteral fromExpansion (extractParamExpansion valueToken)
  where
+  fromExpansion (DefaultValue _var (Just defaultValue)) = defaultFacts defaultValue
+  fromExpansion (AssignDefault _var (Just defaultValue)) = defaultFacts defaultValue
+  fromExpansion (AssignDefault _var Nothing) = [DefaultIs variableName (LitString "") sourceSpan]
+  fromExpansion (DefaultValue _var Nothing) = [DefaultIs variableName (LitString "") sourceSpan]
+  fromExpansion (ErrorIfUnset _var _) = [Required variableName sourceSpan]
+  fromExpansion (SimpleRef variable) = [AssignFrom variableName variable sourceSpan]
+  fromExpansion (UseAlternate _var _) = []
+
+  fromLiteral = maybe [] (\lit -> [AssignLit variableName lit sourceSpan]) (extractLiteral valueToken)
+
   defaultFacts defaultValue =
-    case defaultFromVar defaultValue of
-      Just other -> [DefaultFrom variableName other sourceSpan]
-      Nothing -> [DefaultIs variableName (parseLiteral defaultValue) sourceSpan]
+    maybe
+      [DefaultIs variableName (parseLiteral defaultValue) sourceSpan]
+      (\other -> [DefaultFrom variableName other sourceSpan])
+      (defaultFromVar defaultValue)
 
   -- if the default value is itself a variable reference, emit DefaultFrom
-  defaultFromVar defaultValue =
-    case parseParamExpansion defaultValue of
-      Just (SimpleRef variable) -> Just variable
-      _ -> Nothing
+  defaultFromVar defaultValue
+    | Just (SimpleRef variable) <- parseParamExpansion defaultValue = Just variable
+    | otherwise = Nothing
 
 -- ── config.* command facts ───────────────────────────────────────
 
 -- | extract config assignment facts from a config.* command token
 configFactsFromToken :: Span -> SA.Token -> [Fact]
-configFactsFromToken sourceSpan token@(SA.OuterToken _ innerToken) =
-  case innerToken of
-    SA.Inner_T_NormalWord parts -> configFactsFromParts sourceSpan parts
-    _ -> configFacts sourceSpan (tokenToText token)
+configFactsFromToken sourceSpan (SA.OuterToken _ (SA.Inner_T_NormalWord parts)) =
+  configFactsFromParts sourceSpan parts
+configFactsFromToken sourceSpan token = configFacts sourceSpan (tokenToText token)
 
 -- ── token-part-level config analysis ─────────────────────────────
 
@@ -293,19 +277,18 @@ configFactsFromToken sourceSpan token@(SA.OuterToken _ innerToken) =
 splits on =, validates path, then parses the value side
 -}
 configFactsFromParts :: Span -> [SA.Token] -> [Fact]
-configFactsFromParts sourceSpan tokenParts =
-  case matchedPrefix of
-    Nothing -> []
-    Just pathText
-      | T.null rightHandSide -> []
-      | not (validConfigPath pathParts) -> []
-      | otherwise -> buildConfigFacts pathParts
-     where
-      pathParts = T.splitOn "." pathText
+configFactsFromParts sourceSpan tokenParts = maybe [] fromPrefix matchedPrefix
  where
   combinedText = T.concat (map tokenToText tokenParts)
   (leftHandSide, rightHandSide) = T.breakOn "=" combinedText
   matchedPrefix = T.stripPrefix "config." leftHandSide
+
+  fromPrefix pathText
+    | T.null rightHandSide = []
+    | not (validConfigPath pathParts) = []
+    | otherwise = buildConfigFacts pathParts
+   where
+    pathParts = T.splitOn "." pathText
 
   buildConfigFacts parts =
     map (configValueFact parts quoted sourceSpan) (maybeToList parsed)
@@ -321,11 +304,11 @@ empty token list → text fallback; non-empty → try template / var / dynamic
 selectValueParser :: [SA.Token] -> Text -> Quoted -> Maybe ConfigValueDynamic
 selectValueParser [] rhsText quoted =
   parseConfigValueDynamic rhsText quoted
-selectValueParser tokens _ quoted =
-  case parseConfigTemplateTokens tokens of
-    Just [ConfigVar variable] -> Just (CVDVar variable)
-    Just templateParts -> Just (CVDTemplate templateParts)
-    Nothing -> parseConfigValueDynamic (T.concat (map tokenToText tokens)) quoted
+selectValueParser tokens _ quoted = classify (parseConfigTemplateTokens tokens)
+ where
+  classify (Just [ConfigVar variable]) = Just (CVDVar variable)
+  classify (Just templateParts) = Just (CVDTemplate templateParts)
+  classify Nothing = parseConfigValueDynamic (T.concat (map tokenToText tokens)) quoted
 
 -- ── config value dynamic representation ──────────────────────────
 
@@ -339,10 +322,9 @@ data ConfigValueDynamic
 
 -- | convert a dynamic value to the corresponding Fact constructor
 configValueFact :: ConfigPath -> Quoted -> Span -> ConfigValueDynamic -> Fact
-configValueFact configPath quoted sourceSpan = \case
-  CVDVar variable -> ConfigAssign configPath variable quoted sourceSpan
-  CVDLit literal -> ConfigLit configPath literal sourceSpan
-  CVDTemplate templateParts -> ConfigTemplate configPath templateParts quoted sourceSpan
+configValueFact configPath quoted sourceSpan (CVDVar variable) = ConfigAssign configPath variable quoted sourceSpan
+configValueFact configPath _quoted sourceSpan (CVDLit literal) = ConfigLit configPath literal sourceSpan
+configValueFact configPath quoted sourceSpan (CVDTemplate templateParts) = ConfigTemplate configPath templateParts quoted sourceSpan
 
 -- ── value token extraction ───────────────────────────────────────
 
@@ -353,18 +335,14 @@ findValueTokens :: [SA.Token] -> ([SA.Token], Quoted)
 findValueTokens parts = loop parts False
  where
   loop [] _ = ([], Unquoted)
-  loop (token@(SA.OuterToken _ innerToken) : remainingTokens) seenEquals = case innerToken of
-    SA.Inner_T_Literal content
-      | not seenEquals && "=" `T.isInfixOf` (T.pack content) ->
-          loop remainingTokens True
-    SA.Inner_T_DoubleQuoted _
-      | seenEquals ->
-          ([token], Quoted)
-    _
-      | seenEquals ->
-          ([token], Unquoted)
-    _ ->
-      loop remainingTokens seenEquals
+  loop (token@(SA.OuterToken _ innerToken) : remainingTokens) seenEquals
+    | SA.Inner_T_Literal content <- innerToken
+    , not seenEquals
+    , "=" `T.isInfixOf` T.pack content =
+        loop remainingTokens True
+    | SA.Inner_T_DoubleQuoted _ <- innerToken, seenEquals = ([token], Quoted)
+    | seenEquals = ([token], Unquoted)
+    | otherwise = loop remainingTokens seenEquals
 
 -- ── dynamic text-level parser ────────────────────────────────────
 
@@ -372,12 +350,11 @@ findValueTokens parts = loop parts False
 parseConfigValueDynamic :: Text -> Quoted -> Maybe ConfigValueDynamic
 parseConfigValueDynamic rawText _quoted
   | T.null strippedText = Nothing
-  | otherwise =
-      case parseConfigTemplate strippedText of
-        Just [ConfigVar variable] -> Just (CVDVar variable)
-        Just templateParts -> Just (CVDTemplate templateParts)
-        Nothing -> Just (CVDLit (parseLiteral strippedText))
+  | otherwise = classify (parseConfigTemplate strippedText)
  where
+  classify (Just [ConfigVar variable]) = Just (CVDVar variable)
+  classify (Just templateParts) = Just (CVDTemplate templateParts)
+  classify Nothing = Just (CVDLit (parseLiteral strippedText))
   strippedText
     | "\"" `T.isPrefixOf` rawText && "\"" `T.isSuffixOf` rawText = T.dropEnd 1 (T.drop 1 rawText)
     | otherwise = rawText
@@ -405,24 +382,23 @@ parseConfigTemplateTokens tokens =
   -- ── inner token → flat part list ──
   -- n.b. Literal, SingleQuoted, Glob all become ConfigText
   -- DollarBraced tries expansionPart first
-  innerParts = \case
-    SA.Inner_T_Literal content -> [ConfigText (T.pack content)]
-    SA.Inner_T_SingleQuoted content -> [ConfigText (T.pack content)]
-    SA.Inner_T_Glob content -> [ConfigText (T.pack content)]
-    SA.Inner_T_NormalWord subParts -> concatMap tokenParts subParts
-    SA.Inner_T_DoubleQuoted subParts -> concatMap tokenParts subParts
-    SA.Inner_T_DollarBraced _ body ->
-      expansionPart ("${" <> tokenToText body <> "}")
-    _ -> []
+  innerParts (SA.Inner_T_Literal content) = [ConfigText (T.pack content)]
+  innerParts (SA.Inner_T_SingleQuoted content) = [ConfigText (T.pack content)]
+  innerParts (SA.Inner_T_Glob content) = [ConfigText (T.pack content)]
+  innerParts (SA.Inner_T_NormalWord subParts) = concatMap tokenParts subParts
+  innerParts (SA.Inner_T_DoubleQuoted subParts) = concatMap tokenParts subParts
+  innerParts (SA.Inner_T_DollarBraced _ body) = expansionPart ("${" <> tokenToText body <> "}")
+  innerParts _ = []
 
   -- ── ${...} → ConfigVar / ConfigVarDefault / ConfigVarRequired ──
-  expansionPart text = case parseParamExpansion text of
-    Just (SimpleRef variable) -> [ConfigVar variable]
-    Just (DefaultValue variable defaultValue) -> [ConfigVarDefault variable (maybe "" id defaultValue)]
-    Just (AssignDefault variable defaultValue) -> [ConfigVarDefault variable (maybe "" id defaultValue)]
-    Just (ErrorIfUnset variable _) -> [ConfigVarRequired variable]
-    Just (UseAlternate variable alternate) -> [ConfigVarAlternate variable (maybe "" id alternate)]
-    Nothing -> [ConfigText text]
+  expansionPart text = classify (parseParamExpansion text)
+   where
+    classify (Just (SimpleRef variable)) = [ConfigVar variable]
+    classify (Just (DefaultValue variable defaultValue)) = [ConfigVarDefault variable (maybe "" id defaultValue)]
+    classify (Just (AssignDefault variable defaultValue)) = [ConfigVarDefault variable (maybe "" id defaultValue)]
+    classify (Just (ErrorIfUnset variable _)) = [ConfigVarRequired variable]
+    classify (Just (UseAlternate variable alternate)) = [ConfigVarAlternate variable (maybe "" id alternate)]
+    classify Nothing = [ConfigText text]
 
   -- ── merge adjacent ConfigText parts ──
   mergeTextParts = foldr step []
@@ -466,14 +442,15 @@ parseConfigTemplate sourceText =
   parseDollarBrace text =
     let textAfterDollarBrace = T.drop 2 text
         (name, textAfterName) = T.breakOn "}" textAfterDollarBrace
+        rest = parseParts (T.drop 1 textAfterName)
+        classify (Just (SimpleRef variable)) = ConfigVar variable : rest
+        classify (Just (DefaultValue variable defaultValue)) = ConfigVarDefault variable (maybe "" id defaultValue) : rest
+        classify (Just (AssignDefault variable defaultValue)) = ConfigVarDefault variable (maybe "" id defaultValue) : rest
+        classify (Just (ErrorIfUnset variable _)) = ConfigVarRequired variable : rest
+        classify (Just (UseAlternate variable alternate)) = ConfigVarAlternate variable (maybe "" id alternate) : rest
+        classify Nothing = splitText text
      in if "}" `T.isPrefixOf` textAfterName
-          then case parseParamExpansion ("${" <> name <> "}") of
-            Just (SimpleRef variable) -> ConfigVar variable : parseParts (T.drop 1 textAfterName)
-            Just (DefaultValue variable defaultValue) -> ConfigVarDefault variable (maybe "" id defaultValue) : parseParts (T.drop 1 textAfterName)
-            Just (AssignDefault variable defaultValue) -> ConfigVarDefault variable (maybe "" id defaultValue) : parseParts (T.drop 1 textAfterName)
-            Just (ErrorIfUnset variable _) -> ConfigVarRequired variable : parseParts (T.drop 1 textAfterName)
-            Just (UseAlternate variable alternate) -> ConfigVarAlternate variable (maybe "" id alternate) : parseParts (T.drop 1 textAfterName)
-            Nothing -> splitText text
+          then classify (parseParamExpansion ("${" <> name <> "}"))
           else splitText text
 
   -- ── $VAR handler ──
@@ -550,24 +527,25 @@ configFacts sourceSpan text
   | facts@(_ : _) <- dynamicFallback = facts
   | otherwise = fallbackConfigFacts sourceSpan text
  where
-  dynamicFallback =
-    let (leftHandSide, rightHandSide0) = T.breakOn "=" text
-     in case (T.stripPrefix "config." leftHandSide, T.stripPrefix "=" rightHandSide0) of
-          (Just pathText, Just rightHandSide)
-            | "$" `T.isInfixOf` rightHandSide
-            , let pathParts = T.splitOn "." pathText
-            , validConfigPath pathParts
-            , Just parsed <- parseConfigValueDynamic rightHandSide Unquoted ->
-                [configValueFact pathParts Unquoted sourceSpan parsed]
-          _ -> []
+  dynamicFallback
+    | Just pathText <- T.stripPrefix "config." leftHandSide
+    , Just rightHandSide <- T.stripPrefix "=" rightHandSide0
+    , "$" `T.isInfixOf` rightHandSide
+    , let pathParts = T.splitOn "." pathText
+    , validConfigPath pathParts
+    , Just parsed <- parseConfigValueDynamic rightHandSide Unquoted =
+        [configValueFact pathParts Unquoted sourceSpan parsed]
+    | otherwise = []
+   where
+    (leftHandSide, rightHandSide0) = T.breakOn "=" text
 
-  fallbackConfigFacts sp text_ =
-    case parseConfigAssignment text_ of
-      Just ConfigAssignment{..} ->
-        case configValue of
-          Left variable -> [ConfigAssign configPath variable configQuoted sp]
-          Right literal -> [ConfigLit configPath literal sp]
-      Nothing -> []
+  fallbackConfigFacts sp text_ = maybe [] fromAssignment (parseConfigAssignment text_)
+   where
+    fromAssignment ConfigAssignment{..} =
+      either
+        (\variable -> [ConfigAssign configPath variable configQuoted sp])
+        (\literal -> [ConfigLit configPath literal sp])
+        configValue
 
 -- ── shell builtin classification ─────────────────────────────────
 
@@ -666,20 +644,19 @@ tokenToText (SA.OuterToken _ inner) = innerToText inner
 
 -- | convert a ShellCheck inner token to text, recursing into child tokens
 innerToText :: SA.InnerToken SA.Token -> Text
-innerToText = \case
-  SA.Inner_T_Literal content -> T.pack content
-  SA.Inner_T_SingleQuoted content -> T.pack content
-  SA.Inner_T_Glob content -> T.pack content
-  SA.Inner_T_NormalWord parts -> T.concat (map tokenToText parts)
-  SA.Inner_T_DoubleQuoted parts -> T.concat (map tokenToText parts)
-  SA.Inner_T_DollarBraced _ token -> "${" <> tokenToText token <> "}"
-  SA.Inner_T_DollarSingleQuoted content -> T.pack content
-  SA.Inner_T_BraceExpansion parts -> T.concat (map tokenToText parts)
-  -- arithmetic-context tokens — used for array subscripts like `config[server]`
-  -- (the key parses as a TA_Variable inside a TA_Sequence). (REVIEW-3 #24)
-  SA.Inner_TA_Variable name _ -> T.pack name
-  SA.Inner_TA_Sequence parts -> T.concat (map tokenToText parts)
-  _ -> ""
+innerToText (SA.Inner_T_Literal content) = T.pack content
+innerToText (SA.Inner_T_SingleQuoted content) = T.pack content
+innerToText (SA.Inner_T_Glob content) = T.pack content
+innerToText (SA.Inner_T_NormalWord parts) = T.concat (map tokenToText parts)
+innerToText (SA.Inner_T_DoubleQuoted parts) = T.concat (map tokenToText parts)
+innerToText (SA.Inner_T_DollarBraced _ token) = "${" <> tokenToText token <> "}"
+innerToText (SA.Inner_T_DollarSingleQuoted content) = T.pack content
+innerToText (SA.Inner_T_BraceExpansion parts) = T.concat (map tokenToText parts)
+-- arithmetic-context tokens — used for array subscripts like `config[server]`
+-- (the key parses as a TA_Variable inside a TA_Sequence). (REVIEW-3 #24)
+innerToText (SA.Inner_TA_Variable name _) = T.pack name
+innerToText (SA.Inner_TA_Sequence parts) = T.concat (map tokenToText parts)
+innerToText _ = ""
 
 -- ── span construction ────────────────────────────────────────────
 
@@ -687,14 +664,13 @@ innerToText = \case
 mkSpan :: SA.Id -> Reader (Map SA.Id (Position, Position)) Span
 mkSpan shellCheckId = do
   posMap <- ask
-  case Map.lookup shellCheckId posMap of
-    Just (start, end) ->
-      -- n.b. ShellCheck positions are 1-based (per the Interface module);
-      -- this matches megaparsec's positions so no adjustment is needed.
-      pure $
-        Span
-          (Loc (fromIntegral $ posLine start) (fromIntegral $ posColumn start))
-          (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
-          (Just (posFile start))
-    Nothing ->
-      pure $ Span (Loc 0 0) (Loc 0 0) Nothing
+  pure $ maybe noSpan toSpan (Map.lookup shellCheckId posMap)
+ where
+  noSpan = Span (Loc 0 0) (Loc 0 0) Nothing
+  -- n.b. ShellCheck positions are 1-based (per the Interface module);
+  -- this matches megaparsec's positions so no adjustment is needed.
+  toSpan (start, end) =
+    Span
+      (Loc (fromIntegral $ posLine start) (fromIntegral $ posColumn start))
+      (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
+      (Just (posFile start))

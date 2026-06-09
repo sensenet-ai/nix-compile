@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -76,39 +75,39 @@ parseParamExpansion text
 dispatches based on presence of : separator (e.g. ${var:-default} vs ${var-default})
 -}
 parseExpansionBody :: Text -> Maybe ParamExpansion
-parseExpansionBody body =
-  case T.breakOn ":" body of
-    (variable, remaining)
-      | ":" `T.isPrefixOf` remaining ->
-          -- \${var:-word}, ${var:=word}, ${var:?word}, ${var:+word}
-          parseOpWithColon variable (T.drop 1 remaining)
-    _ ->
+parseExpansionBody body
+  | (variable, remaining) <- T.breakOn ":" body
+  , ":" `T.isPrefixOf` remaining =
+      -- \${var:-word}, ${var:=word}, ${var:?word}, ${var:+word}
+      parseOpWithColon variable (T.drop 1 remaining)
+  | otherwise =
       -- \${var-word}, ${var=word}, ${var?word}, ${var+word}
       parseOpWithoutColon body
  where
   -- ── : variants (colon prefix) ──
-  -- these use ":" before the operator character
+  -- these use ":" before the operator character. (${var:} is just $var.)
   parseOpWithColon variable remaining = do
     guard (isVarName variable)
-    case T.uncons remaining of
-      Just ('-', defaultValue) -> Just (DefaultValue variable (Just defaultValue))
-      Just ('=', defaultValue) -> Just (AssignDefault variable (Just defaultValue))
-      Just ('?', message) -> Just (ErrorIfUnset variable (nonEmpty message))
-      Just ('+', alternate) -> Just (UseAlternate variable (nonEmpty alternate))
-      _ -> Just (SimpleRef variable)
-  -- \${var:} is just $var
+    colonOp (T.uncons remaining)
+   where
+    colonOp (Just ('-', defaultValue)) = Just (DefaultValue variable (Just defaultValue))
+    colonOp (Just ('=', defaultValue)) = Just (AssignDefault variable (Just defaultValue))
+    colonOp (Just ('?', message)) = Just (ErrorIfUnset variable (nonEmpty message))
+    colonOp (Just ('+', alternate)) = Just (UseAlternate variable (nonEmpty alternate))
+    colonOp _ = Just (SimpleRef variable)
 
   -- ── non-: variants (operator immediately after var name) ──
   parseOpWithoutColon expansionBody = do
     let (variable, remaining) = T.break isOpChar expansionBody
     guard (isVarName variable)
-    case T.uncons remaining of
-      Just ('-', defaultValue) -> Just (DefaultValue variable (Just defaultValue))
-      Just ('=', defaultValue) -> Just (AssignDefault variable (Just defaultValue))
-      Just ('?', message) -> Just (ErrorIfUnset variable (nonEmpty message))
-      Just ('+', alternate) -> Just (UseAlternate variable (nonEmpty alternate))
-      Nothing -> Just (SimpleRef variable) -- plain ${var}
-      _ -> Nothing
+    plainOp variable (T.uncons remaining)
+   where
+    plainOp variable (Just ('-', defaultValue)) = Just (DefaultValue variable (Just defaultValue))
+    plainOp variable (Just ('=', defaultValue)) = Just (AssignDefault variable (Just defaultValue))
+    plainOp variable (Just ('?', message)) = Just (ErrorIfUnset variable (nonEmpty message))
+    plainOp variable (Just ('+', alternate)) = Just (UseAlternate variable (nonEmpty alternate))
+    plainOp variable Nothing = Just (SimpleRef variable) -- plain ${var}
+    plainOp _ _ = Nothing
 
   -- ── helpers ──
   nonEmpty text = if T.null text then Nothing else Just text
@@ -120,9 +119,7 @@ parseExpansionBody body =
       && isValidStart text
       && T.all isVarChar text
 
-  isValidStart text = case T.uncons text of
-    Just (character, _) -> isAsciiAlpha character || character == '_'
-    Nothing -> False
+  isValidStart text = maybe False (\(character, _) -> isAsciiAlpha character || character == '_') (T.uncons text)
 
   isVarChar character = isAsciiAlphaNum character || character == '_'
 
@@ -208,10 +205,9 @@ handles quoted "${...}", "$VAR", plain strings, and ${...} expansions
 
 -- | valid bash variable name: @^[A-Za-z_][A-Za-z0-9_]*$@ (ASCII only)
 isValidVarName :: Text -> Bool
-isValidVarName text = case T.uncons text of
-  Just (c, rest) -> startChar c && T.all varChar rest
-  Nothing -> False
+isValidVarName text = maybe False valid (T.uncons text)
  where
+  valid (c, rest) = startChar c && T.all varChar rest
   startChar c = isAsciiUpper c || isAsciiLower c || c == '_'
   varChar c = startChar c || isDigit c
 
@@ -220,9 +216,7 @@ parseConfigValue text
   | "\"${" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
       let inner = T.dropEnd 1 (T.drop 1 text)
        in if "${" `T.isPrefixOf` inner && "}" `T.isSuffixOf` inner
-            then case parseParamExpansion inner of
-              Just paramExpansion -> Just (leftVar paramExpansion, Quoted)
-              Nothing -> Just (Right (parseLiteralValue inner), Quoted)
+            then Just (maybe (Right (parseLiteralValue inner)) leftVar (parseParamExpansion inner), Quoted)
             else Just (Right (parseLiteralValue inner), Quoted)
   | "\"$" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
       -- "$VAR" — only a var ref if VAR is a valid name (#21/#22: `"$|"` must
@@ -234,9 +228,7 @@ parseConfigValue text
   | "\"" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
       Just (Right (LitString (T.dropEnd 1 (T.drop 1 text))), Quoted)
   | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
-      case parseParamExpansion text of
-        Just paramExpansion -> Just (leftVar paramExpansion, Unquoted)
-        Nothing -> Just (Right (parseLiteralValue text), Unquoted)
+      Just (maybe (Right (parseLiteralValue text)) leftVar (parseParamExpansion text), Unquoted)
   | "$" `T.isPrefixOf` text =
       -- \$VAR — validate the name; a non-name (`$|`, `$\n; id`, …) is a literal
       let varName = T.drop 1 text
@@ -258,9 +250,7 @@ parseLiteralValue :: Text -> Literal
 parseLiteralValue text
   | text == "true" = LitBool True
   | text == "false" = LitBool False
-  | isNumericLiteral text = case safeParseInt text of
-      Just numericValue -> LitInt numericValue
-      Nothing -> LitString text
+  | isNumericLiteral text = maybe (LitString text) LitInt (safeParseInt text)
   | otherwise = LitString text
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -274,9 +264,7 @@ parseLiteral :: Text -> Literal
 parseLiteral text
   | text == "true" = LitBool True
   | text == "false" = LitBool False
-  | isNumericLiteral text = case safeParseInt text of
-      Just numericValue -> LitInt numericValue
-      Nothing -> LitString text
+  | isNumericLiteral text = maybe (LitString text) LitInt (safeParseInt text)
   | isStorePathSafe text = LitPath (StorePath text)
   | otherwise = LitString text
 
@@ -304,20 +292,23 @@ isNumericLiteral text =
     && fitsInt64 text
  where
   isDigitOrSign character = isDigit character || character == '-'
-  validMinus sourceText = case T.uncons sourceText of
-    Just ('-', remaining) -> not (T.null remaining) && not (T.any (== '-') remaining)
-    _ -> not (T.any (== '-') sourceText)
+  validMinus sourceText
+    | Just ('-', remaining) <- T.uncons sourceText = not (T.null remaining) && not (T.any (== '-') remaining)
+    | otherwise = not (T.any (== '-') sourceText)
   validLength sourceText = T.length (T.dropWhile (== '-') sourceText) <= 19
-  fitsInt64 sourceText = case readMaybe (T.unpack sourceText) :: Maybe Integer of
-    Nothing -> False
-    Just parsedInteger -> parsedInteger >= -9223372036854775808 && parsedInteger <= 9223372036854775807
+  fitsInt64 sourceText =
+    maybe False inRange (readMaybe (T.unpack sourceText) :: Maybe Integer)
+   where
+    inRange parsedInteger = parsedInteger >= -9223372036854775808 && parsedInteger <= 9223372036854775807
 
 -- | parse text as Int, returning Nothing if out of range
 safeParseInt :: Text -> Maybe Int
-safeParseInt text = case readMaybe (T.unpack text) :: Maybe Integer of
-  Nothing -> Nothing
-  Just parsedInteger | parsedInteger >= fromIntegral (minBound :: Int) && parsedInteger <= fromIntegral (maxBound :: Int) -> Just (fromInteger parsedInteger)
-  _ -> Nothing
+safeParseInt text
+  | Just parsedInteger <- (readMaybe (T.unpack text) :: Maybe Integer)
+  , parsedInteger >= fromIntegral (minBound :: Int)
+  , parsedInteger <= fromIntegral (maxBound :: Int) =
+      Just (fromInteger parsedInteger)
+  | otherwise = Nothing
 
 -- | is this text exactly "true" or "false"?
 isBoolLiteral :: Text -> Bool
@@ -341,15 +332,14 @@ the attack vectors this blocks (e.g. @${UNSET:-$(touch /tmp/pwn)}@).
 escapeForParamExpansion :: Text -> Text
 escapeForParamExpansion = T.concatMap escape
  where
-  escape c = case c of
-    '$' -> "\\$"
-    '`' -> "\\`"
-    '\\' -> "\\\\"
-    '"' -> "\\\""
-    '}' -> "\\}"
-    '\n' -> " "
-    '\r' -> " "
-    _ -> T.singleton c
+  escape '$' = "\\$"
+  escape '`' = "\\`"
+  escape '\\' = "\\\\"
+  escape '"' = "\\\""
+  escape '}' = "\\}"
+  escape '\n' = " "
+  escape '\r' = " "
+  escape c = T.singleton c
 
 {- | Escape text for safe inclusion inside a bash single-quoted string.
 The standard idiom for embedding @'@ inside @'…'@ is @'\\''@: close the string,
