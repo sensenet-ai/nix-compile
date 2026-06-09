@@ -62,6 +62,8 @@
               "lib/NixCompile/Bash/Parse.hs"
               "lib/NixCompile/Bash/Patterns.hs"
               "lib/NixCompile/CLI/Check.hs"
+              "lib/NixCompile/Config.hs"
+              "lib/NixCompile/Emit/Config.hs"
               "lib/NixCompile/LSP/Handlers.hs"
               "lib/NixCompile/Nix/Flake.hs"
               "lib/NixCompile/Nix/Inference.hs"

@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -40,41 +39,46 @@ import NixCompile.Bash.Patterns (escapeForParamExpansion)
 import NixCompile.Types
 
 jsonEscape :: Text -> Text
-jsonEscape = T.concatMap $ \character -> case character of
-  '"' -> "\\\""
-  '\\' -> "\\\\"
-  '\n' -> "\\n"
-  '\r' -> "\\r"
-  '\t' -> "\\t"
-  '\b' -> "\\b"
-  '\f' -> "\\f"
-  _
-    | character < '\x20' -> "\\u" <> T.justifyRight 4 '0' (T.pack (showHex (fromEnum character) ""))
-    | otherwise -> T.singleton character
+jsonEscape = T.concatMap escapeChar
+ where
+  escapeChar '"' = "\\\""
+  escapeChar '\\' = "\\\\"
+  escapeChar '\n' = "\\n"
+  escapeChar '\r' = "\\r"
+  escapeChar '\t' = "\\t"
+  escapeChar '\b' = "\\b"
+  escapeChar '\f' = "\\f"
+  escapeChar character
+    | character < '\x20' = "\\u" <> T.justifyRight 4 '0' (T.pack (showHex (fromEnum character) ""))
+    | otherwise = T.singleton character
 
 renderJsonLit :: Literal -> Text
-renderJsonLit = \case
-  LitInt n -> T.pack (show n)
-  LitBool True -> "true"
-  LitBool False -> "false"
-  LitString s -> "\"" <> jsonEscape s <> "\""
-  LitPath sp -> "\"" <> jsonEscape (unStorePath sp) <> "\""
+renderJsonLit (LitInt n) = T.pack (show n)
+renderJsonLit (LitBool True) = "true"
+renderJsonLit (LitBool False) = "false"
+renderJsonLit (LitString s) = "\"" <> jsonEscape s <> "\""
+renderJsonLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
 
 renderYamlLit :: Literal -> Text
-renderYamlLit = \case
-  LitInt n -> T.pack (show n)
-  LitBool True -> "true"
-  LitBool False -> "false"
-  LitString s -> "\"" <> jsonEscape s <> "\""
-  LitPath sp -> "\"" <> jsonEscape (unStorePath sp) <> "\""
+renderYamlLit (LitInt n) = T.pack (show n)
+renderYamlLit (LitBool True) = "true"
+renderYamlLit (LitBool False) = "false"
+renderYamlLit (LitString s) = "\"" <> jsonEscape s <> "\""
+renderYamlLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
 
 renderTomlLit :: Literal -> Text
-renderTomlLit = \case
-  LitInt n -> T.pack (show n)
-  LitBool True -> "true"
-  LitBool False -> "false"
-  LitString s -> "\"" <> jsonEscape s <> "\""
-  LitPath sp -> "\"" <> jsonEscape (unStorePath sp) <> "\""
+renderTomlLit (LitInt n) = T.pack (show n)
+renderTomlLit (LitBool True) = "true"
+renderTomlLit (LitBool False) = "false"
+renderTomlLit (LitString s) = "\"" <> jsonEscape s <> "\""
+renderTomlLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
+
+-- | does this config type render as a quoted string in JSON/YAML/TOML output?
+cfgTypeIsStringy :: Type -> Bool
+cfgTypeIsStringy TString = True
+cfgTypeIsStringy TPath = True
+cfgTypeIsStringy (TVar _) = True
+cfgTypeIsStringy _ = False
 
 data ConfigTree
   = ConfigBranch !(Map Text ConfigTree)
@@ -201,9 +205,7 @@ emitRuntimeBlock schema =
   ]
 
 isRequiredEnv :: Map Text EnvSpec -> Text -> Bool
-isRequiredEnv env var = case Map.lookup var env of
-  Just envSpec -> envRequired envSpec
-  Nothing -> True
+isRequiredEnv env var = maybe True envRequired (Map.lookup var env)
 
 renderRuntimeGuards :: Schema -> Text
 renderRuntimeGuards schema =
@@ -233,10 +235,11 @@ renderRuntimeGuards schema =
     | TBool <- ty = [boolGuard var]
     | otherwise = [presenceGuard var]
 
-  requiredTemplateVars = concatMap $ \case
-    ConfigVar var -> [var]
-    ConfigVarRequired var -> [var]
-    _ -> []
+  requiredTemplateVars = concatMap templateVar
+   where
+    templateVar (ConfigVar var) = [var]
+    templateVar (ConfigVarRequired var) = [var]
+    templateVar _ = []
 
 emitConfigJson :: Schema -> Text
 emitConfigJson schema =
@@ -245,9 +248,10 @@ emitConfigJson schema =
    in emitTemplate (renderJsonTree env 0 tree)
 
 escapeForPrintf :: Text -> Text
-escapeForPrintf = T.concatMap $ \case
-  '\'' -> "'\\''"
-  character -> T.singleton character
+escapeForPrintf = T.concatMap escapeChar
+ where
+  escapeChar '\'' = "'\\''"
+  escapeChar character = T.singleton character
 
 data Template = Template !Text ![Text]
 
@@ -279,9 +283,10 @@ intersperseTemplate _ [x] = [x]
 intersperseTemplate sep (x : xs) = x : sep : intersperseTemplate sep xs
 
 renderJsonTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
-renderJsonTree env indent = \case
-  ConfigBranch m | Map.null m -> literalTemplate "{}"
-  ConfigBranch m ->
+renderJsonTree env indent = go
+ where
+  go (ConfigBranch m) | Map.null m = literalTemplate "{}"
+  go (ConfigBranch m) =
     let entries = Map.toList m
         rendered = map (renderEntry indent) entries
         indentStr = T.replicate indent "  "
@@ -290,35 +295,28 @@ renderJsonTree env indent = \case
           [literalTemplate "{\n"]
             ++ intersperseTemplate (literalTemplate ",\n") (map (appendTemplate (literalTemplate nextIndent)) rendered)
             ++ [literalTemplate ("\n" <> indentStr <> "}")]
-  ConfigLeaf spec -> renderJsonValue env spec
- where
+  go (ConfigLeaf spec) = renderJsonValue env spec
+
   renderEntry ind (key, subtree) =
     literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJsonTree env (ind + 1) subtree
 
 renderJsonValue :: Map Text EnvSpec -> ConfigSpec -> Template
-renderJsonValue env ConfigSpec{..} =
-  case (cfgFrom, cfgLit, cfgTemplate) of
-    (_, Just lit, _) ->
-      literalTemplate (renderJsonLit lit)
-    (_, _, Just parts) ->
-      literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
-    (Just var, _, _) ->
-      let required = isRequiredEnv env var
-          forceString = cfgQuoted == Just Quoted
-          asString =
-            forceString || case cfgType of
-              TString -> True
-              TPath -> True
-              TVar _ -> True
-              _ -> False
-          guardedVar
-            | required = "${" <> var <> ":?" <> var <> " is required}"
-            | otherwise = "${" <> var <> ":-}"
-       in if asString
-            then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
-            else dynamicTemplate guardedVar
-    _ ->
-      literalTemplate "null"
+renderJsonValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
+ where
+  go _ (Just lit) _ = literalTemplate (renderJsonLit lit)
+  go _ _ (Just parts) =
+    literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+  go (Just var) _ _ =
+    let required = isRequiredEnv env var
+        forceString = cfgQuoted == Just Quoted
+        asString = forceString || cfgTypeIsStringy cfgType
+        guardedVar
+          | required = "${" <> var <> ":?" <> var <> " is required}"
+          | otherwise = "${" <> var <> ":-}"
+     in if asString
+          then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+          else dynamicTemplate guardedVar
+  go _ _ _ = literalTemplate "null"
 
 emitConfigYaml :: Schema -> Text
 emitConfigYaml schema =
@@ -327,46 +325,40 @@ emitConfigYaml schema =
    in emitTemplate (renderYamlTree env 0 tree)
 
 renderYamlTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
-renderYamlTree env indent = \case
-  ConfigBranch m | Map.null m -> literalTemplate "{}"
-  ConfigBranch m ->
+renderYamlTree env indent = go
+ where
+  go (ConfigBranch m) | Map.null m = literalTemplate "{}"
+  go (ConfigBranch m) =
     let entries = sortOn fst (Map.toList m)
         rendered = map (renderYamlEntry indent) entries
      in concatTemplates (intersperseTemplate (literalTemplate "\n") rendered)
-  ConfigLeaf spec -> renderYamlValue env spec
- where
-  renderYamlEntry ind (key, subtree) =
-    let indentStr = T.replicate ind "  "
-     in case subtree of
-          ConfigBranch _ ->
-            literalTemplate (indentStr <> key <> ":\n") `appendTemplate` renderYamlTree env (ind + 1) subtree
-          ConfigLeaf spec' ->
-            literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue env spec'
+  go (ConfigLeaf spec) = renderYamlValue env spec
+
+  renderYamlEntry ind (key, subtree) = render subtree
+   where
+    indentStr = T.replicate ind "  "
+    render (ConfigBranch _) =
+      literalTemplate (indentStr <> key <> ":\n") `appendTemplate` renderYamlTree env (ind + 1) subtree
+    render (ConfigLeaf spec') =
+      literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue env spec'
 
 renderYamlValue :: Map Text EnvSpec -> ConfigSpec -> Template
-renderYamlValue env ConfigSpec{..} =
-  case (cfgFrom, cfgLit, cfgTemplate) of
-    (_, Just lit, _) ->
-      literalTemplate (renderYamlLit lit)
-    (_, _, Just parts) ->
-      literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
-    (Just var, _, _) ->
-      let required = isRequiredEnv env var
-          forceString = cfgQuoted == Just Quoted
-          asString =
-            forceString || case cfgType of
-              TString -> True
-              TPath -> True
-              TVar _ -> True
-              _ -> False
-          guardedVar
-            | required = "${" <> var <> ":?" <> var <> " is required}"
-            | otherwise = "${" <> var <> ":-}"
-       in if asString
-            then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
-            else dynamicTemplate guardedVar
-    _ ->
-      literalTemplate "null"
+renderYamlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
+ where
+  go _ (Just lit) _ = literalTemplate (renderYamlLit lit)
+  go _ _ (Just parts) =
+    literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+  go (Just var) _ _ =
+    let required = isRequiredEnv env var
+        forceString = cfgQuoted == Just Quoted
+        asString = forceString || cfgTypeIsStringy cfgType
+        guardedVar
+          | required = "${" <> var <> ":?" <> var <> " is required}"
+          | otherwise = "${" <> var <> ":-}"
+     in if asString
+          then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+          else dynamicTemplate guardedVar
+  go _ _ _ = literalTemplate "null"
 
 emitConfigToml :: Schema -> Text
 emitConfigToml schema =
@@ -375,9 +367,10 @@ emitConfigToml schema =
    in emitTemplate (renderTomlTree env [] tree)
 
 renderTomlTree :: Map Text EnvSpec -> [Text] -> ConfigTree -> Template
-renderTomlTree env path = \case
-  ConfigBranch m | Map.null m -> literalTemplate ""
-  ConfigBranch m ->
+renderTomlTree env path = go
+ where
+  go (ConfigBranch m) | Map.null m = literalTemplate ""
+  go (ConfigBranch m) =
     let (leaves, branches) = Map.partitionWithKey isLeaf m
         isLeaf _ (ConfigLeaf _) = True
         isLeaf _ _ = False
@@ -392,8 +385,7 @@ renderTomlTree env path = \case
             ++ intersperseTemplate (literalTemplate "\n") leafLines
             ++ [literalTemplate (if not (Map.null leaves) && not (Map.null branches) then "\n\n" else "")]
             ++ intersperseTemplate (literalTemplate "\n\n") branchLines
-  ConfigLeaf _ -> literalTemplate ""
- where
+  go (ConfigLeaf _) = literalTemplate ""
   renderTomlLeaf (key, ConfigLeaf spec) =
     literalTemplate (key <> " = ") `appendTemplate` renderTomlValue env spec
   renderTomlLeaf _ = literalTemplate ""
@@ -402,29 +394,22 @@ renderTomlTree env path = \case
     renderTomlTree env (parentPath ++ [key]) subtree
 
 renderTomlValue :: Map Text EnvSpec -> ConfigSpec -> Template
-renderTomlValue env ConfigSpec{..} =
-  case (cfgFrom, cfgLit, cfgTemplate) of
-    (_, Just lit, _) ->
-      literalTemplate (renderTomlLit lit)
-    (_, _, Just parts) ->
-      literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
-    (Just var, _, _) ->
-      let required = isRequiredEnv env var
-          forceString = cfgQuoted == Just Quoted
-          asString =
-            forceString || case cfgType of
-              TString -> True
-              TPath -> True
-              TVar _ -> True
-              _ -> False
-          guardedVar
-            | required = "${" <> var <> ":?" <> var <> " is required}"
-            | otherwise = "${" <> var <> ":-}"
-       in if asString
-            then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
-            else dynamicTemplate guardedVar
-    _ ->
-      literalTemplate "\"\""
+renderTomlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
+ where
+  go _ (Just lit) _ = literalTemplate (renderTomlLit lit)
+  go _ _ (Just parts) =
+    literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+  go (Just var) _ _ =
+    let required = isRequiredEnv env var
+        forceString = cfgQuoted == Just Quoted
+        asString = forceString || cfgTypeIsStringy cfgType
+        guardedVar
+          | required = "${" <> var <> ":?" <> var <> " is required}"
+          | otherwise = "${" <> var <> ":-}"
+     in if asString
+          then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+          else dynamicTemplate guardedVar
+  go _ _ _ = literalTemplate "\"\""
 
 renderTemplateParts :: [ConfigPart] -> Template
 renderTemplateParts = concatTemplates . map renderPart

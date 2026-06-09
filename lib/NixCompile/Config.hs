@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -37,6 +36,7 @@ where
 
 import Control.Exception (SomeException, try)
 import Data.Foldable (toList)
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -79,15 +79,12 @@ data RuleOverride = RuleOverride
 
 instance FromDhall RuleOverride where
   autoWith _norm =
-    genericAutoWith
-      ( defaultInterpretOptions
-          { fieldModifier = \case
-              "overrideId" -> "id"
-              "overrideSeverity" -> "severity"
-              "overrideReason" -> "reason"
-              n -> n
-          }
-      )
+    genericAutoWith (defaultInterpretOptions{fieldModifier = renameField})
+   where
+    renameField "overrideId" = "id"
+    renameField "overrideSeverity" = "severity"
+    renameField "overrideReason" = "reason"
+    renameField n = n
 
 data Config = Config
   { configProfile :: !Text
@@ -99,16 +96,13 @@ data Config = Config
 
 instance FromDhall Config where
   autoWith _norm =
-    genericAutoWith
-      ( defaultInterpretOptions
-          { fieldModifier = \case
-              "configProfile" -> "profile"
-              "configLayout" -> "layout"
-              "configExtraIgnores" -> "extra-ignores"
-              "configOverrides" -> "overrides"
-              n -> n
-          }
-      )
+    genericAutoWith (defaultInterpretOptions{fieldModifier = renameField})
+   where
+    renameField "configProfile" = "profile"
+    renameField "configLayout" = "layout"
+    renameField "configExtraIgnores" = "extra-ignores"
+    renameField "configOverrides" = "overrides"
+    renameField n = n
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- Defaults
@@ -144,48 +138,42 @@ any are present.
 loadConfig :: FilePath -> IO (Either Text Config)
 loadConfig path = do
   srcResult <- try (TIO.readFile path)
-  case srcResult of
-    Left (e :: SomeException) -> pure (Left (T.pack (show e)))
-    Right src -> case DhallParser.exprFromText path src of
-      Left e -> pure (Left ("dhall parse error: " <> T.pack (show e)))
-      Right parsed -> case findRemoteImport parsed of
-        Just url ->
-          pure $
-            Left $
-              "refusing to load "
-                <> T.pack path
-                <> ": remote dhall import disabled (saw "
-                <> url
-                <> "). nix-compile config must be self-contained."
-        Nothing -> do
-          -- The pre-parse check guarantees no Remote imports survive to Dhall.inputFile.
-          -- We still wrap in try so any unexpected exception (eval errors, etc.) is structured.
-          result <- try (Dhall.inputFile Dhall.auto path)
-          case result of
-            Left (e :: SomeException) -> pure (Left (T.pack (show e)))
-            Right config -> pure (Right config)
+  either showError fromSrc srcResult
+ where
+  showError (e :: SomeException) = pure (Left (T.pack (show e)))
+  fromSrc src = either onParseError fromParsed (DhallParser.exprFromText path src)
+  onParseError e = pure (Left ("dhall parse error: " <> T.pack (show e)))
+  fromParsed parsed = maybe loadInput refuse (findRemoteImport parsed)
+  refuse url =
+    pure $
+      Left $
+        "refusing to load "
+          <> T.pack path
+          <> ": remote dhall import disabled (saw "
+          <> url
+          <> "). nix-compile config must be self-contained."
+  loadInput = do
+    -- The pre-parse check guarantees no Remote imports survive to Dhall.inputFile.
+    -- We still wrap in try so any unexpected exception (eval errors, etc.) is structured.
+    result <- try (Dhall.inputFile Dhall.auto path)
+    either showError (pure . Right) result
 
 -- | Walk a parsed Dhall expression and return the first remote URL we encounter, if any.
 findRemoteImport :: DhallCore.Expr DhallParser.Src DhallCore.Import -> Maybe Text
-findRemoteImport expr = case foldr step Nothing (toList expr) of
-  Just t -> Just t
-  Nothing -> scanEmbed expr
+findRemoteImport expr = maybe (scanEmbed expr) Just (foldr step Nothing (toList expr))
  where
   step ::
     DhallCore.Import ->
     Maybe Text ->
     Maybe Text
-  step imp acc = case acc of
-    Just _ -> acc
-    Nothing -> case DhallCore.importType (DhallCore.importHashed imp) of
-      DhallCore.Remote url -> Just (T.pack (show url))
-      _ -> Nothing
+  step _ acc@(Just _) = acc
+  step imp Nothing = remoteUrl (DhallCore.importType (DhallCore.importHashed imp))
 
-  scanEmbed e = case e of
-    DhallCore.Embed imp -> case DhallCore.importType (DhallCore.importHashed imp) of
-      DhallCore.Remote url -> Just (T.pack (show url))
-      _ -> Nothing
-    _ -> Nothing
+  scanEmbed (DhallCore.Embed imp) = remoteUrl (DhallCore.importType (DhallCore.importHashed imp))
+  scanEmbed _ = Nothing
+
+  remoteUrl (DhallCore.Remote url) = Just (T.pack (show url))
+  remoteUrl _ = Nothing
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- Queries
@@ -193,9 +181,7 @@ findRemoteImport expr = case foldr step Nothing (toList expr) of
 
 effectiveSeverity :: Config -> Text -> Maybe Severity
 effectiveSeverity config ruleId =
-  case filter ((== ruleId) . overrideId) (configOverrides config) of
-    override : _ -> Just (overrideSeverity override)
-    [] -> Nothing
+  overrideSeverity <$> listToMaybe (filter ((== ruleId) . overrideId) (configOverrides config))
 
 configIgnores :: Config -> [Text]
 configIgnores = configExtraIgnores
@@ -209,34 +195,30 @@ isSuppressed :: Config -> Text -> Bool
 isSuppressed config ruleId = effectiveSeverity config ruleId == Just SevOff
 
 bashRuleId :: Bash.ViolationType -> Text
-bashRuleId = \case
-  Bash.VHeredoc -> "no-heredoc-in-inline-bash"
-  Bash.VHereString -> "no-heredoc-in-inline-bash"
-  Bash.VEval -> "no-eval"
-  Bash.VBacktick -> "no-backtick"
+bashRuleId Bash.VHeredoc = "no-heredoc-in-inline-bash"
+bashRuleId Bash.VHereString = "no-heredoc-in-inline-bash"
+bashRuleId Bash.VEval = "no-eval"
+bashRuleId Bash.VBacktick = "no-backtick"
 
 nixRuleId :: NixLint.ViolationType -> Text
-nixRuleId = \case
-  NixLint.VWith -> "with-lib"
-  NixLint.VRec -> "rec-anywhere"
-  NixLint.VSubstituteAll -> "no-substitute-all"
-  NixLint.VRawMkDerivation -> "no-raw-mkderivation"
-  NixLint.VRawRunCommand -> "no-raw-runcommand"
-  NixLint.VRawWriteShellApplication -> "no-raw-writeshellapplication"
-  NixLint.VWriteShellScript -> "prefer-write-shell-application"
-  NixLint.VLongInlineString _ -> "long-inline-string"
+nixRuleId NixLint.VWith = "with-lib"
+nixRuleId NixLint.VRec = "rec-anywhere"
+nixRuleId NixLint.VSubstituteAll = "no-substitute-all"
+nixRuleId NixLint.VRawMkDerivation = "no-raw-mkderivation"
+nixRuleId NixLint.VRawRunCommand = "no-raw-runcommand"
+nixRuleId NixLint.VRawWriteShellApplication = "no-raw-writeshellapplication"
+nixRuleId NixLint.VWriteShellScript = "prefer-write-shell-application"
+nixRuleId (NixLint.VLongInlineString _) = "long-inline-string"
 
 derivRuleId :: Deriv.DerivViolationType -> Text
 derivRuleId = Deriv.derivRuleId
 
 packageRuleId :: LintPackages.PackageViolationCode -> Text
-packageRuleId = \case
-  LintPackages.P001 -> "default-nix-in-packages"
+packageRuleId LintPackages.P001 = "default-nix-in-packages"
 
 patternRuleId :: LintPatterns.PatternViolationType -> Text
-patternRuleId = \case
-  LintPatterns.VOrNullFallback -> "or-null-fallback"
-  LintPatterns.VAttrTranslation -> "no-translate-attrs-outside-prelude"
+patternRuleId LintPatterns.VOrNullFallback = "or-null-fallback"
+patternRuleId LintPatterns.VAttrTranslation = "no-translate-attrs-outside-prelude"
 
 typeCheckRuleId :: Text
 typeCheckRuleId = "type-check-failure"
@@ -284,9 +266,10 @@ splitOn :: Char -> String -> [String]
 splitOn _ [] = [""]
 splitOn delimiter string =
   let (before, after) = break (== delimiter) string
-   in before : case after of
-        "" -> []
-        _ : rest -> splitOn delimiter rest
+   in before : continuation after
+ where
+  continuation "" = []
+  continuation (_ : rest) = splitOn delimiter rest
 
 matchComponents :: [[Token]] -> [String] -> Bool
 matchComponents [] [] = True
