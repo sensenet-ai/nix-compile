@@ -14,7 +14,7 @@
 --                                                     // config // dhall
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Config (
+module NixCompile.Core.Config (
   Severity (..),
   RuleOverride (..),
   Config (..),

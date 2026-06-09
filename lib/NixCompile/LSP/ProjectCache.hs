@@ -77,6 +77,7 @@ import GHC.Conc (getNumCapabilities)
 import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Utils qualified as NixUtils
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Nix.Inference (
   TypeEnv (..),
   builtinEnv,
@@ -84,7 +85,6 @@ import NixCompile.Nix.Inference (
   inferExprWithEnv,
  )
 import NixCompile.Nix.Types (NixType (..))
-import NixCompile.Safety qualified as Safety
 import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, takeDirectory, (</>))

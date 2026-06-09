@@ -30,6 +30,7 @@ import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Lint.Derivation (
   DerivViolation (..),
   DerivViolationType (VMissingDescription, VMissingMeta),
@@ -42,7 +43,6 @@ import NixCompile.Lint.Patterns (
   PatternViolation (..),
   PatternViolationType (VAttrTranslation, VOrNullFallback),
  )
-import NixCompile.Safety qualified as Safety
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 
 data LintBundle = LintBundle
@@ -76,7 +76,7 @@ combinedLint filePath expr = orEmpty (combinedLintSafe filePath expr)
   orEmpty (LintDepthExceeded _) = emptyBundle
 
 {- | Safer entry: distinguishes "no violations" from "depth-exceeded".
-n.b. depth limit shared with 'NixCompile.Safety.maxRecursionDepth'.
+n.b. depth limit shared with 'NixCompile.Core.Safety.maxRecursionDepth'.
 -}
 combinedLintSafe :: FilePath -> NExprLoc -> LintResult
 combinedLintSafe filePath = walkExpr (0 :: Int)

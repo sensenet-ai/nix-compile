@@ -26,17 +26,17 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
-import NixCompile.Config qualified as Config
-import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Diagnostic qualified as Diag
+import NixCompile.Core.Log
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Layout.ModuleKind (ModuleKind (..), detectKind, detectedKind)
 import NixCompile.Lint.Combined qualified as Combined
 import NixCompile.Lint.Derivation qualified as Derivation
 import NixCompile.Lint.Nix qualified as Lint
 import NixCompile.Lint.Patterns qualified as Patterns
-import NixCompile.Log
 import NixCompile.Nix.Inference qualified
 import NixCompile.Nix.Types qualified
-import NixCompile.Safety qualified as Safety
 import NixCompile.Syntax.Annotation (pattern Layer)
 import NixCompile.Syntax.Parse qualified as Nix
 
@@ -158,7 +158,7 @@ formatTypeError errorText = format (T.lines errorText)
   format [] = "  TYPE WARNING: unknown error"
 
 {- | Detect AST shapes that are syntactically valid but semantically unsupported.
-n.b. depth checking now lives in 'NixCompile.Safety.analyzeDepth' and runs BEFORE
+n.b. depth checking now lives in 'NixCompile.Core.Safety.analyzeDepth' and runs BEFORE
 this; we only flag rec/dynamic-key here, never depth.
 -}
 detectUnsupportedConstruct :: NExprLoc -> Maybe T.Text

@@ -13,7 +13,7 @@
 --                                                     // core // logging
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Log (
+module NixCompile.Core.Log (
   AppM,
   runLog,
   logStr,
@@ -36,7 +36,7 @@ logStr = Katip.logStr
 runLog :: Severity -> AppM a -> IO a
 runLog minSeverity action = do
   -- No severity text prefix: diagnostics already carry their own
-  -- "error[CODE]:" / "warning[CODE]:" word (see NixCompile.Diagnostic), and
+  -- "error[CODE]:" / "warning[CODE]:" word (see NixCompile.Core.Diagnostic), and
   -- ColorIfTerminal still colours each line by severity on a TTY. A "[ERROR]"
   -- prefix here only doubled up ("[ERROR] error[TYPE]: …"). Debug lines keep a
   -- marker since they have no inherent one and only appear under -vv.

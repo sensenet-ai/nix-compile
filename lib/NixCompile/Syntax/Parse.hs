@@ -48,7 +48,7 @@ import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Parser qualified
-import NixCompile.Safety qualified as Safety
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Syntax.Annotation (toSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Span (..))
 

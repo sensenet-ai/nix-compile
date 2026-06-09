@@ -61,7 +61,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
-import NixCompile.Config qualified as Config
+import NixCompile.Core.Config qualified as Config
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
 import NixCompile.Schema.Build (buildSchema, validateConfigPaths)

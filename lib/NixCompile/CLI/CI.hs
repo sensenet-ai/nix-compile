@@ -31,13 +31,13 @@ import NixCompile.CLI.Bash
 import NixCompile.CLI.Check
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
-import NixCompile.Config qualified as Config
-import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Diagnostic qualified as Diag
+import NixCompile.Core.Log
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Layout.Convention qualified as Layout
 import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Lint.Packages qualified as LintPackages
-import NixCompile.Log
-import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Loc (..), Span (..))
 
 cmdCI :: Config.Config -> FilePath -> AppM ()

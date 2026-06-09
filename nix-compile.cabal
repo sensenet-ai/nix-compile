@@ -59,8 +59,8 @@ library
         NixCompile.CLI.Dispatch
         NixCompile.CLI.Report
         NixCompile.CLI.Types
-        NixCompile.Config
-        NixCompile.Diagnostic
+        NixCompile.Core.Config
+        NixCompile.Core.Diagnostic
         NixCompile.Bash.Facts
         NixCompile.Bash.Parse
         NixCompile.Bash.Patterns
@@ -71,7 +71,7 @@ library
         NixCompile.Infer.Constraint
         NixCompile.Infer.Unify
         NixCompile.Lint.Forbidden
-        NixCompile.Log
+        NixCompile.Core.Log
         NixCompile.LSP.Handlers
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
@@ -95,7 +95,7 @@ library
         NixCompile.Nix.Types
         NixCompile.Syntax.Annotation
         NixCompile.Syntax.Pretty
-        NixCompile.Safety
+        NixCompile.Core.Safety
         NixCompile.Schema.Build
         NixCompile.Types
     build-depends:

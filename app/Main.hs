@@ -14,8 +14,8 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
 import NixCompile.CLI.Dispatch
-import NixCompile.Config qualified as Config
-import NixCompile.Log
+import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Log
 
 main :: IO ()
 main = do

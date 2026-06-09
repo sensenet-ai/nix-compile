@@ -39,7 +39,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Katip (Severity (ErrorS))
 import NixCompile.Bash.Parse (BashAST (..))
-import NixCompile.Diagnostic (Diagnostic (..))
+import NixCompile.Core.Diagnostic (Diagnostic (..))
 import NixCompile.Types (Loc (..), Span (..))
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (Position (..))

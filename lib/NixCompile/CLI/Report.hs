@@ -28,14 +28,14 @@ import System.Exit (exitFailure, exitSuccess)
 import System.IO (hIsTerminalDevice, stderr)
 import Text.Read (readMaybe)
 
-import NixCompile.Config qualified as Config
-import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Diagnostic qualified as Diag
+import NixCompile.Core.Log
 import NixCompile.Lint.Derivation qualified as Derivation
 import NixCompile.Lint.Forbidden (Violation (..))
 import NixCompile.Lint.Nix qualified as Lint
 import NixCompile.Lint.Packages qualified as LintPackages
 import NixCompile.Lint.Patterns qualified as LintPatterns
-import NixCompile.Log
 import NixCompile.Types (Loc (..), Span (..))
 
 {- | Render a diagnostic in the unified clippy layout and log it at its own

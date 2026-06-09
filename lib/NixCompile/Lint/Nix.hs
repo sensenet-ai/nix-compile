@@ -28,7 +28,7 @@ import Data.Text qualified as T
 import Katip (Severity (ErrorS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import NixCompile.Diagnostic (Diagnostic (..))
+import NixCompile.Core.Diagnostic (Diagnostic (..))
 import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 

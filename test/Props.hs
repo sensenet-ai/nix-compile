@@ -51,8 +51,10 @@ import NixCompile.CLI.Bash (safeReadFile)
 import NixCompile.CLI.Check (checkWithViolations, detectUnsupportedConstruct, formatTypeError)
 import NixCompile.CLI.Report (formatBareCommand, formatDynamicCommand, formatPackageViolations, indentBlock, partitionViolations)
 import NixCompile.CLI.Types (CICounts (..), TCResult (..), crossMarker, emptyCICounts, okMarker, unsupMarker)
-import NixCompile.Config qualified as Cfg
-import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Core.Config qualified as Cfg
+import NixCompile.Core.Diagnostic qualified as Diag
+import NixCompile.Core.Log (Severity (ErrorS, WarningS), runLog)
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
@@ -66,14 +68,12 @@ import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolat
 import NixCompile.Lint.Nix
 import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
-import NixCompile.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Inference (Binding, inferExpr, inferModuleExpr)
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
-import NixCompile.Safety qualified as Safety
 import NixCompile.Schema.Build (buildSchema)
 import ProjectCacheSpec qualified
 import Psychotic qualified

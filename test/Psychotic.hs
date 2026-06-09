@@ -32,11 +32,11 @@ import NixCompile.Bash.Patterns (
   escapeForSingleQuoted,
   isSafeDefaultValue,
  )
-import NixCompile.Config qualified as Cfg
+import NixCompile.Core.Config qualified as Cfg
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Lint.Combined qualified as LC
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, inferExprWithEnv)
-import NixCompile.Safety qualified as Safety
 import NixCompile.Syntax.Parse (parseNixExpr)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))

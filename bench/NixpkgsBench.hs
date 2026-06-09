@@ -34,8 +34,8 @@ import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import GHC.Conc (getNumCapabilities)
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.LSP.ProjectCache qualified as PC
-import NixCompile.Safety qualified as Safety
 import System.Directory (
   doesDirectoryExist,
   getHomeDirectory,

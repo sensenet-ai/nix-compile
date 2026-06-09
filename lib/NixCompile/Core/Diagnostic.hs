@@ -12,7 +12,7 @@
 --   golden-test. Colour and stream routing live in the katip layer, not here.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Diagnostic (
+module NixCompile.Core.Diagnostic (
   Diagnostic (..),
   Snippet (..),
   severityWord,

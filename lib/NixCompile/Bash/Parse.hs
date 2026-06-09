@@ -28,7 +28,7 @@ import Control.Monad.Identity (Identity, runIdentity)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
-import NixCompile.Safety qualified as Safety
+import NixCompile.Core.Safety qualified as Safety
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (
   ParseResult (..),

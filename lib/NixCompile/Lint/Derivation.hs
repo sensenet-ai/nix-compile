@@ -31,7 +31,7 @@ import Data.Text qualified as T
 import Katip (Severity (WarningS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated (NExprLoc, SrcSpan)
-import NixCompile.Diagnostic (Diagnostic (..))
+import NixCompile.Core.Diagnostic (Diagnostic (..))
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 

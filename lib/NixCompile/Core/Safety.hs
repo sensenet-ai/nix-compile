@@ -14,7 +14,7 @@
 --                                              // single source of safety
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Safety (
+module NixCompile.Core.Safety (
   -- * Constants
   maxRecursionDepth,
 

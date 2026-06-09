@@ -40,6 +40,7 @@ import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..), Params (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Bash.Parse (parseBash)
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.Convention (straylight)
 import NixCompile.Layout.Graph qualified as Mod
@@ -52,7 +53,6 @@ import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, extendImport, inferEx
 import NixCompile.Nix.Inference qualified as Infer
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
-import NixCompile.Safety qualified as Safety
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Syntax.Parse qualified as NixParse
 import NixCompile.Types (Loc (..), Span (..))

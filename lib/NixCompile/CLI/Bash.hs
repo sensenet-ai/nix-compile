@@ -25,11 +25,11 @@ import NixCompile.Bash.Parse (parseBash)
 import NixCompile.CLI.Check
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
-import NixCompile.Config qualified as Config
+import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Log
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve)
 import NixCompile.Lint.Forbidden (findViolations, violationDiagnostic)
-import NixCompile.Log
 import NixCompile.Schema.Build (validateConfigPaths)
 import NixCompile.Syntax.Parse qualified as Nix
 import NixCompile.Types (Fact (BareCommand, DynamicCommand))

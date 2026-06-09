@@ -42,7 +42,7 @@ import NixCompile
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
-import NixCompile.Config qualified as Cfg
+import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
