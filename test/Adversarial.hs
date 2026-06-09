@@ -44,15 +44,15 @@ import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
 import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Emit.Config (emitConfigFunction)
-import NixCompile.Infer.Constraint (factsToConstraints)
-import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.Inference.Bash.Constraint (factsToConstraints)
+import NixCompile.Inference.Bash.Schema (buildSchema)
+import NixCompile.Inference.Bash.Unify (solve, unify)
+import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations, formatNixViolations)
 import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
-import NixCompile.Nix.Types qualified as NT
-import NixCompile.Schema.Build (buildSchema)
 import System.Timeout (timeout)
 import Test.QuickCheck
 import Test.QuickCheck.Monadic (assert, monadicIO, run)

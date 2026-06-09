@@ -35,8 +35,8 @@ import NixCompile.Bash.Patterns (
 import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (emitConfigFunction)
+import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, inferExprWithEnv)
 import NixCompile.Lint.Combined qualified as LC
-import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, inferExprWithEnv)
 import NixCompile.Syntax.Parse (parseNixExpr)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))

@@ -10,11 +10,11 @@
 --                                                                 — Count Zero
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---   The @infer@ command: run the inference engine ('NixCompile.Nix.Inference')
+--   The @infer@ command: run the inference engine ('NixCompile.Inference.Nix')
 --   over a source file and render it with inline @# :: <type>@ annotations.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Infer (
+module NixCompile.Inference.Nix.Annotate (
   -- * Type-annotation injection (the @infer@ command)
   annotateFile,
   annotateFileWithEnv,
@@ -31,8 +31,8 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Core.Safety qualified as Safety
-import NixCompile.Nix.Inference (Binding (..), InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
-import NixCompile.Nix.Types (prettyType)
+import NixCompile.Inference.Nix (Binding (..), InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
+import NixCompile.Inference.Nix.Type (prettyType)
 import NixCompile.Syntax.Parse (parseNix, parseNixFile)
 import NixCompile.Types (Loc (..), Span (..))
 

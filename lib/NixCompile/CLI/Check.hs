@@ -30,13 +30,13 @@ import NixCompile.Core.Config qualified as Config
 import NixCompile.Core.Diagnostic qualified as Diag
 import NixCompile.Core.Log
 import NixCompile.Core.Safety qualified as Safety
+import NixCompile.Inference.Nix qualified
+import NixCompile.Inference.Nix.Type qualified
 import NixCompile.Layout.ModuleKind (ModuleKind (..), detectKind, detectedKind)
 import NixCompile.Lint.Combined qualified as Combined
 import NixCompile.Lint.Derivation qualified as Derivation
 import NixCompile.Lint.Nix qualified as Lint
 import NixCompile.Lint.Patterns qualified as Patterns
-import NixCompile.Nix.Inference qualified
-import NixCompile.Nix.Types qualified
 import NixCompile.Syntax.Annotation (pattern Layer)
 import NixCompile.Syntax.Parse qualified as Nix
 
@@ -119,12 +119,12 @@ performTypeCheck config file expression skipTypeCheck
       let kind = detectedKind (detectKind file expression)
           infer_
             | kind `elem` [Flake, FlakeModule, NixOSModule, HomeModule, DarwinModule] =
-                NixCompile.Nix.Inference.inferModuleExpr
-            | otherwise = NixCompile.Nix.Inference.inferExpr
+                NixCompile.Inference.Nix.inferModuleExpr
+            | otherwise = NixCompile.Inference.Nix.inferExpr
       -- n.b. `either` forces `infer_ expression` to WHNF inside the `try`, so an
       -- exception from (pure but partial) inference is caught here; `prettyType`
       -- itself stays a thunk, exactly as the old `case` left it.
-      result <- liftIO $ try $ either (pure . Left) (pure . Right . NixCompile.Nix.Types.prettyType . fst) (infer_ expression)
+      result <- liftIO $ try $ either (pure . Left) (pure . Right . NixCompile.Inference.Nix.Type.prettyType . fst) (infer_ expression)
       handleResult result
  where
   handleResult (Left exception) = do

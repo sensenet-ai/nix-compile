@@ -33,9 +33,9 @@ import Nix.Parser (parseNixTextLoc)
 
 -- nix-compile Nix inference
 
+import NixCompile.Inference.Nix qualified as Infer (inferExpr, runInfer, unify)
+import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.Lint.Derivation qualified as DerivLint
-import NixCompile.Nix.Inference qualified as Infer (inferExpr, runInfer, unify)
-import NixCompile.Nix.Types qualified as NT
 import Test.QuickCheck
 import Test.QuickCheck.Monadic (assert, monadicIO, run)
 

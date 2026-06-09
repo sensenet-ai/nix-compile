@@ -34,7 +34,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import NixCompile.Nix.Types (NixType)
+import NixCompile.Inference.Nix.Type (NixType)
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- coeffects (requirements)

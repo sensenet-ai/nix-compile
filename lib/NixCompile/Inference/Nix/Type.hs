@@ -16,7 +16,7 @@
 --                                                     // type // system
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Types (
+module NixCompile.Inference.Nix.Type (
   -- * Types
   NixType (..),
   RowTail (..),
@@ -95,7 +95,7 @@ instance ToJSON NixType
 **variable** standing for "at least these fields, plus whatever @r@ resolves to".
 The row var lets open records accumulate fields across unifications (RC1); its
 lacks-constraints (which labels it must NOT gain) live in a side store in the
-inference state ('NixCompile.Nix.Inference').
+inference state ('NixCompile.Inference.Nix').
 -}
 data RowTail = RClosed | ROpen !TypeVar
   deriving stock (Eq, Ord, Show, Generic)
@@ -113,7 +113,7 @@ pattern TAttrs fields = TRec fields RClosed
 {- | Open-record view. Matching ignores the row variable; building uses the
 anonymous sentinel ('anonRowVar') — fine for pure/display and test construction.
 Inference sites that need field accumulation build @TRec m (ROpen r)@ with a
-FRESH @r@ instead (see 'NixCompile.Nix.Inference.mkOpenRec').
+FRESH @r@ instead (see 'NixCompile.Inference.Nix.mkOpenRec').
 -}
 pattern TAttrsOpen :: Map Text (NixType, Bool) -> NixType
 pattern TAttrsOpen fields <- TRec fields (ROpen _)

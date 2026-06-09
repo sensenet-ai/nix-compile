@@ -27,10 +27,10 @@ import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Core.Config qualified as Config
 import NixCompile.Core.Log
-import NixCompile.Infer.Constraint (factsToConstraints)
-import NixCompile.Infer.Unify (solve)
+import NixCompile.Inference.Bash.Constraint (factsToConstraints)
+import NixCompile.Inference.Bash.Schema (validateConfigPaths)
+import NixCompile.Inference.Bash.Unify (solve)
 import NixCompile.Lint.Forbidden (findViolations, violationDiagnostic)
-import NixCompile.Schema.Build (validateConfigPaths)
 import NixCompile.Syntax.Parse qualified as Nix
 import NixCompile.Types (Fact (BareCommand, DynamicCommand))
 

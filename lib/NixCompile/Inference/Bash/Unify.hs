@@ -16,7 +16,7 @@
 --                                                       // bash // unify
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Infer.Unify (
+module NixCompile.Inference.Bash.Unify (
   unify,
   unifyAll,
   solve,

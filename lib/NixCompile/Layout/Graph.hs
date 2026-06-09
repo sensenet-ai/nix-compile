@@ -55,10 +55,10 @@ import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils qualified as NixPath
 import NixCompile.Core.Safety qualified as Safety
+import NixCompile.Inference.Nix (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
+import NixCompile.Inference.Nix.Type
 import NixCompile.Layout.Convention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Lint.Nix (NixViolation, findNixViolations)
-import NixCompile.Nix.Inference (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
-import NixCompile.Nix.Types
 import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Span)
 import System.Directory (canonicalizePath, doesFileExist)

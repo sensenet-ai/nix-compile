@@ -40,7 +40,7 @@ import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
-import NixCompile.Nix.Types
+import NixCompile.Inference.Nix.Type
 import NixCompile.Syntax.Annotation (pattern Layer)
 import NixCompile.Types (Loc (..), Span (..))
 

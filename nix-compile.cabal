@@ -68,17 +68,17 @@ library
         NixCompile.Docs.Search
         NixCompile.Docs.Types
         NixCompile.Emit.Config
-        NixCompile.Infer.Constraint
-        NixCompile.Infer.Unify
+        NixCompile.Inference.Bash.Constraint
+        NixCompile.Inference.Bash.Unify
         NixCompile.Lint.Forbidden
         NixCompile.Core.Log
         NixCompile.LSP.Handlers
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
-        NixCompile.Nix.Inference
+        NixCompile.Inference.Nix
         NixCompile.Syntax.Effect
         NixCompile.Nix.Flake
-        NixCompile.Nix.Infer
+        NixCompile.Inference.Nix.Annotate
         NixCompile.Layout.Convention
         NixCompile.Lint.Nix
         NixCompile.Lint.Combined
@@ -92,11 +92,11 @@ library
         NixCompile.Syntax.Parse
         NixCompile.Nix.Formatter
         NixCompile.Layout.Scope
-        NixCompile.Nix.Types
+        NixCompile.Inference.Nix.Type
         NixCompile.Syntax.Annotation
         NixCompile.Syntax.Pretty
         NixCompile.Core.Safety
-        NixCompile.Schema.Build
+        NixCompile.Inference.Bash.Schema
         NixCompile.Types
     build-depends:
         aeson >= 2.0 && < 2.3,

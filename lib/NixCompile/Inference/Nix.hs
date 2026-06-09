@@ -14,7 +14,7 @@
 --                                                     // type // inference
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Inference (
+module NixCompile.Inference.Nix (
   -- * Inference
   inferExpr,
   inferModuleExpr,
@@ -60,7 +60,7 @@ import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, nullSpan)
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
-import NixCompile.Nix.Types
+import NixCompile.Inference.Nix.Type
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 

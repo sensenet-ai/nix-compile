@@ -17,7 +17,7 @@
 --                                                     // schema // from facts
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Schema.Build (
+module NixCompile.Inference.Bash.Schema (
   buildSchema,
   resolveType,
   wasDefaulted,

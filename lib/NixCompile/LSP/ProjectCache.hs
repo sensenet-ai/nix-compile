@@ -78,13 +78,13 @@ import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Utils qualified as NixUtils
 import NixCompile.Core.Safety qualified as Safety
-import NixCompile.Nix.Inference (
+import NixCompile.Inference.Nix (
   TypeEnv (..),
   builtinEnv,
   extendImport,
   inferExprWithEnv,
  )
-import NixCompile.Nix.Types (NixType (..))
+import NixCompile.Inference.Nix.Type (NixType (..))
 import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, takeDirectory, (</>))

@@ -15,7 +15,7 @@
 --                                                       // facts to // constraints
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Infer.Constraint (
+module NixCompile.Inference.Bash.Constraint (
   factsToConstraints,
   factToConstraints,
 )

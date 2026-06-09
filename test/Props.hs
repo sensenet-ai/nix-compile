@@ -56,8 +56,12 @@ import NixCompile.Core.Diagnostic qualified as Diag
 import NixCompile.Core.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
-import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
-import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.Inference.Bash.Constraint (factToConstraints, factsToConstraints)
+import NixCompile.Inference.Bash.Schema (buildSchema)
+import NixCompile.Inference.Bash.Unify (solve, unify)
+import NixCompile.Inference.Nix (Binding, inferExpr, inferModuleExpr)
+import NixCompile.Inference.Nix.Annotate (annotateExpr)
+import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
 import NixCompile.Layout.Convention qualified as LC
 import NixCompile.Layout.Graph (buildModuleGraph, moduleTypes)
@@ -70,10 +74,6 @@ import NixCompile.Lint.Nix
 import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
 import NixCompile.Nix.Formatter (formatNixFile)
-import NixCompile.Nix.Infer (annotateExpr)
-import NixCompile.Nix.Inference (Binding, inferExpr, inferModuleExpr)
-import NixCompile.Nix.Types qualified as NT
-import NixCompile.Schema.Build (buildSchema)
 import NixCompile.Syntax.Effect
 import ProjectCacheSpec qualified
 import Psychotic qualified

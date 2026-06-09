@@ -62,9 +62,9 @@ import Data.Text.IO qualified as TIO
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
 import NixCompile.Core.Config qualified as Config
-import NixCompile.Infer.Constraint (factsToConstraints)
-import NixCompile.Infer.Unify (solve)
-import NixCompile.Schema.Build (buildSchema, validateConfigPaths)
+import NixCompile.Inference.Bash.Constraint (factsToConstraints)
+import NixCompile.Inference.Bash.Schema (buildSchema, validateConfigPaths)
+import NixCompile.Inference.Bash.Unify (solve)
 import NixCompile.Types
 
 {- | Parse a bash script and extract its schema.
