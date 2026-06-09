@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 
 module NixCompile.LSP.Handlers (
@@ -25,12 +25,10 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.Fix (Fix (..))
-import Data.Functor.Compose (Compose (..))
-import Data.List (nub, sort)
+import Data.List (find, nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe, maybeToList)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Language.LSP.Protocol.Message
@@ -39,7 +37,7 @@ import Language.LSP.Server
 import Language.LSP.VFS (virtualFileText)
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..), Params (..))
-import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc)
+import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.LSP.ProjectCache qualified as PC
@@ -55,7 +53,7 @@ import NixCompile.Nix.ModuleSystem qualified as MS
 import NixCompile.Nix.Parse qualified as NixParse
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
+import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (canonicalizePath, doesFileExist)
@@ -87,9 +85,10 @@ projectCacheRef = unsafePerformIO (newMVar Nothing)
 Subsequent calls return the same cache.
 -}
 getProjectCache :: IO PC.ProjectCache
-getProjectCache = modifyMVar projectCacheRef $ \case
-  Just pc -> pure (Just pc, pc)
-  Nothing -> do
+getProjectCache = modifyMVar projectCacheRef orCreate
+ where
+  orCreate (Just pc) = pure (Just pc, pc)
+  orCreate Nothing = do
     pc <- PC.newProjectCache
     PC.startWorkers pc
     pure (Just pc, pc)
@@ -106,15 +105,10 @@ lspSafeParse txt = unsafePerformIO $ do
   -- the whole tree — INSIDE the evaluated thunk so any such bottom is forced, and
   -- therefore caught, here.
   r <- try (Exc.evaluate (parseAndCheck txt))
-  pure $ case r of
-    Left (_ :: SomeException) -> Nothing
-    Right res -> res
+  pure $ either (\(_ :: SomeException) -> Nothing) id r
  where
-  parseAndCheck t = case parseNixTextLoc t of
-    Left _ -> Nothing
-    Right e -> case Safety.analyzeDepth e of
-      Left _ -> Nothing
-      Right () -> Just e
+  parseAndCheck t = either (const Nothing) checkDepth (parseNixTextLoc t)
+  checkDepth e = either (const Nothing) (const (Just e)) (Safety.analyzeDepth e)
 
 handlers :: Handlers (LspM ())
 handlers =
@@ -164,14 +158,14 @@ documentOpenHandler notif = do
   -- pick it up, expand to its imports, etc. This replaces voidProjectDiags
   -- as the "warm the cache" entry point.
   liftIO $ do
-    case uriToFilePath uri of
-      Just fp -> do
-        pc <- getProjectCache
-        PC.enqueueFile pc fp
-      Nothing -> pure ()
+    maybe (pure ()) enqueue (uriToFilePath uri)
     -- Keep the existing flake-graph warm path for now; safe to call in
     -- parallel with the per-file cache.
     voidProjectDiags uri
+ where
+  enqueue fp = do
+    pc <- getProjectCache
+    PC.enqueueFile pc fp
 
 documentChangeHandler :: TNotificationMessage 'Method_TextDocumentDidChange -> LspM () ()
 documentChangeHandler notif = do
@@ -180,36 +174,36 @@ documentChangeHandler notif = do
         { _textDocument = VersionedTextDocumentIdentifier{_uri = uri}
         , _contentChanges = cs
         } = params
-  let txt = case cs of
-        (TextDocumentContentChangeEvent change : _)
-          | InL (TextDocumentContentChangePartial _ _ t) <- change -> t
-          | InR (TextDocumentContentChangeWholeDocument t) <- change -> t
-        _ -> ""
+  let txt = firstChangeText cs
   let diags = fullLint txt
   sendNotification SMethod_TextDocumentPublishDiagnostics $
     PublishDiagnosticsParams uri Nothing diags
+
+firstChangeText :: [TextDocumentContentChangeEvent] -> Text
+firstChangeText (TextDocumentContentChangeEvent change : _)
+  | InL (TextDocumentContentChangePartial _ _ t) <- change = t
+  | InR (TextDocumentContentChangeWholeDocument t) <- change = t
+firstChangeText _ = ""
 
 documentSaveHandler :: TNotificationMessage 'Method_TextDocumentDidSave -> LspM () ()
 documentSaveHandler notif = do
   let TNotificationMessage _ _ (DidSaveTextDocumentParams (TextDocumentIdentifier uri) txt) = notif
   liftIO $ do
     invalidateModuleGraphCache uri
-    case uriToFilePath uri of
-      Just fp -> do
-        pc <- getProjectCache
-        -- Per-file invalidation: the saved file + its reverse-dep
-        -- closure are marked Stale; the saved file is re-enqueued
-        -- for immediate recompute; reverse-deps recompute lazily
-        -- when something asks for them.
-        PC.invalidateFile pc fp
-      Nothing -> pure ()
-  case txt of
-    Just t -> do
-      let diags = fullLint t
-      sendNotification SMethod_TextDocumentPublishDiagnostics $
-        PublishDiagnosticsParams uri Nothing diags
-      liftIO $ voidProjectDiags uri
-    Nothing -> return ()
+    maybe (pure ()) invalidate (uriToFilePath uri)
+  maybe (return ()) (publish uri) txt
+ where
+  -- Per-file invalidation: the saved file + its reverse-dep closure are
+  -- marked Stale; the saved file is re-enqueued for immediate recompute;
+  -- reverse-deps recompute lazily when something asks for them.
+  invalidate fp = do
+    pc <- getProjectCache
+    PC.invalidateFile pc fp
+  publish uri t = do
+    let diags = fullLint t
+    sendNotification SMethod_TextDocumentPublishDiagnostics $
+      PublishDiagnosticsParams uri Nothing diags
+    liftIO $ voidProjectDiags uri
 
 documentCloseHandler :: TNotificationMessage 'Method_TextDocumentDidClose -> LspM () ()
 documentCloseHandler notif = do
@@ -223,29 +217,25 @@ hoverHandler req responder = do
   let TRequestMessage _ _ _ params = req :: TRequestMessage 'Method_TextDocumentHover
   let HoverParams textDoc pos _workDone = params
   let TextDocumentIdentifier uri = textDoc
-  let Position l c = pos
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InL $ Hover{_contents = InL noFile, _range = Nothing}
-    Just vf -> do
-      let txt = virtualFileText vf
-      case lspSafeParse txt of
-        Nothing -> responder $ Right $ InL $ Hover{_contents = InL parseErr, _range = Nothing}
-        Just expr -> do
-          env <- liftIO $ buildCrossEnv uri
-          let contents = case inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c) of
-                Nothing -> MarkupContent MarkupKind_Markdown "`no expression at cursor`"
-                Just t ->
-                  let optInfo = case inferOptionAtPath env expr (fromIntegral l) (fromIntegral c) of
-                        Nothing -> ""
-                        Just oi ->
-                          "\n\n*option* `"
-                            <> MS.optPath oi
-                            <> "` : "
-                            <> NT.prettyType (MS.optType oi)
-                            <> (case MS.optDescription oi of Just d -> "\n\n" <> d; Nothing -> "")
-                   in MarkupContent MarkupKind_Markdown ("`: " <> t <> "`" <> optInfo)
-          responder $ Right $ InL $ Hover{_contents = InL contents, _range = Nothing}
+  maybe (hover noFile) (withVf uri pos) mvf
+ where
+  hover markup = responder $ Right $ InL $ Hover{_contents = InL markup, _range = Nothing}
+  withVf uri pos vf = maybe (hover parseErr) (withExpr uri pos) (lspSafeParse (virtualFileText vf))
+  withExpr uri (Position l c) expr = do
+    env <- liftIO $ buildCrossEnv uri
+    hover (maybe noExpr (contents env expr l c) (inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c)))
+  noExpr = MarkupContent MarkupKind_Markdown "`no expression at cursor`"
+  contents env expr l c t =
+    MarkupContent MarkupKind_Markdown ("`: " <> t <> "`" <> optInfo)
+   where
+    optInfo = maybe "" renderOpt (inferOptionAtPath env expr (fromIntegral l) (fromIntegral c))
+    renderOpt oi =
+      "\n\n*option* `"
+        <> MS.optPath oi
+        <> "` : "
+        <> NT.prettyType (MS.optType oi)
+        <> maybe "" ("\n\n" <>) (MS.optDescription oi)
 
 -- ═══════════════════════ definition ═══════════════════════
 
@@ -253,39 +243,31 @@ definitionHandler req responder = do
   let TRequestMessage _ _ _ params = req :: TRequestMessage 'Method_TextDocumentDefinition
   let DefinitionParams textDoc pos _workDone _partialResult = params
   let TextDocumentIdentifier uri = textDoc
-  let Position l c = pos
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR $ InR Null
-    Just vf -> do
-      let txt = virtualFileText vf
-      case lspSafeParse txt of
-        Nothing -> responder $ Right $ InR $ InR Null
-        Just expr -> do
-          sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
-          let cursorLine = fromIntegral l + 1; cursorCol = fromIntegral c + 1
-          case findRef (cursorLine, cursorCol) sg of
-            Nothing -> responder $ Right $ InR $ InR Null
-            Just ref -> case Scope.resolve sg ref of
-              Left _ -> responder $ Right $ InR $ InR Null
-              Right decl -> do
-                let declUri = case Scope.spanFile (Scope.declSpan decl) of
-                      Just f -> filePathToUri f
-                      Nothing -> uri
-                let loc =
-                      Location
-                        declUri
-                        ( Range
-                            (toLspPos (Scope.spanStart (Scope.declSpan decl)))
-                            (toLspPos (Scope.spanEnd (Scope.declSpan decl)))
-                        )
-                responder $ Right $ InL (Definition (InL loc))
+  maybe nullResp (withExpr uri pos) (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR $ InR Null
+  withExpr uri (Position l c) expr = do
+    sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
+    let cursorLine = fromIntegral l + 1; cursorCol = fromIntegral c + 1
+    maybe nullResp (resolveRef uri sg) (findRef (cursorLine, cursorCol) sg)
+  resolveRef uri sg ref = either (const nullResp) (emitDecl uri) (Scope.resolve sg ref)
+  emitDecl uri decl =
+    let declUri = maybe uri filePathToUri (Scope.spanFile (Scope.declSpan decl))
+        loc =
+          Location
+            declUri
+            ( Range
+                (toLspPos (Scope.spanStart (Scope.declSpan decl)))
+                (toLspPos (Scope.spanEnd (Scope.declSpan decl)))
+            )
+     in responder $ Right $ InL (Definition (InL loc))
 
 findRef :: (Int, Int) -> Scope.ScopeGraph -> Maybe Scope.Reference
 findRef (l, c) sg =
   let refs = [r | s <- Map.elems (Scope.sgScopes sg), r <- Scope.scopeReferences s]
       matching = filter (spanContains (l, c) . Scope.refSpan) refs
-   in case matching of [] -> Nothing; (r : _) -> Just r
+   in listToMaybe matching
 
 spanContains :: (Int, Int) -> Scope.SourceSpan -> Bool
 spanContains (cl, cc) sp =
@@ -309,119 +291,107 @@ renameHandler ::
 renameHandler req responder = do
   let TRequestMessage _ _ _ params = req
   let RenameParams _workDone textDoc pos newName = params
-  let TextDocumentIdentifier uri = textDoc; Position l c = pos
+  let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR Null
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR Null
-      Just expr ->
-        let sg = Scope.fromNixExpr Nothing expr
-            cl = fromIntegral l + 1
-            cc = fromIntegral c + 1
-         in case findRef (cl, cc) sg of
-              Nothing -> responder $ Right $ InR Null
-              Just ref -> case Scope.resolve sg ref of
-                Left _ -> responder $ Right $ InR Null
-                Right decl -> do
-                  let allRefs = Scope.findReferences sg decl
-                      declEdit =
-                        TextEdit
-                          ( Range
-                              (toLspPos (Scope.spanStart (Scope.declSpan decl)))
-                              (toLspPos (Scope.spanEnd (Scope.declSpan decl)))
-                          )
-                          newName
-                      refEdits =
-                        [ TextEdit
-                            ( Range
-                                (toLspPos (Scope.spanStart (Scope.refSpan r)))
-                                (toLspPos (Scope.spanEnd (Scope.refSpan r)))
-                            )
-                            newName
-                        | r <- allRefs
-                        ]
-                      wsEdit =
-                        WorkspaceEdit
-                          { _changes = Just (Map.singleton uri (declEdit : refEdits))
-                          , _documentChanges = Nothing
-                          , _changeAnnotations = Nothing
-                          }
-                  responder $ Right $ InL wsEdit
+  maybe nullResp (withExpr uri pos newName) (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR Null
+  withExpr uri (Position l c) newName expr =
+    let sg = Scope.fromNixExpr Nothing expr
+        cl = fromIntegral l + 1
+        cc = fromIntegral c + 1
+     in maybe nullResp (resolveRef uri sg newName) (findRef (cl, cc) sg)
+  resolveRef uri sg newName ref = either (const nullResp) (emitEdit uri sg newName) (Scope.resolve sg ref)
+  emitEdit uri sg newName decl =
+    let allRefs = Scope.findReferences sg decl
+        declEdit =
+          TextEdit
+            ( Range
+                (toLspPos (Scope.spanStart (Scope.declSpan decl)))
+                (toLspPos (Scope.spanEnd (Scope.declSpan decl)))
+            )
+            newName
+        refEdits =
+          [ TextEdit
+              ( Range
+                  (toLspPos (Scope.spanStart (Scope.refSpan r)))
+                  (toLspPos (Scope.spanEnd (Scope.refSpan r)))
+              )
+              newName
+          | r <- allRefs
+          ]
+        wsEdit =
+          WorkspaceEdit
+            { _changes = Just (Map.singleton uri (declEdit : refEdits))
+            , _documentChanges = Nothing
+            , _changeAnnotations = Nothing
+            }
+     in responder $ Right $ InL wsEdit
 
 -- ═══════════════════════ references ═══════════════════════
 
 referencesHandler req responder = do
   let TRequestMessage _ _ _ params = req :: TRequestMessage 'Method_TextDocumentReferences
   let ReferenceParams textDoc pos _workDone _partialResult _context = params
-  let TextDocumentIdentifier uri = textDoc; Position l c = pos
+  let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR Null
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR Null
-      Just expr -> do
-        sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
-        let cl = fromIntegral l + 1; cc = fromIntegral c + 1
-        case findRef (cl, cc) sg of
-          Nothing -> responder $ Right $ InR Null
-          Just ref -> case Scope.resolve sg ref of
-            Left _ -> responder $ Right $ InR Null
-            Right decl -> do
-              let allRefs = Scope.findReferences sg decl
-                  declLoc =
-                    Location
-                      uri
-                      ( Range
-                          (toLspPos (Scope.spanStart (Scope.declSpan decl)))
-                          (toLspPos (Scope.spanEnd (Scope.declSpan decl)))
-                      )
-                  refLocs =
-                    map
-                      ( \r ->
-                          let refUri = case Scope.spanFile (Scope.refSpan r) of
-                                Just f -> filePathToUri f
-                                Nothing -> uri
-                           in Location
-                                refUri
-                                ( Range
-                                    (toLspPos (Scope.spanStart (Scope.refSpan r)))
-                                    (toLspPos (Scope.spanEnd (Scope.refSpan r)))
-                                )
-                      )
-                      allRefs
-              responder $ Right $ InL (declLoc : refLocs)
+  maybe nullResp (withExpr uri pos) (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR Null
+  withExpr uri (Position l c) expr = do
+    sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
+    let cl = fromIntegral l + 1; cc = fromIntegral c + 1
+    maybe nullResp (resolveRef uri sg) (findRef (cl, cc) sg)
+  resolveRef uri sg ref = either (const nullResp) (emitRefs uri sg) (Scope.resolve sg ref)
+  emitRefs uri sg decl =
+    let allRefs = Scope.findReferences sg decl
+        declLoc =
+          Location
+            uri
+            ( Range
+                (toLspPos (Scope.spanStart (Scope.declSpan decl)))
+                (toLspPos (Scope.spanEnd (Scope.declSpan decl)))
+            )
+        refLocs = map (refLoc uri) allRefs
+     in responder $ Right $ InL (declLoc : refLocs)
+  refLoc uri r =
+    let refUri = maybe uri filePathToUri (Scope.spanFile (Scope.refSpan r))
+     in Location
+          refUri
+          ( Range
+              (toLspPos (Scope.spanStart (Scope.refSpan r)))
+              (toLspPos (Scope.spanEnd (Scope.refSpan r)))
+          )
 
 -- ═══════════════════════ completion ═══════════════════════
 
 completionHandler req responder = do
   let TRequestMessage _ _ _ params = req :: TRequestMessage 'Method_TextDocumentCompletion
   let CompletionParams textDoc pos _workDone _partialResult _context = params
-  let TextDocumentIdentifier uri = textDoc; Position l c = pos
+  let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR (InR Null)
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR (InR Null)
-      Just expr -> do
-        env <- liftIO $ buildCrossEnv uri
-        let items = completionsForExpr env expr (fromIntegral l) (fromIntegral c)
-        responder $ Right $ InL items
+  maybe nullResp (withExpr uri pos) (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR (InR Null)
+  withExpr uri (Position l c) expr = do
+    env <- liftIO $ buildCrossEnv uri
+    let items = completionsForExpr env expr (fromIntegral l) (fromIntegral c)
+    responder $ Right $ InL items
 
 completionsForExpr :: TypeEnv -> NExprLoc -> Int -> Int -> [CompletionItem]
 completionsForExpr _env expr l c =
-  case prefixAtCursor l c of
-    Nothing -> []
-    Just pfx ->
-      let scoped = scopeCompletions expr pfx
-          builtins' = builtinCompletions pfx
-          opts = MS.extractOptions expr
-          matchingOpts = Map.filterWithKey (\k _ -> pfx `T.isPrefixOf` k) opts
-          optItems =
-            [ mkCompletionItem k (Just CompletionItemKind_Property) (Just (NT.prettyType (MS.optType v)))
-            | (k, v) <- Map.toList matchingOpts
-            ]
-       in nub $ scoped ++ builtins' ++ optItems
+  maybe [] withPfx (prefixAtCursor l c)
+ where
+  withPfx pfx =
+    let scoped = scopeCompletions expr pfx
+        builtins' = builtinCompletions pfx
+        opts = MS.extractOptions expr
+        matchingOpts = Map.filterWithKey (\k _ -> pfx `T.isPrefixOf` k) opts
+        optItems =
+          [ mkCompletionItem k (Just CompletionItemKind_Property) (Just (NT.prettyType (MS.optType v)))
+          | (k, v) <- Map.toList matchingOpts
+          ]
+     in nub $ scoped ++ builtins' ++ optItems
 
 prefixAtCursor :: Int -> Int -> Maybe Text
 prefixAtCursor _l _c = Just ""
@@ -437,7 +407,7 @@ builtinCompletions pfx =
 
 builtinItem :: Text -> CompletionItem
 builtinItem name =
-  let detail = case Map.lookup name (envBindings builtinEnv) of Just s -> Just (NT.prettyScheme s); Nothing -> Nothing
+  let detail = fmap NT.prettyScheme (Map.lookup name (envBindings builtinEnv))
       kind = if "builtins" `T.isPrefixOf` name then CompletionItemKind_Module else CompletionItemKind_Function
    in mkCompletionItem name (Just kind) detail
 
@@ -470,40 +440,33 @@ mkCompletionItem label' kind' detail' =
 signatureHelpHandler req responder = do
   let TRequestMessage _ _ _ params = req :: TRequestMessage 'Method_TextDocumentSignatureHelp
   let SignatureHelpParams{_textDocument = textDoc, _position = pos} = params
-  let TextDocumentIdentifier uri = textDoc; Position l c = pos
+  let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR Null
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR Null
-      Just expr -> do
-        env <- liftIO $ buildCrossEnv uri
-        case signatureAtCursor env expr (fromIntegral l) (fromIntegral c) of
-          Just sh -> responder $ Right $ InL sh
-          Nothing -> responder $ Right $ InR Null
+  maybe nullResp (withExpr uri pos) (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR Null
+  withExpr uri (Position l c) expr = do
+    env <- liftIO $ buildCrossEnv uri
+    maybe nullResp (\sh -> responder $ Right $ InL sh) (signatureAtCursor env expr (fromIntegral l) (fromIntegral c))
 
 signatureAtCursor :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe SignatureHelp
 signatureAtCursor _env expr l c = do
   target <- findExprAt l c expr
-  let funcCall = findEnclosingCall expr target
-  case funcCall of
-    Nothing -> Nothing
-    Just (funcExpr, _) -> case exprName funcExpr of
-      Nothing -> Nothing
-      Just name -> lookupBuiltinSig name
+  (funcExpr, _) <- findEnclosingCall expr target
+  name <- exprName funcExpr
+  lookupBuiltinSig name
 
 findEnclosingCall :: NExprLoc -> NExprLoc -> Maybe (NExprLoc, [NExprLoc])
 findEnclosingCall root target = go root
  where
-  go (Fix (Compose (AnnUnit _ e))) = case e of
-    NApp func arg
-      | arg == target -> Just (func, [arg])
-      | otherwise -> go func <|> go arg <|> deepSearch
+  go (Layer (NApp func arg))
+    | arg == target = Just (func, [arg])
+    | otherwise = go func <|> go arg <|> deepSearch
+   where
+    deepSearch = maybe (fmap addArg (go arg)) (Just . addArg) (go func)
      where
-      deepSearch = case go func of
-        Nothing -> case go arg of Nothing -> Nothing; Just (f, as) -> Just (f, arg : as)
-        Just (f, as) -> Just (f, arg : as)
-    _ -> checkChildren (childExprs e)
+      addArg (f, as) = (f, arg : as)
+  go (Layer e) = checkChildren (childExprs e)
   checkChildren [] = Nothing
   checkChildren (x : xs) = go x <|> checkChildren xs
 
@@ -532,14 +495,15 @@ codeActionHandler req responder = do
   let CodeActionParams _workDone _partialResult textDoc range _context = params
   let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR Null
-    Just vf -> do
-      let txt = virtualFileText vf
-      let diags = fullLint txt
-      let inRange = filter (rangeOverlapsDiag range) diags
-      let actions = concatMap violationAction inRange
-      responder $ Right $ InL (map InR actions)
+  maybe nullResp (withVf range) mvf
+ where
+  nullResp = responder $ Right $ InR Null
+  withVf range vf = do
+    let txt = virtualFileText vf
+        diags = fullLint txt
+        inRange = filter (rangeOverlapsDiag range) diags
+        actions = concatMap violationAction inRange
+    responder $ Right $ InL (map InR actions)
 
 rangeOverlapsDiag :: Range -> Diagnostic -> Bool
 rangeOverlapsDiag range (Diagnostic r _ _ _ _ _ _ _ _) =
@@ -581,21 +545,17 @@ documentSymbolHandler req responder = do
   let DocumentSymbolParams _workDone _partialResult textDoc = params
   let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR (InL [])
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR (InL [])
-      Just expr -> do
-        let syms = collectTopBindingSymbols expr
-        responder $ Right $ InR (InL syms)
+  maybe emptyResp withExpr (mvf >>= lspSafeParse . virtualFileText)
+ where
+  emptyResp = responder $ Right $ InR (InL [])
+  withExpr expr = responder $ Right $ InR (InL (collectTopBindingSymbols expr))
 
 collectTopBindingSymbols :: NExprLoc -> [DocumentSymbol]
-collectTopBindingSymbols (Fix (Compose (AnnUnit _ e))) = case e of
-  NSet _ bindings -> concatMap bindingToSymbol bindings
-  NAbs _ body -> collectTopBindingSymbols body
-  NLet _ body -> collectTopBindingSymbols body
-  NWith _ body -> collectTopBindingSymbols body
-  _ -> []
+collectTopBindingSymbols (Layer (NSet _ bindings)) = concatMap bindingToSymbol bindings
+collectTopBindingSymbols (Layer (NAbs _ body)) = collectTopBindingSymbols body
+collectTopBindingSymbols (Layer (NLet _ body)) = collectTopBindingSymbols body
+collectTopBindingSymbols (Layer (NWith _ body)) = collectTopBindingSymbols body
+collectTopBindingSymbols _ = []
 
 bindingToSymbol :: Binding NExprLoc -> [DocumentSymbol]
 bindingToSymbol (NamedVar (StaticKey name :| []) expr _) =
@@ -606,7 +566,7 @@ bindingToSymbol (Inherit _ _ _) = []
 bindingToSymbol _ = []
 
 exprSpan :: NExprLoc -> Range
-exprSpan (Fix (Compose (AnnUnit srcSpan _))) =
+exprSpan (LayerAnn srcSpan _) =
   let sp = srcSpanToSpan srcSpan
    in Range
         (Position (fromIntegral (locLine (spanStart sp) - 1)) (fromIntegral (locCol (spanStart sp) - 1)))
@@ -617,21 +577,19 @@ mkDocumentSymbol name kind range children =
   DocumentSymbol name Nothing kind Nothing Nothing range range (Just children)
 
 symKind :: NExprLoc -> SymbolKind
-symKind (Fix (Compose (AnnUnit _ e))) = case e of
-  NAbs _ _ -> SymbolKind_Function
-  NSet _ _ -> SymbolKind_Object
-  NList _ -> SymbolKind_Array
-  NStr _ -> SymbolKind_String
-  NConstant (NInt _) -> SymbolKind_Number
-  NConstant (NFloat _) -> SymbolKind_Number
-  NConstant (NBool _) -> SymbolKind_Boolean
-  NApp _ _ -> SymbolKind_Function
-  _ -> SymbolKind_Variable
+symKind (Layer (NAbs _ _)) = SymbolKind_Function
+symKind (Layer (NSet _ _)) = SymbolKind_Object
+symKind (Layer (NList _)) = SymbolKind_Array
+symKind (Layer (NStr _)) = SymbolKind_String
+symKind (Layer (NConstant (NInt _))) = SymbolKind_Number
+symKind (Layer (NConstant (NFloat _))) = SymbolKind_Number
+symKind (Layer (NConstant (NBool _))) = SymbolKind_Boolean
+symKind (Layer (NApp _ _)) = SymbolKind_Function
+symKind _ = SymbolKind_Variable
 
 childSymbols :: NExprLoc -> [DocumentSymbol]
-childSymbols (Fix (Compose (AnnUnit _ e))) = case e of
-  NSet _ bindings -> concatMap bindingToSymbol bindings
-  _ -> []
+childSymbols (Layer (NSet _ bindings)) = concatMap bindingToSymbol bindings
+childSymbols _ = []
 
 -- ═══════════════════════ semantic tokens ═══════════════════════
 
@@ -640,13 +598,10 @@ semanticTokensFullHandler req responder = do
   let SemanticTokensParams _workDone _partialResult textDoc = params
   let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR Null
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR Null
-      Just expr -> do
-        let tokens = semanticTokens expr
-        responder $ Right $ InL tokens
+  maybe nullResp withExpr (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR Null
+  withExpr expr = responder $ Right $ InL (semanticTokens expr)
 
 data RawToken = RawToken
   { rtLine :: Int
@@ -670,7 +625,7 @@ semanticTokens expr =
 collectTokens :: NExprLoc -> [RawToken]
 collectTokens = go
  where
-  go (Fix (Compose (AnnUnit srcSpan e))) =
+  go (LayerAnn srcSpan e) =
     let sp = srcSpanToSpan srcSpan
         l = locLine (spanStart sp)
         c = locCol (spanStart sp)
@@ -679,19 +634,18 @@ collectTokens = go
         len = max 1 (if l == el then ec - c else 0)
      in localToken e l c len ++ concatMap go (childExprs e)
 
-  localToken e' l c len = case e' of
-    NSym name
-      | varNameText name `elem` reservedWords -> [RawToken l c len SemanticTokenTypes_Keyword []]
-      | Map.member (varNameText name) (envBindings builtinEnv) -> [RawToken l c len SemanticTokenTypes_Function [SemanticTokenModifiers_DefaultLibrary]]
-      | otherwise -> [RawToken l c len SemanticTokenTypes_Variable []]
-    NStr _ -> [RawToken l c len SemanticTokenTypes_String []]
-    NConstant (NInt _) -> [RawToken l c len SemanticTokenTypes_Number []]
-    NConstant (NFloat _) -> [RawToken l c len SemanticTokenTypes_Number []]
-    NConstant (NBool _) -> [RawToken l c len SemanticTokenTypes_Keyword []]
-    NConstant NNull -> [RawToken l c len SemanticTokenTypes_Keyword []]
-    NLiteralPath _ -> [RawToken l c len SemanticTokenTypes_String []]
-    NEnvPath _ -> [RawToken l c len SemanticTokenTypes_String []]
-    _ -> []
+  localToken (NSym name) l c len
+    | varNameText name `elem` reservedWords = [RawToken l c len SemanticTokenTypes_Keyword []]
+    | Map.member (varNameText name) (envBindings builtinEnv) = [RawToken l c len SemanticTokenTypes_Function [SemanticTokenModifiers_DefaultLibrary]]
+    | otherwise = [RawToken l c len SemanticTokenTypes_Variable []]
+  localToken (NStr _) l c len = [RawToken l c len SemanticTokenTypes_String []]
+  localToken (NConstant (NInt _)) l c len = [RawToken l c len SemanticTokenTypes_Number []]
+  localToken (NConstant (NFloat _)) l c len = [RawToken l c len SemanticTokenTypes_Number []]
+  localToken (NConstant (NBool _)) l c len = [RawToken l c len SemanticTokenTypes_Keyword []]
+  localToken (NConstant NNull) l c len = [RawToken l c len SemanticTokenTypes_Keyword []]
+  localToken (NLiteralPath _) l c len = [RawToken l c len SemanticTokenTypes_String []]
+  localToken (NEnvPath _) l c len = [RawToken l c len SemanticTokenTypes_String []]
+  localToken _ _ _ _ = []
 
 reservedWords :: [Text]
 reservedWords = ["if", "then", "else", "let", "in", "with", "rec", "inherit", "assert", "import"]
@@ -708,23 +662,25 @@ encToken tokens = go tokens (0, 0) []
      in go ts (rtLine t, rtCol t) (acc ++ [dLine, dCol, fromIntegral (rtLen t), tIdx, fromIntegral bits])
 
 tokenTypeIndex :: SemanticTokenTypes -> Int
-tokenTypeIndex t = case toEnumBaseType t of
-  "keyword" -> 0
-  "function" -> 1
-  "variable" -> 2
-  "parameter" -> 3
-  "type" -> 4
-  "string" -> 5
-  "number" -> 6
-  "property" -> 7
-  _ -> 0
+tokenTypeIndex = idx . toEnumBaseType
+ where
+  idx "keyword" = 0
+  idx "function" = 1
+  idx "variable" = 2
+  idx "parameter" = 3
+  idx "type" = 4
+  idx "string" = 5
+  idx "number" = 6
+  idx "property" = 7
+  idx _ = 0
 
 modifierBit :: SemanticTokenModifiers -> Int
-modifierBit m = case toEnumBaseType m of
-  "definition" -> 1
-  "readonly" -> 2
-  "defaultLibrary" -> 4
-  _ -> 0
+modifierBit = bit . toEnumBaseType
+ where
+  bit "definition" = 1
+  bit "readonly" = 2
+  bit "defaultLibrary" = 4
+  bit _ = 0
 
 -- ═══════════════════════ inlay hints ═══════════════════════
 
@@ -733,19 +689,17 @@ inlayHintHandler req responder = do
   let InlayHintParams _workDone textDoc range = params
   let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  case mvf of
-    Nothing -> responder $ Right $ InR Null
-    Just vf -> case lspSafeParse (virtualFileText vf) of
-      Nothing -> responder $ Right $ InR Null
-      Just expr -> do
-        env <- liftIO $ buildCrossEnv uri
-        let hints = inlayHintsForExpr env expr range
-        responder $ Right $ InL hints
+  maybe nullResp (withExpr uri range) (mvf >>= lspSafeParse . virtualFileText)
+ where
+  nullResp = responder $ Right $ InR Null
+  withExpr uri range expr = do
+    env <- liftIO $ buildCrossEnv uri
+    responder $ Right $ InL (inlayHintsForExpr env expr range)
 
 inlayHintsForExpr :: TypeEnv -> NExprLoc -> Range -> [InlayHint]
-inlayHintsForExpr env expr range = case inferExprWithEnv env expr of
-  Left _ -> []
-  Right (_, bindings) ->
+inlayHintsForExpr env expr range = either (const []) withBindings (inferExprWithEnv env expr)
+ where
+  withBindings (_, bindings) =
     [ InlayHint
         (Position (fromIntegral (locLine (spanStart sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1)))
         (InL (": " <> NT.prettyType bindType))
@@ -767,9 +721,9 @@ cursorInRange (Position l c) (Range (Position rl rc) (Position rel rec)) =
 -- ═══════════════════════ diagnostics engine ═══════════════════════
 
 fullLint :: Text -> [Diagnostic]
-fullLint txt = case lspSafeParse txt of
-  Nothing -> []
-  Just expr ->
+fullLint txt = maybe [] withExpr (lspSafeParse txt)
+ where
+  withExpr expr =
     concat [nixVios' expr, derivVios' "<buffer>" expr, patternVios' expr, embeddedBashDiags expr]
 
 nixVios' :: NExprLoc -> [Diagnostic]
@@ -799,13 +753,10 @@ embeddedBashDiags :: NExprLoc -> [Diagnostic]
 embeddedBashDiags expr = concatMap bashDiagFromCall (NixParse.findShellScriptCalls expr)
 
 bashDiagFromCall :: NixParse.ShellScriptCall -> [Diagnostic]
-bashDiagFromCall ssc = case NixParse.extractString (NixParse.sscBody ssc) of
-  Nothing -> []
-  Just (content, _, _) -> case parseBash content of
-    Left _ -> []
-    Right ast ->
-      let violations = Forbidden.findViolations ast
-       in map (toBashDiag (NixParse.sscName ssc)) violations
+bashDiagFromCall ssc = maybe [] withContent (NixParse.extractString (NixParse.sscBody ssc))
+ where
+  withContent (content, _, _) = either (const []) withAst (parseBash content)
+  withAst ast = map (toBashDiag (NixParse.sscName ssc)) (Forbidden.findViolations ast)
 
 toBashDiag :: Text -> Forbidden.Violation -> Diagnostic
 toBashDiag scriptName v =
@@ -835,10 +786,8 @@ n.b. fixed from review-2 (B5 voidProjectDiags was a no-op stub):
 voidProjectDiags :: Uri -> IO ()
 voidProjectDiags uri = do
   _ <- async $ do
-    result <- try (getOrBuildModuleGraph uri)
-    case result :: Either SomeException (Maybe Mod.ModuleGraph) of
-      Left _ -> pure ()
-      Right _ -> pure ()
+    _result <- try (getOrBuildModuleGraph uri) :: IO (Either SomeException (Maybe Mod.ModuleGraph))
+    pure ()
   pure ()
 
 -- ═══════════════════════ legacy lint ═══════════════════════
@@ -851,15 +800,14 @@ toNixDiag NixViolation{nvType = vt, nvSpan = sp, nvContext = ctx} =
   spToDiagnostic (nixCode vt <> ": " <> ctx) sp
 
 nixCode :: ViolationType -> Text
-nixCode = \case
-  VWith -> "ALEPH-N001"
-  VRec -> "ALEPH-N002"
-  VSubstituteAll -> "ALEPH-N005"
-  VRawMkDerivation -> "ALEPH-N006"
-  VRawRunCommand -> "ALEPH-N007"
-  VRawWriteShellApplication -> "ALEPH-N008"
-  VWriteShellScript -> "ALEPH-N011"
-  VLongInlineString n -> "ALEPH-N012 (" <> T.pack (show n) <> " chars)"
+nixCode VWith = "ALEPH-N001"
+nixCode VRec = "ALEPH-N002"
+nixCode VSubstituteAll = "ALEPH-N005"
+nixCode VRawMkDerivation = "ALEPH-N006"
+nixCode VRawRunCommand = "ALEPH-N007"
+nixCode VRawWriteShellApplication = "ALEPH-N008"
+nixCode VWriteShellScript = "ALEPH-N011"
+nixCode (VLongInlineString n) = "ALEPH-N012 (" <> T.pack (show n) <> " chars)"
 
 spToDiagnostic :: Text -> Span -> Diagnostic
 spToDiagnostic msg (Span (Loc line col) (Loc endL endC) _) =
@@ -895,54 +843,51 @@ findExprAt l c root = go root
   spContains (Span (Loc sl sc) (Loc el ec) _) =
     (sl < targetLine || (sl == targetLine && sc <= targetCol))
       && (el > targetLine || (el == targetLine && ec >= targetCol))
-  getSpan (Fix (Compose (AnnUnit sp _))) = srcSpanToSpan sp
+  getSpan (LayerAnn sp _) = srcSpanToSpan sp
   go e
     | not (spContains (getSpan e)) = Nothing
-    | otherwise = case mapMaybe go (childExprs' e) of
-        [] -> Just e
-        (child : _) -> Just child
-  childExprs' (Fix (Compose (AnnUnit _ e))) = case e of
-    NConstant _ -> []
-    NStr _ -> []
-    NLiteralPath _ -> []
-    NEnvPath _ -> []
-    NSym _ -> []
-    NList es -> es
-    NSet _ bs -> concatMap bindingExprs bs
-    NLet bs b -> concatMap bindingExprs bs ++ [b]
-    NIf cond t f' -> [cond, t, f']
-    NWith s b -> [s, b]
-    NAssert cond body -> [cond, body]
-    NAbs (Param _) b -> [b]
-    NAbs (ParamSet _ _ formals) b -> [d | (_, Just d) <- formals] ++ [b]
-    NApp f' a -> [f', a]
-    NSelect mDef obj _path -> maybeToList mDef ++ [obj]
-    NHasAttr e1 _ -> [e1]
-    NUnary _ e1 -> [e1]
-    NBinary _ e1 e2 -> [e1, e2]
-    NSynHole _ -> []
-  bindingExprs (NamedVar _ e _) = [e]; bindingExprs (Inherit mScope _ _) = maybeToList mScope
+    | otherwise = Just (fromMaybe e (listToMaybe (mapMaybe go (childExprs' e))))
+  childExprs' (Layer (NConstant _)) = []
+  childExprs' (Layer (NStr _)) = []
+  childExprs' (Layer (NLiteralPath _)) = []
+  childExprs' (Layer (NEnvPath _)) = []
+  childExprs' (Layer (NSym _)) = []
+  childExprs' (Layer (NList es)) = es
+  childExprs' (Layer (NSet _ bs)) = concatMap bindingExprs bs
+  childExprs' (Layer (NLet bs b)) = concatMap bindingExprs bs ++ [b]
+  childExprs' (Layer (NIf cond t f')) = [cond, t, f']
+  childExprs' (Layer (NWith s b)) = [s, b]
+  childExprs' (Layer (NAssert cond body)) = [cond, body]
+  childExprs' (Layer (NAbs (Param _) b)) = [b]
+  childExprs' (Layer (NAbs (ParamSet _ _ formals) b)) = [d | (_, Just d) <- formals] ++ [b]
+  childExprs' (Layer (NApp f' a)) = [f', a]
+  childExprs' (Layer (NSelect mDef obj _path)) = maybeToList mDef ++ [obj]
+  childExprs' (Layer (NHasAttr e1 _)) = [e1]
+  childExprs' (Layer (NUnary _ e1)) = [e1]
+  childExprs' (Layer (NBinary _ e1 e2)) = [e1, e2]
+  childExprs' (Layer (NSynHole _)) = []
+  bindingExprs (NamedVar _ e _) = [e]
+  bindingExprs (Inherit mScope _ _) = maybeToList mScope
 
 childExprs :: NExprF NExprLoc -> [NExprLoc]
-childExprs e = case e of
-  NConstant _ -> []
-  NStr _ -> []
-  NLiteralPath _ -> []
-  NEnvPath _ -> []
-  NSym _ -> []
-  NList es -> es
-  NSet _ bs -> concatMap bindExprs bs
-  NLet bs b -> concatMap bindExprs bs ++ [b]
-  NIf cond t f' -> [cond, t, f']
-  NWith s b -> [s, b]
-  NAssert cond body -> [cond, body]
-  NAbs _ b -> [b]
-  NApp f' a -> [f', a]
-  NSelect _ b _ -> [b]
-  NHasAttr b _ -> [b]
-  NUnary _ e1 -> [e1]
-  NBinary _ e1 e2 -> [e1, e2]
-  NSynHole _ -> []
+childExprs (NConstant _) = []
+childExprs (NStr _) = []
+childExprs (NLiteralPath _) = []
+childExprs (NEnvPath _) = []
+childExprs (NSym _) = []
+childExprs (NList es) = es
+childExprs (NSet _ bs) = concatMap bindExprs bs
+childExprs (NLet bs b) = concatMap bindExprs bs ++ [b]
+childExprs (NIf cond t f') = [cond, t, f']
+childExprs (NWith s b) = [s, b]
+childExprs (NAssert cond body) = [cond, body]
+childExprs (NAbs _ b) = [b]
+childExprs (NApp f' a) = [f', a]
+childExprs (NSelect _ b _) = [b]
+childExprs (NHasAttr b _) = [b]
+childExprs (NUnary _ e1) = [e1]
+childExprs (NBinary _ e1 e2) = [e1, e2]
+childExprs (NSynHole _) = []
 
 bindExprs :: Binding NExprLoc -> [NExprLoc]
 bindExprs (NamedVar _ e _) = [e]
@@ -954,24 +899,21 @@ inferExprAt expr l c = inferExprAtWithEnv builtinEnv expr l c
 inferExprAtWithEnv :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe Text
 inferExprAtWithEnv env expr l c = do
   target <- findExprAt l c expr
-  let targetName = exprName target
-  case inferExprWithEnv env expr of
-    Right (_, bindings) -> case targetName of
-      Just name -> case filter (\(Infer.Binding n _ _) -> n == name) bindings of
-        (Infer.Binding _ t _sp : _) -> Just (NT.prettyType t)
-        [] -> inferTarget' target
-      Nothing -> inferTarget' target
-    Left _ -> inferTarget' target
+  either (const (inferTarget' target)) (fromBindings target) (inferExprWithEnv env expr)
  where
-  inferTarget' te = case inferExprWithEnv builtinEnv te of
-    Right (t, _) -> Just (NT.prettyType t)
-    Left _ -> Just "TYPE_ERROR"
+  fromBindings target (_, bindings) =
+    maybe (inferTarget' target) (fromName target bindings) (exprName target)
+  fromName target bindings name =
+    maybe (inferTarget' target) namedType (find (\(Infer.Binding n _ _) -> n == name) bindings)
+   where
+    namedType (Infer.Binding _ t _sp) = Just (NT.prettyType t)
+  inferTarget' te =
+    either (const (Just "TYPE_ERROR")) (\(t, _) -> Just (NT.prettyType t)) (inferExprWithEnv builtinEnv te)
 
 exprName :: NExprLoc -> Maybe Text
-exprName (Fix (Compose (AnnUnit _ e))) = case e of
-  NSym name -> Just $ varNameText name
-  NSelect _ _ (StaticKey k :| _) -> Just $ varNameText k
-  _ -> Nothing
+exprName (Layer (NSym name)) = Just $ varNameText name
+exprName (Layer (NSelect _ _ (StaticKey k :| _))) = Just $ varNameText k
+exprName _ = Nothing
 
 -- ═══════════════════════ cross-module helpers ═══════════════════════
 
@@ -982,14 +924,12 @@ projectRootWalkupLimit :: Int
 projectRootWalkupLimit = 64
 
 findProjectRoot :: Uri -> IO (Maybe FilePath)
-findProjectRoot uri = do
-  case uriToFilePath uri of
-    Nothing -> pure Nothing
-    Just fp -> do
-      canon <- canonicalizePath fp
-      let dir = takeDirectory canon
-      findRoot dir projectRootWalkupLimit
+findProjectRoot uri = maybe (pure Nothing) fromPath (uriToFilePath uri)
  where
+  fromPath fp = do
+    canon <- canonicalizePath fp
+    let dir = takeDirectory canon
+    findRoot dir projectRootWalkupLimit
   findRoot _ 0 = pure Nothing
   findRoot dir n = do
     let flakePath = dir </> "flake.nix"; configPath = dir </> ".nix-compile.dhall"
@@ -1037,40 +977,36 @@ buildCrossEnv uri = do
 legacyBuildCrossEnv :: Uri -> IO TypeEnv
 legacyBuildCrossEnv uri = do
   mMg <- getOrBuildModuleGraph uri
-  case mMg of
-    Nothing -> pure builtinEnv
-    Just mg -> do
-      let canonicalTypes = Mod.mgModuleTypes mg
-          baseEnv = builtinEnv{envImportTypes = canonicalTypes}
-          finalEnv =
+  maybe (pure builtinEnv) withMg mMg
+ where
+  withMg mg = pure finalEnv
+   where
+    canonicalTypes = Mod.mgModuleTypes mg
+    baseEnv = builtinEnv{envImportTypes = canonicalTypes}
+    finalEnv =
+      foldr
+        ( \(_, m) acc ->
             foldr
-              ( \(_, m) acc ->
-                  foldr
-                    ( \imp acc' ->
-                        let raw = T.unpack (Mod.impRawPath imp)
-                         in case Map.lookup (Mod.impPath imp) canonicalTypes of
-                              Just t -> extendImport raw t acc'
-                              Nothing -> acc'
-                    )
-                    acc
-                    (Mod.modImports m)
+              ( \imp acc' ->
+                  let raw = T.unpack (Mod.impRawPath imp)
+                   in maybe acc' (\t -> extendImport raw t acc') (Map.lookup (Mod.impPath imp) canonicalTypes)
               )
-              baseEnv
-              (Map.toList (Mod.mgModules mg))
-      pure finalEnv
+              acc
+              (Mod.modImports m)
+        )
+        baseEnv
+        (Map.toList (Mod.mgModules mg))
 
 buildCrossScopeGraphWith :: Uri -> Maybe NExprLoc -> IO Scope.ScopeGraph
 buildCrossScopeGraphWith uri mCurrentExpr = do
   mMg <- getOrBuildModuleGraph uri
-  case mMg of
-    Nothing -> pure Scope.empty
-    Just mg -> do
-      let exprs = Map.map Mod.modExpr (Mod.mgModules mg)
-          currentFile = uriToFilePath uri
-          exprs' = case (currentFile, mCurrentExpr) of
-            (Just f, Just e) -> Map.insert f e exprs
-            _ -> exprs
-      pure $ Scope.fromModuleGraph exprs'
+  maybe (pure Scope.empty) withMg mMg
+ where
+  withMg mg =
+    let exprs = Map.map Mod.modExpr (Mod.mgModules mg)
+        currentFile = uriToFilePath uri
+        exprs' = maybe exprs (\(f, e) -> Map.insert f e exprs) ((,) <$> currentFile <*> mCurrentExpr)
+     in pure $ Scope.fromModuleGraph exprs'
 
 {- | Look up or build the module graph for a project root.
 n.b. fixes from review-2:
@@ -1081,29 +1017,27 @@ n.b. fixes from review-2:
 getOrBuildModuleGraph :: Uri -> IO (Maybe Mod.ModuleGraph)
 getOrBuildModuleGraph uri = do
   mRoot <- findProjectRoot uri
-  case mRoot of
-    Nothing -> pure Nothing
-    Just root -> do
-      cache <- readMVar moduleGraphCache
-      case Map.lookup root cache of
-        Just mg -> pure (Just mg)
-        Nothing -> joinOrStartBuild root
+  maybe (pure Nothing) withRoot mRoot
+ where
+  withRoot root = do
+    cache <- readMVar moduleGraphCache
+    maybe (joinOrStartBuild root) (pure . Just) (Map.lookup root cache)
 
 joinOrStartBuild :: FilePath -> IO (Maybe Mod.ModuleGraph)
 joinOrStartBuild root = do
   -- Check inflight or claim it atomically; whoever wins starts the build.
-  action <- modifyMVar inflightCache $ \m -> case Map.lookup root m of
-    Just a -> pure (m, Right a)
-    Nothing -> do
-      a <- async (startBuild root)
-      pure (Map.insert root a m, Left a)
+  action <- modifyMVar inflightCache claim
   let asyncHandle = either id id action
   waitResult <- waitCatch asyncHandle
   -- Clean up inflight entry no matter what.
   modifyMVar_ inflightCache (pure . Map.delete root)
-  case waitResult of
-    Left _ -> pure Nothing
-    Right r -> pure r
+  either (const (pure Nothing)) pure waitResult
+ where
+  -- Check inflight or claim it atomically; whoever wins starts the build.
+  claim m = maybe (start m) (\a -> pure (m, Right a)) (Map.lookup root m)
+  start m = do
+    a <- async (startBuild root)
+    pure (Map.insert root a m, Left a)
 
 startBuild :: FilePath -> IO (Maybe Mod.ModuleGraph)
 startBuild root = do
@@ -1115,12 +1049,11 @@ startBuild root = do
       -- Catch every exception: hnix parser stack overflow, IO errors,
       -- whatever buildModuleGraph might throw beyond its Either return.
       outcome <- try (Mod.buildModuleGraph straylight flakePath)
-      case outcome :: Either SomeException (Either Text Mod.ModuleGraph) of
-        Left _ -> pure Nothing
-        Right (Left _) -> pure Nothing
-        Right (Right mg) -> do
-          modifyMVar moduleGraphCache (\m -> pure (Map.insert root mg m, ()))
-          pure (Just mg)
+      either (const (pure Nothing)) (either (const (pure Nothing)) cacheIt) (outcome :: Either SomeException (Either Text Mod.ModuleGraph))
+ where
+  cacheIt mg = do
+    modifyMVar moduleGraphCache (\m -> pure (Map.insert root mg m, ()))
+    pure (Just mg)
 
 {- | Invalidate the module-graph cache for the project containing the given URI.
 n.b. fixed from review-2: invalidate on ANY save in the project, not just flake.nix.
@@ -1128,15 +1061,13 @@ n.b. fixed from review-2: invalidate on ANY save in the project, not just flake.
 invalidateModuleGraphCache :: Uri -> IO ()
 invalidateModuleGraphCache uri = do
   mRoot <- findProjectRoot uri
-  case mRoot of
-    Nothing -> pure ()
-    Just root -> modifyMVar_ moduleGraphCache (pure . Map.delete root)
+  maybe (pure ()) (\root -> modifyMVar_ moduleGraphCache (pure . Map.delete root)) mRoot
 
 inferOptionAtPath :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe MS.OptionInfo
 inferOptionAtPath _env expr l c = do
   target <- findExprAt l c expr
   let name = exprName target; opts = MS.extractOptions expr
-  case name >>= (\n -> Map.lookup n opts) of Just oi -> Just oi; Nothing -> Nothing
+  name >>= (\n -> Map.lookup n opts)
 
 noFile :: MarkupContent
 noFile = MarkupContent MarkupKind_Markdown "`no file`"
