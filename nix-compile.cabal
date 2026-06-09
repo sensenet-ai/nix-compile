@@ -80,6 +80,7 @@ library
         NixCompile.Nix.Flake
         NixCompile.Inference.Nix.Annotate
         NixCompile.Inference.Nix.Builtins
+        NixCompile.Inference.Nix.Constraint
         NixCompile.Inference.Nix.Environment
         NixCompile.Inference.Nix.Lib
         NixCompile.Layout.Convention

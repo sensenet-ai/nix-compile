@@ -41,8 +41,7 @@ where
 
 import Control.Exception (IOException, try)
 import Control.Monad (foldM, forM, forM_, replicateM, unless, when)
-import Control.Monad.Except
-import Control.Monad.State.Strict
+import Control.Monad.State.Strict (gets, modify)
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
 import Data.Functor.Compose (Compose (..))
@@ -61,102 +60,11 @@ import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, nullSpan)
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
 import NixCompile.Inference.Nix.Builtins
+import NixCompile.Inference.Nix.Constraint
 import NixCompile.Inference.Nix.Environment
 import NixCompile.Inference.Nix.Type
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
-
--- ═════════════════════════════════════════════════════════════════════════════
--- inference state
--- ═════════════════════════════════════════════════════════════════════════════
-
-{- | inference monad state
-supply = fresh type-var counter; subst = current unifier substitution
-binds = accumulated (name, type, span) triples for the output
-span = current source location (for error messages)
-withMemo = cache for `with` scope field lookups (avoids re-unification)
--}
-data InferState = InferState
-  { inferSupply :: !Int
-  , inferSubst :: !Subst
-  , inferBinds :: ![Binding]
-  , inferSpan :: !(Maybe Span)
-  , inferWithMemo :: !(Map Text NixType)
-  }
-
--- | inference runs in EitherT over State: errors abort, state persists
-type Infer a = ExceptT Text (State InferState) a
-
-{- | run the inference monad, extracting final bindings
-starts with empty substitution / fresh-var counter at 0
--}
-runInfer :: Infer a -> Either Text (a, [Binding])
-runInfer inference =
-  let (eitherResult, inferState) = runState (runExceptT inference) (InferState 0 emptySubst [] Nothing Map.empty)
-   in (\res -> (res, inferBinds inferState)) <$> eitherResult
-
--- ── emit a binding into the result list (prepended, reversed later) ──
-emitBinding :: Text -> NixType -> Span -> Infer ()
-emitBinding name t sp = modify $ \s ->
-  s{inferBinds = Binding name t sp : inferBinds s}
-
--- ── run an action with a specific source span for error reporting ──
-withSpan :: Span -> Infer a -> Infer a
-withSpan sp action = do
-  old <- gets inferSpan
-  modify $ \s -> s{inferSpan = Just sp}
-  res <- action
-  modify $ \s -> s{inferSpan = old}
-  pure res
-
--- ── abort inference with a type error annotated by source location ──
-throwTypeError :: Text -> Infer a
-throwTypeError msg = do
-  mSpan <- gets inferSpan
-  maybe (throwError msg) located mSpan
- where
-  located (Span (Loc l c) _ _) = throwError $ T.pack (show l) <> ":" <> T.pack (show c) <> ": " <> msg
-
--- ── allocate a fresh type variable (monotonically increasing id) ──
-freshVar :: Infer NixType
-freshVar = TVar <$> freshTypeVar
-
--- | allocate a fresh type/row variable (the raw 'TypeVar', for row tails)
-freshTypeVar :: Infer TypeVar
-freshTypeVar = do
-  s <- get
-  put s{inferSupply = inferSupply s + 1}
-  pure $ TypeVar (inferSupply s)
-
--- | build an open record with the given known fields and a FRESH row tail var
-mkOpenRec :: Map Text (NixType, Bool) -> Infer NixType
-mkOpenRec m = do
-  r <- freshTypeVar
-  pure (TRec m (ROpen r))
-
--- ── apply the current substitution to a type (idempotent with current subst) ──
-applyCurrentSubst :: NixType -> Infer NixType
-applyCurrentSubst t = do
-  s <- gets inferSubst
-  pure $ applySubst s t
-
-{- | Extend the current substitution with @v ↦ t@.
-
-We keep a TRIANGULAR substitution (a plain insert) rather than eagerly
-composing. The old @composeSubst@ form re-walked and rewrote the entire
-accumulated substitution on every bind — O(n) per bind, O(n²) over a program
-with n unifications (RC4). 'applySubst' already chases transitively (the @TVar@
-case recurses through bound vars), so resolution still fully normalises on read.
-
-Soundness invariant: every caller binds @v@ to a @t@ that has already been
-resolved against the current substitution ('applyCurrentSubst' in 'unify' /
-'mergeTypes' / 'unifyRec'), and 'bindVar'/'bindRowVar' run the occurs check on
-that resolved @t@. So @v@ is unbound and @t@ is ground w.r.t. current bindings at
-insert time — the substitution stays acyclic and the on-read chase terminates.
--}
-addSubst :: TypeVar -> NixType -> Infer ()
-addSubst v t = modify $ \s ->
-  s{inferSubst = Map.insert v t (inferSubst s)}
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- unification
@@ -1117,14 +1025,6 @@ atomType (NURI _) = TString
 -- ═════════════════════════════════════════════════════════════════════════════
 -- results
 -- ═════════════════════════════════════════════════════════════════════════════
-
--- | a single typed binding (name, resolved type, source location)
-data Binding = Binding
-  { bindName :: !Text
-  , bindType :: !NixType
-  , bindSpan :: !Span
-  }
-  deriving (Eq, Show)
 
 -- | top-level inference result: all bindings + per-file function signatures
 data InferResult = InferResult
