@@ -79,6 +79,7 @@ library
         NixCompile.Syntax.Effect
         NixCompile.Nix.Flake
         NixCompile.Inference.Nix.Annotate
+        NixCompile.Inference.Nix.Environment
         NixCompile.Layout.Convention
         NixCompile.Lint.Nix
         NixCompile.Lint.Combined
