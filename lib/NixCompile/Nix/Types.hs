@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -198,32 +197,32 @@ tRecOpenAnon m = TRec m (ROpen anonRowVar)
 applySubst :: Subst -> NixType -> NixType
 applySubst s = go
  where
-  go = \case
-    TVar v -> case Map.lookup v s of
-      -- a self-map {v ↦ TVar v} is the identity; returning it (instead of
-      -- chasing) avoids an infinite loop. `instantiate` produces such maps
-      -- whenever a fresh var collides with a scheme's quantified var index
-      -- (both draw from 0,1,…), which is why applying ANY polymorphic builtin
-      -- (head/map/filter/…) to an argument used to hang inference.
-      Just (TVar v') | v' == v -> TVar v
-      Just t -> go t
-      Nothing -> TVar v
-    TList t -> TList (go t)
-    TRec m tail_ ->
-      let m' = Map.map (\(t, o) -> (go t, o)) m
-       in case tail_ of
-            RClosed -> TRec m' RClosed
-            ROpen r -> case Map.lookup r s of
-              Nothing -> TRec m' (ROpen r)
-              Just (TVar r') | r' == r -> TRec m' (ROpen r) -- self-map: identity
-              Just (TVar r') -> TRec m' (ROpen r') -- tail var renamed
-              -- row var bound to a record: merge known fields (disjoint by
-              -- lacks) and continue resolving the bound row's own tail
-              Just (TRec m2 tail2) -> go (TRec (Map.union m' m2) tail2)
-              Just _ -> TRec m' (ROpen r) -- defensive: non-row binding
-    TFun a b -> TFun (go a) (go b)
-    TUnion ts -> TUnion (map go ts)
-    t -> t
+  go (TVar v) = resolveVar v (Map.lookup v s)
+  go (TList t) = TList (go t)
+  go (TRec m tail_) = resolveRec (Map.map (\(t, o) -> (go t, o)) m) tail_
+  go (TFun a b) = TFun (go a) (go b)
+  go (TUnion ts) = TUnion (map go ts)
+  go t = t
+
+  -- a self-map {v ↦ TVar v} is the identity; returning it (instead of chasing)
+  -- avoids an infinite loop. `instantiate` produces such maps whenever a fresh
+  -- var collides with a scheme's quantified var index (both draw from 0,1,…),
+  -- which is why applying ANY polymorphic builtin (head/map/filter/…) to an
+  -- argument used to hang inference.
+  resolveVar v (Just (TVar v')) | v' == v = TVar v
+  resolveVar _ (Just t) = go t
+  resolveVar v Nothing = TVar v
+
+  resolveRec m' RClosed = TRec m' RClosed
+  resolveRec m' (ROpen r) = resolveRow m' r (Map.lookup r s)
+
+  resolveRow m' r Nothing = TRec m' (ROpen r)
+  resolveRow m' r (Just (TVar r')) | r' == r = TRec m' (ROpen r) -- self-map: identity
+  resolveRow m' _ (Just (TVar r')) = TRec m' (ROpen r') -- tail var renamed
+  -- row var bound to a record: merge known fields (disjoint by lacks) and
+  -- continue resolving the bound row's own tail
+  resolveRow m' _ (Just (TRec m2 tail2)) = go (TRec (Map.union m' m2) tail2)
+  resolveRow m' r (Just _) = TRec m' (ROpen r) -- defensive: non-row binding
 
 applySubstScheme :: Subst -> Scheme -> Scheme
 applySubstScheme s (Forall vars t) =
@@ -234,15 +233,13 @@ applySubstScheme s (Forall vars t) =
 -- ═════════════════════════════════════════════════════════════════════════════
 
 freeTypeVars :: NixType -> Set TypeVar
-freeTypeVars = \case
-  TVar v -> Set.singleton v
-  TList t -> freeTypeVars t
-  TRec m tail_ ->
-    Set.unions (map (freeTypeVars . fst) (Map.elems m))
-      `Set.union` rowTailVars tail_
-  TFun a b -> freeTypeVars a `Set.union` freeTypeVars b
-  TUnion ts -> Set.unions (map freeTypeVars ts)
-  _ -> Set.empty
+freeTypeVars (TVar v) = Set.singleton v
+freeTypeVars (TList t) = freeTypeVars t
+freeTypeVars (TRec m tail_) =
+  Set.unions (map (freeTypeVars . fst) (Map.elems m)) `Set.union` rowTailVars tail_
+freeTypeVars (TFun a b) = freeTypeVars a `Set.union` freeTypeVars b
+freeTypeVars (TUnion ts) = Set.unions (map freeTypeVars ts)
+freeTypeVars _ = Set.empty
 
 freeTypeVarsScheme :: Scheme -> Set TypeVar
 freeTypeVarsScheme (Forall vars t) =
@@ -275,22 +272,21 @@ prettyScheme (Forall vars t) =
 prettyTypeWith :: Map TypeVar Text -> NixType -> Text
 prettyTypeWith mapping = go
  where
-  go = \case
-    TVar v -> Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
-    TInt -> "Int"
-    TFloat -> "Float"
-    TBool -> "Bool"
-    TString -> "String"
-    TStrLit s -> "\"" <> truncLit s <> "\""
-    TPath -> "Path"
-    TNull -> "Null"
-    TList t -> "[" <> go t <> "]"
-    TRec m RClosed -> prettyAttrs m
-    TRec m (ROpen r) -> prettyAttrs m <> " | " <> Map.findWithDefault ".." r mapping
-    TFun a b -> prettyArg a <> " -> " <> go b
-    TDerivation -> "Derivation"
-    TUnion ts -> T.intercalate " | " (map go ts)
-    TAny -> "Any"
+  go (TVar v) = Map.findWithDefault ("t" <> T.pack (show (unTypeVar v))) v mapping
+  go TInt = "Int"
+  go TFloat = "Float"
+  go TBool = "Bool"
+  go TString = "String"
+  go (TStrLit s) = "\"" <> truncLit s <> "\""
+  go TPath = "Path"
+  go TNull = "Null"
+  go (TList t) = "[" <> go t <> "]"
+  go (TRec m RClosed) = prettyAttrs m
+  go (TRec m (ROpen r)) = prettyAttrs m <> " | " <> Map.findWithDefault ".." r mapping
+  go (TFun a b) = prettyArg a <> " -> " <> go b
+  go TDerivation = "Derivation"
+  go (TUnion ts) = T.intercalate " | " (map go ts)
+  go TAny = "Any"
 
   prettyArg t@(TFun _ _) = "(" <> go t <> ")"
   prettyArg t = go t

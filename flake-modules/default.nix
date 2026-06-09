@@ -58,6 +58,7 @@
           let
             # files swept clean of `case` / `\case` (guards & equations only)
             sweptClean = [
+              "lib/NixCompile/CLI/Check.hs"
               "lib/NixCompile/Nix/Flake.hs"
               "lib/NixCompile/Nix/LayoutConvention.hs"
               "lib/NixCompile/Nix/Lint.hs"
@@ -69,6 +70,7 @@
               "lib/NixCompile/Nix/ModuleKind.hs"
               "lib/NixCompile/Nix/ModuleSystem.hs"
               "lib/NixCompile/Nix/Parse.hs"
+              "lib/NixCompile/Nix/Types.hs"
               "lib/NixCompile/Nix/Scope.hs"
               "lib/NixCompile/Nix/Utils.hs"
             ];
