@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                    // NixCompile.Nix.LintDerivation // lint
@@ -23,8 +23,6 @@ module NixCompile.Nix.LintDerivation (
 )
 where
 
-import Data.Fix (Fix (..))
-import Data.Functor.Compose (Compose (..))
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NE
@@ -32,9 +30,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Katip (Severity (WarningS))
 import Nix.Expr.Types
-import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, SrcSpan)
+import Nix.Expr.Types.Annotated (NExprLoc, SrcSpan)
 import NixCompile.Diagnostic (Diagnostic (..))
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
+import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- | Derivation-quality violation as a unified 'Diagnostic' (a warning).
@@ -49,12 +47,10 @@ derivViolationDiagnostic dv =
     , diagSnippet = Nothing
     }
  where
-  (code, desc) = case T.breakOn ": " (formatDerivErrorCode (dvType dv)) of
-    (c, r) | not (T.null r) -> (c, T.drop 2 r)
-    _ -> ("", formatDerivErrorCode (dvType dv))
-  lastLine note = case reverse (filter (not . T.null) (map T.strip (T.lines note))) of
-    (l : _) -> [l]
-    [] -> []
+  full = formatDerivErrorCode (dvType dv)
+  (codePart, rest) = T.breakOn ": " full
+  (code, desc) = if T.null rest then ("", full) else (codePart, T.drop 2 rest)
+  lastLine note = take 1 (reverse (filter (not . T.null) (map T.strip (T.lines note))))
 
 data DerivViolationType
   = VMissingMeta
@@ -71,34 +67,32 @@ data DerivViolation = DerivViolation
 -- ── entry point ────────────────────────────────────────────────────
 
 findDerivViolations :: FilePath -> NExprLoc -> [DerivViolation]
-findDerivViolations filePath = traverseDerivExpr filePath
+findDerivViolations = traverseDerivExpr
 
 -- ── tree walk ──────────────────────────────────────────────────────
 -- We need the file path threaded through for diagnostic messages, so
 -- it's passed explicitly rather than captured in a closure.
 
 traverseDerivExpr :: FilePath -> NExprLoc -> [DerivViolation]
-traverseDerivExpr filePath (Fix (Compose (AnnUnit srcSpan expression))) = case expression of
-  NApp func arg ->
-    checkDerivCall filePath srcSpan func arg ++ traverseDerivExpr filePath func ++ traverseDerivExpr filePath arg
-  NSet _ bindings -> concatMap (traverseDerivBinding filePath) bindings
-  NLet bindings body -> concatMap (traverseDerivBinding filePath) bindings ++ traverseDerivExpr filePath body
-  NList xs -> concatMap (traverseDerivExpr filePath) xs
-  NIf c t f -> traverseDerivExpr filePath c ++ traverseDerivExpr filePath t ++ traverseDerivExpr filePath f
-  NAssert c b -> traverseDerivExpr filePath c ++ traverseDerivExpr filePath b
-  NAbs _ b -> traverseDerivExpr filePath b
-  NWith scope body -> traverseDerivExpr filePath scope ++ traverseDerivExpr filePath body
-  NSelect alt b _ -> maybe [] (traverseDerivExpr filePath) alt ++ traverseDerivExpr filePath b
-  NHasAttr b _ -> traverseDerivExpr filePath b
-  NUnary _ x -> traverseDerivExpr filePath x
-  NBinary _ x y -> traverseDerivExpr filePath x ++ traverseDerivExpr filePath y
-  _ -> []
+traverseDerivExpr filePath (LayerAnn srcSpan (NApp func arg)) =
+  checkDerivCall filePath srcSpan func arg ++ traverseDerivExpr filePath func ++ traverseDerivExpr filePath arg
+traverseDerivExpr filePath (Layer (NSet _ bindings)) = concatMap (traverseDerivBinding filePath) bindings
+traverseDerivExpr filePath (Layer (NLet bindings body)) = concatMap (traverseDerivBinding filePath) bindings ++ traverseDerivExpr filePath body
+traverseDerivExpr filePath (Layer (NList xs)) = concatMap (traverseDerivExpr filePath) xs
+traverseDerivExpr filePath (Layer (NIf c t f)) = traverseDerivExpr filePath c ++ traverseDerivExpr filePath t ++ traverseDerivExpr filePath f
+traverseDerivExpr filePath (Layer (NAssert c b)) = traverseDerivExpr filePath c ++ traverseDerivExpr filePath b
+traverseDerivExpr filePath (Layer (NAbs _ b)) = traverseDerivExpr filePath b
+traverseDerivExpr filePath (Layer (NWith scope body)) = traverseDerivExpr filePath scope ++ traverseDerivExpr filePath body
+traverseDerivExpr filePath (Layer (NSelect alt b _)) = maybe [] (traverseDerivExpr filePath) alt ++ traverseDerivExpr filePath b
+traverseDerivExpr filePath (Layer (NHasAttr b _)) = traverseDerivExpr filePath b
+traverseDerivExpr filePath (Layer (NUnary _ x)) = traverseDerivExpr filePath x
+traverseDerivExpr filePath (Layer (NBinary _ x y)) = traverseDerivExpr filePath x ++ traverseDerivExpr filePath y
+traverseDerivExpr _ _ = []
 
 traverseDerivBinding :: FilePath -> Binding NExprLoc -> [DerivViolation]
-traverseDerivBinding filePath = \case
-  NamedVar _ expr _ -> traverseDerivExpr filePath expr
-  Inherit (Just scope) _ _ -> traverseDerivExpr filePath scope
-  Inherit Nothing _ _ -> []
+traverseDerivBinding filePath (NamedVar _ expr _) = traverseDerivExpr filePath expr
+traverseDerivBinding filePath (Inherit (Just scope) _ _) = traverseDerivExpr filePath scope
+traverseDerivBinding _ (Inherit Nothing _ _) = []
 
 -- ── mkDerivation inspection ────────────────────────────────────────
 -- When we spot an `NApp` whose function is `mkDerivation` (or
@@ -114,14 +108,12 @@ checkDerivCall filePath sourceSpan function argument
 -- Matches both bare `mkDerivation` and qualified `attrset.mkDerivation`.
 
 isMkDerivationCall :: NExprLoc -> Bool
-isMkDerivationCall (Fix (Compose (AnnUnit _ (NSym name)))) =
-  varNameText name == "mkDerivation"
+isMkDerivationCall (Layer (NSym name)) = varNameText name == "mkDerivation"
 -- the FINAL key of the path is what's applied, so `a.b.c.mkDerivation` counts —
 -- not just a single-key `x.mkDerivation` (REVIEW-3 #26)
-isMkDerivationCall (Fix (Compose (AnnUnit _ (NSelect _ _ path)))) =
-  case NE.last path of
-    StaticKey key -> varNameText key == "mkDerivation"
-    _ -> False
+isMkDerivationCall (Layer (NSelect _ _ path))
+  | StaticKey key <- NE.last path = varNameText key == "mkDerivation"
+  | otherwise = False
 isMkDerivationCall _ = False
 
 -- ── argument inspection ────────────────────────────────────────────
@@ -130,9 +122,8 @@ isMkDerivationCall _ = False
 -- elsewhere and we can't verify statically.
 
 checkDerivArg :: FilePath -> SrcSpan -> NExprLoc -> [DerivViolation]
-checkDerivArg filePath sourceSpan (Fix (Compose (AnnUnit _ (NSet _ bindings)))) =
-  checkDerivMeta filePath sourceSpan bindings
-checkDerivArg _ _ (Fix (Compose (AnnUnit _ (NSym _)))) = []
+checkDerivArg filePath sourceSpan (Layer (NSet _ bindings)) = checkDerivMeta filePath sourceSpan bindings
+checkDerivArg _ _ (Layer (NSym _)) = []
 checkDerivArg _ _ _ = []
 
 -- ── meta-attribute validation ──────────────────────────────────────
@@ -166,7 +157,7 @@ checkDerivMeta filePath sourceSpan bindings = checkFoundMeta
 
 checkDerivDescription :: FilePath -> NExprLoc -> [DerivViolation]
 checkDerivDescription filePath metaValue
-  | Fix (Compose (AnnUnit metaSpan (NSet _ metaBindings))) <- metaValue
+  | LayerAnn metaSpan (NSet _ metaBindings) <- metaValue
   , not (any isDescriptionBinding metaBindings) =
       [ DerivViolation
           { dvType = VMissingDescription
@@ -177,18 +168,18 @@ checkDerivDescription filePath metaValue
   | otherwise = []
 
 findMetaBinding :: [Binding NExprLoc] -> Maybe (Binding NExprLoc)
-findMetaBinding = find $ \case
-  NamedVar (StaticKey bindingName :| []) _ _ -> varNameText bindingName == "meta"
-  _ -> False
+findMetaBinding = find isMetaBinding
+ where
+  isMetaBinding (NamedVar (StaticKey bindingName :| []) _ _) = varNameText bindingName == "meta"
+  isMetaBinding _ = False
 
 isDescriptionBinding :: Binding NExprLoc -> Bool
 isDescriptionBinding (NamedVar (StaticKey bindingName :| []) _ _) = varNameText bindingName == "description"
 isDescriptionBinding _ = False
 
 derivRuleId :: DerivViolationType -> Text
-derivRuleId = \case
-  VMissingMeta -> "missing-meta"
-  VMissingDescription -> "missing-description"
+derivRuleId VMissingMeta = "missing-meta"
+derivRuleId VMissingDescription = "missing-description"
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                           // output formatting
@@ -207,12 +198,9 @@ formatOneDerivViolation dv =
     ]
 
 formatDerivLoc :: Span -> Text
-formatDerivLoc span' =
-  let line = T.pack (show (locLine (spanStart span')))
-      col = T.pack (show (locCol (spanStart span')))
-   in case spanFile span' of
-        Just f -> T.pack f <> ":" <> line <> ":" <> col
-        Nothing -> line <> ":" <> col
+formatDerivLoc span' = maybe loc (\f -> T.pack f <> ":" <> loc) (spanFile span')
+ where
+  loc = T.pack (show (locLine (spanStart span'))) <> ":" <> T.pack (show (locCol (spanStart span')))
 
 formatDerivErrorCode :: DerivViolationType -> Text
 formatDerivErrorCode VMissingMeta = "ALEPH-N013: missing `meta`"

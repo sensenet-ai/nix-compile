@@ -10,8 +10,8 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                             // Nix // pattern-based lint rules
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module NixCompile.Nix.LintPatterns (
   PatternViolationType (..),
@@ -22,7 +22,6 @@ module NixCompile.Nix.LintPatterns (
 )
 where
 
-import Data.Fix (Fix (..))
 import Data.List.NonEmpty (toList)
 import Data.List.NonEmpty qualified as NE
 import Data.Maybe (maybeToList)
@@ -33,7 +32,7 @@ import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import NixCompile.Diagnostic (Diagnostic (..))
-import NixCompile.Nix.Utils (srcSpanToSpan, varNameText)
+import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 -- | Pattern (heuristic) violation as a unified 'Diagnostic' (a warning).
@@ -48,12 +47,10 @@ patternViolationDiagnostic pv =
     , diagSnippet = Nothing
     }
  where
-  (code, desc) = case T.breakOn ": " (formatPatternErrorCode (pvType pv)) of
-    (c, r) | not (T.null r) -> (c, T.drop 2 r)
-    _ -> ("", formatPatternErrorCode (pvType pv))
-  lastLine note = case reverse (filter (not . T.null) (map T.strip (T.lines note))) of
-    (l : _) -> [l]
-    [] -> []
+  full = formatPatternErrorCode (pvType pv)
+  (codePart, rest) = T.breakOn ": " full
+  (code, desc) = if T.null rest then ("", full) else (codePart, T.drop 2 rest)
+  lastLine note = take 1 (reverse (filter (not . T.null) (map T.strip (T.lines note))))
 
 data PatternViolationType
   = VOrNullFallback
@@ -77,7 +74,7 @@ findPatternViolations = traversePatternExpr
 -- emitted before sub-expression violations.
 
 traversePatternExpr :: NExprLoc -> [PatternViolation]
-traversePatternExpr (Fix (Compose (AnnUnit srcSpan expression))) =
+traversePatternExpr (LayerAnn srcSpan expression) =
   localPatternViolations srcSpan expression ++ concatMap traversePatternExpr (patternSubExprs expression)
 
 -- ── local node checks ──────────────────────────────────────────────
@@ -111,8 +108,8 @@ localPatternViolations _ _ = []
 -- pathological but technically possible.
 
 isNullExpr :: NExprLoc -> Bool
-isNullExpr (Fix (Compose (AnnUnit _ (NConstant NNull)))) = True
-isNullExpr (Fix (Compose (AnnUnit _ (NSym name)))) = varNameText name == "null"
+isNullExpr (Layer (NConstant NNull)) = True
+isNullExpr (Layer (NSym name)) = varNameText name == "null"
 isNullExpr _ = False
 
 -- ── translation-function detection ─────────────────────────────────
@@ -120,13 +117,10 @@ isNullExpr _ = False
 -- (`lib.translateAttrs ...`). Only the final key is checked.
 
 isTranslateCall :: NExprLoc -> Bool
-isTranslateCall (Fix (Compose (AnnUnit _ (NSym name)))) =
-  varNameText name `elem` translateFuncNames
-isTranslateCall (Fix (Compose (AnnUnit _ (NSelect _ _ path))))
-  | let leaf = NE.last path =
-      case leaf of
-        StaticKey k -> varNameText k `elem` translateFuncNames
-        DynamicKey _ -> False
+isTranslateCall (Layer (NSym name)) = varNameText name `elem` translateFuncNames
+isTranslateCall (Layer (NSelect _ _ path))
+  | StaticKey k <- NE.last path = varNameText k `elem` translateFuncNames
+  | otherwise = False
 isTranslateCall _ = False
 
 translateFuncNames :: [Text]
@@ -147,27 +141,21 @@ attrPathText (_ : ks) = "‥." <> attrPathText ks
 attrPathText [] = ""
 
 fmtCall :: NExprLoc -> Text
-fmtCall (Fix (Compose (AnnUnit _ (NSym name)))) = varNameText name <> " call"
-fmtCall (Fix (Compose (AnnUnit _ (NSelect _ _ path))))
-  | let leaf = NE.last path =
-      case leaf of
-        StaticKey k -> varNameText k <> " call"
-        DynamicKey _ -> "translateAttrs call"
+fmtCall (Layer (NSym name)) = varNameText name <> " call"
+fmtCall (Layer (NSelect _ _ path))
+  | StaticKey k <- NE.last path = varNameText k <> " call"
+  | otherwise = "translateAttrs call"
 fmtCall _ = "translateAttrs call"
 
 prettyShort :: NExprLoc -> Text
-prettyShort (Fix (Compose (AnnUnit _ (NSym name)))) = varNameText name
-prettyShort (Fix (Compose (AnnUnit _ (NSelect _ b path)))) =
-  case lastStaticKey path of
-    Just k -> prettyShort b <> "." <> k
-    Nothing -> "‥"
+prettyShort (Layer (NSym name)) = varNameText name
+prettyShort (Layer (NSelect _ b path)) = maybe "‥" (\k -> prettyShort b <> "." <> k) (lastStaticKey path)
 prettyShort _ = "‥"
 
 lastStaticKey :: NE.NonEmpty (NKeyName NExprLoc) -> Maybe Text
-lastStaticKey path =
-  case NE.last path of
-    StaticKey k -> Just (varNameText k)
-    DynamicKey _ -> Nothing
+lastStaticKey path
+  | StaticKey k <- NE.last path = Just (varNameText k)
+  | otherwise = Nothing
 
 -- ── sub-expression enumeration ─────────────────────────────────────
 -- Maps each NExpr constructor to its list of child expressions that
@@ -175,33 +163,25 @@ lastStaticKey path =
 -- type must be listed or it won't be visited.
 
 patternSubExprs :: NExprF NExprLoc -> [NExprLoc]
-patternSubExprs = \case
-  NConstant _ -> []
-  NStr _ -> []
-  NList xs -> xs
-  NSet _ bindings -> concatMap patternBindingExprs bindings
-  NLet bindings body -> body : concatMap patternBindingExprs bindings
-  NIf c t f -> [c, t, f]
-  NWith s b -> [s, b]
-  NAssert c b -> [c, b]
-  NAbs _ b -> [b]
-  NApp f x -> [f, x]
-  NSelect mDef b path ->
-    b : maybeToList mDef ++ [e | DynamicKey (Antiquoted e) <- toList path]
-  NHasAttr b path ->
-    b : [e | DynamicKey (Antiquoted e) <- toList path]
-  NUnary _ x -> [x]
-  NBinary _ x y -> [x, y]
-  NSym _ -> []
-  NLiteralPath _ -> []
-  NEnvPath _ -> []
-  NSynHole _ -> []
+patternSubExprs (NList xs) = xs
+patternSubExprs (NSet _ bindings) = concatMap patternBindingExprs bindings
+patternSubExprs (NLet bindings body) = body : concatMap patternBindingExprs bindings
+patternSubExprs (NIf c t f) = [c, t, f]
+patternSubExprs (NWith s b) = [s, b]
+patternSubExprs (NAssert c b) = [c, b]
+patternSubExprs (NAbs _ b) = [b]
+patternSubExprs (NApp f x) = [f, x]
+patternSubExprs (NSelect mDef b path) = b : maybeToList mDef ++ [e | DynamicKey (Antiquoted e) <- toList path]
+patternSubExprs (NHasAttr b path) = b : [e | DynamicKey (Antiquoted e) <- toList path]
+patternSubExprs (NUnary _ x) = [x]
+patternSubExprs (NBinary _ x y) = [x, y]
+-- leaves (constants, strings, symbols, paths, holes): no sub-expressions
+patternSubExprs _ = []
 
 patternBindingExprs :: Binding NExprLoc -> [NExprLoc]
-patternBindingExprs = \case
-  NamedVar _ expr _ -> [expr]
-  Inherit (Just scope) _ _ -> [scope]
-  Inherit Nothing _ _ -> []
+patternBindingExprs (NamedVar _ expr _) = [expr]
+patternBindingExprs (Inherit (Just scope) _ _) = [scope]
+patternBindingExprs (Inherit Nothing _ _) = []
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                           // output formatting
@@ -220,12 +200,9 @@ formatOnePatternViolation pv =
     ]
 
 formatPatternLoc :: Span -> Text
-formatPatternLoc span' =
-  let line = T.pack (show (locLine (spanStart span')))
-      col = T.pack (show (locCol (spanStart span')))
-   in case spanFile span' of
-        Just f -> T.pack f <> ":" <> line <> ":" <> col
-        Nothing -> line <> ":" <> col
+formatPatternLoc span' = maybe loc (\f -> T.pack f <> ":" <> loc) (spanFile span')
+ where
+  loc = T.pack (show (locLine (spanStart span'))) <> ":" <> T.pack (show (locCol (spanStart span')))
 
 formatPatternErrorCode :: PatternViolationType -> Text
 formatPatternErrorCode VOrNullFallback = "ALEPH-N009: `or null` fallback"

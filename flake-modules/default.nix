@@ -60,6 +60,11 @@
             sweptClean = [
               "lib/NixCompile/Nix/Flake.hs"
               "lib/NixCompile/Nix/LayoutConvention.hs"
+              "lib/NixCompile/Nix/Lint.hs"
+              "lib/NixCompile/Nix/LintCombined.hs"
+              "lib/NixCompile/Nix/LintDerivation.hs"
+              "lib/NixCompile/Nix/LintPackages.hs"
+              "lib/NixCompile/Nix/LintPatterns.hs"
               "lib/NixCompile/Nix/Module.hs"
               "lib/NixCompile/Nix/ModuleKind.hs"
               "lib/NixCompile/Nix/ModuleSystem.hs"

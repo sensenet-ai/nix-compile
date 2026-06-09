@@ -1,5 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                      // NixCompile.Nix.LintCombined // walk
@@ -23,8 +23,6 @@ module NixCompile.Nix.LintCombined (
 )
 where
 
-import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
@@ -32,7 +30,6 @@ import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import Nix.Utils (Path (..))
 import NixCompile.Nix.Lint (
   NixViolation (..),
   ViolationType (VLongInlineString, VRawMkDerivation, VRawRunCommand, VRawWriteShellApplication, VRec, VSubstituteAll, VWith, VWriteShellScript),
@@ -45,9 +42,8 @@ import NixCompile.Nix.LintPatterns (
   PatternViolation (..),
   PatternViolationType (VAttrTranslation, VOrNullFallback),
  )
-import NixCompile.Nix.Utils (varNameText)
+import NixCompile.Nix.Utils (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety
-import NixCompile.Types (Loc (..), Span (..))
 
 data LintBundle = LintBundle
   { lbNix :: ![NixViolation]
@@ -74,9 +70,10 @@ data LintResult
 
 -- | Legacy entry: returns 'emptyBundle' on depth-exceeded for backwards compat.
 combinedLint :: FilePath -> NExprLoc -> LintBundle
-combinedLint filePath expr = case combinedLintSafe filePath expr of
-  LintOk b -> b
-  LintDepthExceeded _ -> emptyBundle
+combinedLint filePath expr = orEmpty (combinedLintSafe filePath expr)
+ where
+  orEmpty (LintOk b) = b
+  orEmpty (LintDepthExceeded _) = emptyBundle
 
 {- | Safer entry: distinguishes "no violations" from "depth-exceeded".
 n.b. depth limit shared with 'NixCompile.Safety.maxRecursionDepth'.
@@ -84,17 +81,17 @@ n.b. depth limit shared with 'NixCompile.Safety.maxRecursionDepth'.
 combinedLintSafe :: FilePath -> NExprLoc -> LintResult
 combinedLintSafe filePath = walkExpr (0 :: Int)
  where
-  walkExpr depth (Fix (Compose (AnnUnit srcSpan expression)))
+  walkExpr depth (LayerAnn srcSpan expression)
     | depth > Safety.maxRecursionDepth = LintDepthExceeded (Safety.DepthError depth (T.pack "lint"))
-    | otherwise =
-        let d = depth + 1
-            local = LintOk (localViolations filePath srcSpan expression)
-            -- 'childExprs' already descends into binding RHSs (NSet/NLet),
-            -- so we must NOT also walk 'bindingsOf' — doing both traversed
-            -- every binding value twice, i.e. 2^depth re-walks of nested
-            -- attrsets (duplicate violations + exponential blowup).
-            rest = combineResults (map (walkExpr d) (childExprs expression))
-         in mergeResults local rest
+    | otherwise = mergeResults local rest
+   where
+    d = depth + 1
+    local = LintOk (localViolations filePath srcSpan expression)
+    -- 'childExprs' already descends into binding RHSs (NSet/NLet), so we must
+    -- NOT also walk 'bindingsOf' — doing both traversed every binding value
+    -- twice, i.e. 2^depth re-walks of nested attrsets (duplicate violations +
+    -- exponential blowup).
+    rest = combineResults (map (walkExpr d) (childExprs expression))
 
   mergeResults (LintDepthExceeded e) _ = LintDepthExceeded e
   mergeResults _ (LintDepthExceeded e) = LintDepthExceeded e
@@ -115,25 +112,19 @@ localViolations filePath srcSpan expression =
 -- ── Nix lint checks ────────────────────────────────────────────────
 
 nixViolations :: SrcSpan -> NExprF NExprLoc -> LintBundle
-nixViolations srcSpan = \case
-  NWith _scope _body ->
-    LintBundle [nv VWith "with ..."] [] []
-  NSet Recursive _ ->
-    LintBundle [nv VRec "rec { ... }"] [] []
-  NApp func _arg ->
-    let banned = bannedApp srcSpan func
-     in if null banned then emptyBundle else LintBundle banned [] []
-  NStr (DoubleQuoted parts) ->
-    LintBundle (longString srcSpan parts) [] []
-  NStr (Indented _ _) -> emptyBundle
-  _ -> emptyBundle
+nixViolations srcSpan = go
  where
-  nv typ ctx =
-    NixViolation
-      { nvType = typ
-      , nvSpan = toSpan srcSpan
-      , nvContext = ctx
-      }
+  go (NWith _scope _body) = LintBundle [nv VWith "with ..."] [] []
+  go (NSet Recursive _) = LintBundle [nv VRec "rec { ... }"] [] []
+  go (NApp func _arg)
+    | null banned = emptyBundle
+    | otherwise = LintBundle banned [] []
+   where
+    banned = bannedApp srcSpan func
+  go (NStr (DoubleQuoted parts)) = LintBundle (longString srcSpan parts) [] []
+  go _ = emptyBundle
+
+  nv typ ctx = NixViolation{nvType = typ, nvSpan = srcSpanToSpan srcSpan, nvContext = ctx}
 
 maxInlineStringLength :: Int
 maxInlineStringLength = 120
@@ -141,8 +132,7 @@ maxInlineStringLength = 120
 longString :: SrcSpan -> [Antiquoted Text NExprLoc] -> [NixViolation]
 longString srcSpan parts
   | len > maxInlineStringLength =
-      [ NixViolation (VLongInlineString len) (toSpan srcSpan) ("inline string of length " <> T.pack (show len))
-      ]
+      [NixViolation (VLongInlineString len) (srcSpanToSpan srcSpan) ("inline string of length " <> T.pack (show len))]
   | otherwise = []
  where
   len = sum (map partLen parts)
@@ -150,102 +140,97 @@ longString srcSpan parts
   partLen _ = 0
 
 bannedApp :: SrcSpan -> NExprLoc -> [NixViolation]
-bannedApp srcSpan f = case leafName f of
-  Just "substituteAll" -> [mkNV VSubstituteAll "substituteAll ..."]
-  Just "mkDerivation" -> [mkNV VRawMkDerivation "mkDerivation { ... }"]
-  Just "runCommand" -> [mkNV VRawRunCommand "runCommand ..."]
-  Just "writeShellApplication" -> [mkNV VRawWriteShellApplication "writeShellApplication { ... }"]
-  Just n | n == "writeShellScript" || n == "writeShellScriptBin" -> [mkNV VWriteShellScript (n <> " ...")]
-  _ -> []
+bannedApp srcSpan f = dispatch (leafName f)
  where
-  mkNV typ ctx = NixViolation typ (toSpan srcSpan) ctx
+  dispatch (Just "substituteAll") = [mkNV VSubstituteAll "substituteAll ..."]
+  dispatch (Just "mkDerivation") = [mkNV VRawMkDerivation "mkDerivation { ... }"]
+  dispatch (Just "runCommand") = [mkNV VRawRunCommand "runCommand ..."]
+  dispatch (Just "writeShellApplication") = [mkNV VRawWriteShellApplication "writeShellApplication { ... }"]
+  dispatch (Just n)
+    | n == "writeShellScript" || n == "writeShellScriptBin" = [mkNV VWriteShellScript (n <> " ...")]
+  dispatch _ = []
+
+  mkNV typ = NixViolation typ (srcSpanToSpan srcSpan)
 
 -- ── Derivation lint checks ─────────────────────────────────────────
 
 derivViolations :: FilePath -> SrcSpan -> NExprF NExprLoc -> LintBundle
-derivViolations filePath srcSpan = \case
-  NApp func arg | isMkDeriv func -> checkDerivMeta filePath srcSpan arg
-  _ -> emptyBundle
+derivViolations filePath srcSpan = go
  where
-  isMkDeriv = isMkDerivationCall
+  go (NApp func arg) | isMkDerivationCall func = checkDerivMeta filePath srcSpan arg
+  go _ = emptyBundle
 
 isMkDerivationCall :: NExprLoc -> Bool
-isMkDerivationCall (Fix (Compose (AnnUnit _ (NSym name)))) = varNameText name == "mkDerivation"
-isMkDerivationCall (Fix (Compose (AnnUnit _ (NSelect _ _ attrs))))
-  | StaticKey key :| _ <- attrs = varNameText key == "mkDerivation"
+isMkDerivationCall (Layer (NSym name)) = varNameText name == "mkDerivation"
+isMkDerivationCall (Layer (NSelect _ _ (StaticKey key :| _))) = varNameText key == "mkDerivation"
 isMkDerivationCall _ = False
 
 checkDerivMeta :: FilePath -> SrcSpan -> NExprLoc -> LintBundle
-checkDerivMeta filePath srcSpan (Fix (Compose (AnnUnit _ (NSet _ bindings)))) =
-  let hasMeta = any isMetaBinding bindings
-      metaBody = findMetaBody bindings
-      hasDesc = maybe False hasDescription metaBody
-   in LintBundle
-        []
-        ( (if not hasMeta then [DerivViolation VMissingMeta filePath (toSpan srcSpan)] else [])
-            ++ ( if hasMeta && not hasDesc
-                   then [DerivViolation VMissingDescription filePath (toSpan srcSpan)]
-                   else []
-               )
-        )
-        []
+checkDerivMeta filePath srcSpan (Layer (NSet _ bindings)) =
+  LintBundle [] (missingMeta ++ missingDesc) []
  where
+  hasMeta = any isMetaBinding bindings
+  metaBody = findMetaBody bindings
+  hasDesc = maybe False hasDescription metaBody
+  missingMeta = [DerivViolation VMissingMeta filePath (srcSpanToSpan srcSpan) | not hasMeta]
+  missingDesc = [DerivViolation VMissingDescription filePath (srcSpanToSpan srcSpan) | hasMeta && not hasDesc]
+
   isMetaBinding (NamedVar (StaticKey name :| _) _ _) = varNameText name == "meta"
   isMetaBinding _ = False
   findMetaBody [] = Nothing
   findMetaBody (NamedVar (StaticKey n :| _) e _ : _) | varNameText n == "meta" = Just e
   findMetaBody (_ : rest) = findMetaBody rest
-  hasDescription (Fix (Compose (AnnUnit _ (NSet _ bss)))) =
-    any (\case NamedVar (StaticKey n :| _) _ _ -> varNameText n == "description"; _ -> False) bss
+  hasDescription (Layer (NSet _ bss)) = any isDescBinding bss
   hasDescription _ = False
-checkDerivMeta _ srcSpan _ = LintBundle [] [DerivViolation VMissingMeta "<buffer>" (toSpan srcSpan)] []
+  isDescBinding (NamedVar (StaticKey n :| _) _ _) = varNameText n == "description"
+  isDescBinding _ = False
+checkDerivMeta _ srcSpan _ = LintBundle [] [DerivViolation VMissingMeta "<buffer>" (srcSpanToSpan srcSpan)] []
 
 -- ── Pattern lint checks ────────────────────────────────────────────
 
 patternViolations :: SrcSpan -> NExprF NExprLoc -> LintBundle
-patternViolations srcSpan = \case
-  NSelect (Just defaultExpr) _ _ -- NSelect alt base path
-    | isNullExpr defaultExpr ->
-        LintBundle [] [] [PatternViolation VOrNullFallback (toSpan srcSpan) "or null fallback"]
-  NApp func _
-    | isTranslateCall func ->
-        LintBundle [] [] [PatternViolation VAttrTranslation (toSpan srcSpan) "attribute translation call"]
-  _ -> emptyBundle
+patternViolations srcSpan = go
  where
-  isNullExpr (Fix (Compose (AnnUnit _ (NConstant NNull)))) = True
-  isNullExpr (Fix (Compose (AnnUnit _ (NSym name)))) = varNameText name == ("null" :: Text)
+  go (NSelect (Just defaultExpr) _ _) -- NSelect alt base path
+    | isNullExpr defaultExpr =
+        LintBundle [] [] [PatternViolation VOrNullFallback (srcSpanToSpan srcSpan) "or null fallback"]
+  go (NApp func _)
+    | isTranslateCall func =
+        LintBundle [] [] [PatternViolation VAttrTranslation (srcSpanToSpan srcSpan) "attribute translation call"]
+  go _ = emptyBundle
+
+  isNullExpr (Layer (NConstant NNull)) = True
+  isNullExpr (Layer (NSym name)) = varNameText name == ("null" :: Text)
   isNullExpr _ = False
 
-  isTranslateCall (Fix (Compose (AnnUnit _ (NSym name)))) =
-    varNameText name `elem` (["translateAttrs", "mapAttrsToList", "mapAttrsFlatten"] :: [Text])
-  isTranslateCall (Fix (Compose (AnnUnit _ (NSelect _ _ attrs))))
-    | StaticKey key :| _ <- attrs =
-        varNameText key `elem` (["translateAttrs", "mapAttrsToList", "mapAttrsFlatten"] :: [Text])
+  isTranslateCall (Layer (NSym name)) = varNameText name `elem` translators
+  isTranslateCall (Layer (NSelect _ _ (StaticKey key :| _))) = varNameText key `elem` translators
   isTranslateCall _ = False
+
+  translators = ["translateAttrs", "mapAttrsToList", "mapAttrsFlatten"] :: [Text]
 
 -- ── helpers ────────────────────────────────────────────────────────
 
 -- | Extract all immediate child expressions from a node (same pattern across all linters).
 childExprs :: NExprF NExprLoc -> [NExprLoc]
-childExprs = \case
-  NConstant _ -> []
-  NStr parts -> stringExprs parts
-  NLiteralPath _ -> []
-  NEnvPath _ -> []
-  NSym _ -> []
-  NList xs -> xs
-  NSet _ bindings -> concatMap bindingExprs bindings
-  NLet bindings body -> concatMap bindingExprs bindings ++ [body]
-  NIf c t f -> [c, t, f]
-  NWith scope body -> [scope, body]
-  NAssert c b -> [c, b]
-  NAbs _ b -> [b]
-  NApp f a -> [f, a]
-  NSelect alt b path -> b : maybe id (:) alt [] ++ pathExprs path
-  NHasAttr b path -> b : pathExprs path
-  NUnary _ x -> [x]
-  NBinary _ x y -> [x, y]
-  NSynHole _ -> []
+childExprs (NConstant _) = []
+childExprs (NStr parts) = stringExprs parts
+childExprs (NLiteralPath _) = []
+childExprs (NEnvPath _) = []
+childExprs (NSym _) = []
+childExprs (NList xs) = xs
+childExprs (NSet _ bindings) = concatMap bindingExprs bindings
+childExprs (NLet bindings body) = concatMap bindingExprs bindings ++ [body]
+childExprs (NIf c t f) = [c, t, f]
+childExprs (NWith scope body) = [scope, body]
+childExprs (NAssert c b) = [c, b]
+childExprs (NAbs _ b) = [b]
+childExprs (NApp f a) = [f, a]
+childExprs (NSelect alt b path) = b : maybe id (:) alt [] ++ pathExprs path
+childExprs (NHasAttr b path) = b : pathExprs path
+childExprs (NUnary _ x) = [x]
+childExprs (NBinary _ x y) = [x, y]
+childExprs (NSynHole _) = []
 
 bindingExprs :: Binding NExprLoc -> [NExprLoc]
 bindingExprs (NamedVar _ e _) = [e]
@@ -261,25 +246,9 @@ pathExprs path = [e | DynamicKey (Antiquoted e) <- NE.toList path]
 
 -- | Leaf symbol name of an expression (for banned-function detection).
 leafName :: NExprLoc -> Maybe Text
-leafName (Fix (Compose (AnnUnit _ (NSym name)))) = Just (varNameText name)
-leafName (Fix (Compose (AnnUnit _ (NSelect _ _ attrs))))
-  | StaticKey key :| _ <- attrs = Just (varNameText key)
+leafName (Layer (NSym name)) = Just (varNameText name)
+leafName (Layer (NSelect _ _ (StaticKey key :| _))) = Just (varNameText key)
 leafName _ = Nothing
-
--- | hnix SrcSpan -> our Span
-toSpan :: SrcSpan -> Span
-toSpan srcSpan =
-  let begin = getSpanBegin srcSpan
-      end = getSpanEnd srcSpan
-      fileFromBegin = case begin of NSourcePos path _ _ -> Just (coerce path)
-   in Span
-        { spanStart = Loc (srcPosLine begin) (srcPosCol begin)
-        , spanEnd = Loc (srcPosLine end) (srcPosCol end)
-        , spanFile = fileFromBegin
-        }
- where
-  srcPosLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-  srcPosCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
 
 -- ── Bundle combinators ─────────────────────────────────────────────
 

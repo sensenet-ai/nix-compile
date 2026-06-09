@@ -50,11 +50,11 @@ checkPackageDirs nixFiles = do
 isPackageDir :: FilePath -> IO Bool
 isPackageDir directory = do
   listResult <- try (listDirectory directory)
-  case listResult of
-    Left (_ :: IOException) -> pure False
-    Right entries ->
-      let nixFilesInDir = filter ((== ".nix") . takeExtension) entries
-       in anyM (\file -> isPackageModule (directory </> file)) nixFilesInDir
+  either onError onListing listResult
+ where
+  onError (_ :: IOException) = pure False
+  onListing entries =
+    anyM (\file -> isPackageModule (directory </> file)) (filter ((== ".nix") . takeExtension) entries)
 
 isPackageModule :: FilePath -> IO Bool
 isPackageModule path = do

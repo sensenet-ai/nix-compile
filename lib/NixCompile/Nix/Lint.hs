@@ -9,8 +9,8 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                             // Nix // banned construct detection
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module NixCompile.Nix.Lint (
   NixViolation (..),
@@ -22,15 +22,14 @@ module NixCompile.Nix.Lint (
 where
 
 import Data.Coerce (coerce)
-import Data.Fix (Fix (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as T
 import Katip (Severity (ErrorS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import Nix.Utils (Path (..))
 import NixCompile.Diagnostic (Diagnostic (..))
+import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Loc (..), Span (..))
 
 {- | A lint violation as a unified 'Diagnostic': the rule code, a one-line
@@ -48,12 +47,11 @@ nixViolationDiagnostic v =
     , diagSnippet = Nothing
     }
  where
-  (code, desc) = case T.breakOn ": " (formatNixErrorCode (nvType v)) of
-    (c, r) | not (T.null r) -> (c, T.drop 2 r)
-    _ -> ("", formatNixErrorCode (nvType v))
-  lastLine note = case reverse (filter (not . T.null) (map T.strip (T.lines note))) of
-    (l : _) -> [l]
-    [] -> []
+  full = formatNixErrorCode (nvType v)
+  (codePart, rest) = T.breakOn ": " full
+  (code, desc) = if T.null rest then ("", full) else (codePart, T.drop 2 rest)
+  -- the last non-blank line of the note (the suggestion), or none
+  lastLine note = take 1 (reverse (filter (not . T.null) (map T.strip (T.lines note))))
 
 data ViolationType
   = VWith
@@ -89,41 +87,42 @@ findNixViolations = traverseNixExpr
 -- any cascading sub-expression issues.
 
 traverseNixExpr :: NExprLoc -> [NixViolation]
-traverseNixExpr (Fix (Compose (AnnUnit srcSpan expression))) = case expression of
-  NWith scope body ->
-    nixViolation VWith srcSpan ("with " <> prettyExpr scope <> ";")
-      : traverseNixExpr scope
-      ++ traverseNixExpr body
-  NSet Recursive bindings ->
-    nixViolation VRec srcSpan "rec { ... }"
-      : concatMap traverseNixBinding bindings
-  NApp function argument ->
-    checkBannedAppCall srcSpan function ++ traverseNixExpr function ++ traverseNixExpr argument
-  NStr (DoubleQuoted parts) ->
-    checkInlineStringLength srcSpan parts ++ concatMap nixPartExprs parts
-  NStr (Indented _ parts) ->
-    concatMap nixPartExprs parts
-  NSet NonRecursive bindings -> concatMap traverseNixBinding bindings
-  NList xs -> concatMap traverseNixExpr xs
-  NLet bindings body -> concatMap traverseNixBinding bindings ++ traverseNixExpr body
-  NIf c t f -> traverseNixExpr c ++ traverseNixExpr t ++ traverseNixExpr f
-  NAssert c b -> traverseNixExpr c ++ traverseNixExpr b
-  NAbs _ b -> traverseNixExpr b
-  NSelect alt b _ -> traverseNixExpr b ++ maybe [] traverseNixExpr alt
-  NHasAttr b _ -> traverseNixExpr b
-  NUnary _ x -> traverseNixExpr x
-  NBinary _ x y -> traverseNixExpr x ++ traverseNixExpr y
-  _ -> []
+-- the two banned binders carry a local violation, then recurse
+traverseNixExpr (LayerAnn srcSpan (NWith scope body)) =
+  nixViolation VWith srcSpan ("with " <> prettyExpr scope <> ";")
+    : traverseNixExpr scope
+    ++ traverseNixExpr body
+traverseNixExpr (LayerAnn srcSpan (NSet Recursive bindings)) =
+  nixViolation VRec srcSpan "rec { ... }"
+    : concatMap traverseNixBinding bindings
+-- application: check for a banned call at the head, then recurse both sides
+traverseNixExpr (LayerAnn srcSpan (NApp function argument)) =
+  checkBannedAppCall srcSpan function ++ traverseNixExpr function ++ traverseNixExpr argument
+-- a double-quoted string may also be too long; indented strings only recurse
+traverseNixExpr (LayerAnn srcSpan (NStr (DoubleQuoted parts))) =
+  checkInlineStringLength srcSpan parts ++ concatMap nixPartExprs parts
+traverseNixExpr (Layer (NStr (Indented _ parts))) = concatMap nixPartExprs parts
+-- everything else: no local violation, just recurse into sub-expressions
+traverseNixExpr (Layer (NSet NonRecursive bindings)) = concatMap traverseNixBinding bindings
+traverseNixExpr (Layer (NList xs)) = concatMap traverseNixExpr xs
+traverseNixExpr (Layer (NLet bindings body)) = concatMap traverseNixBinding bindings ++ traverseNixExpr body
+traverseNixExpr (Layer (NIf c t f)) = traverseNixExpr c ++ traverseNixExpr t ++ traverseNixExpr f
+traverseNixExpr (Layer (NAssert c b)) = traverseNixExpr c ++ traverseNixExpr b
+traverseNixExpr (Layer (NAbs _ b)) = traverseNixExpr b
+traverseNixExpr (Layer (NSelect alt b _)) = traverseNixExpr b ++ maybe [] traverseNixExpr alt
+traverseNixExpr (Layer (NHasAttr b _)) = traverseNixExpr b
+traverseNixExpr (Layer (NUnary _ x)) = traverseNixExpr x
+traverseNixExpr (Layer (NBinary _ x y)) = traverseNixExpr x ++ traverseNixExpr y
+traverseNixExpr _ = []
 
 -- ── binding traversal ──────────────────────────────────────────────
 -- Extract sub-expressions from both named var bindings and inherit
 -- clauses. Inherit without a scope is a no-op (just pulls from scope).
 
 traverseNixBinding :: Binding NExprLoc -> [NixViolation]
-traverseNixBinding = \case
-  NamedVar _ expr _ -> traverseNixExpr expr
-  Inherit (Just scope) _ _ -> traverseNixExpr scope
-  Inherit Nothing _ _ -> []
+traverseNixBinding (NamedVar _ expr _) = traverseNixExpr expr
+traverseNixBinding (Inherit (Just scope) _ _) = traverseNixExpr scope
+traverseNixBinding (Inherit Nothing _ _) = []
 
 -- ── banned function calls ──────────────────────────────────────────
 -- Detect calls to functions that are banned at the project level.
@@ -131,20 +130,15 @@ traverseNixBinding = \case
 -- specific remediation guidance.
 
 checkBannedAppCall :: SrcSpan -> NExprLoc -> [NixViolation]
-checkBannedAppCall srcSpan f = case leafSym f of
-  Just name
-    | name == "substituteAll" ->
-        [nixViolation VSubstituteAll srcSpan "substituteAll ..."]
-    | name == "mkDerivation" ->
-        [nixViolation VRawMkDerivation srcSpan "mkDerivation { ... }"]
-    | name == "runCommand" ->
-        [nixViolation VRawRunCommand srcSpan "runCommand ..."]
-    | name == "writeShellApplication" ->
-        [nixViolation VRawWriteShellApplication srcSpan "writeShellApplication { ... }"]
-    | name == "writeShellScript" || name == "writeShellScriptBin" ->
-        [nixViolation VWriteShellScript srcSpan (name <> " ...")]
-    | otherwise -> []
-  Nothing -> []
+checkBannedAppCall srcSpan f = maybe [] banned (leafSym f)
+ where
+  banned name
+    | name == "substituteAll" = [nixViolation VSubstituteAll srcSpan "substituteAll ..."]
+    | name == "mkDerivation" = [nixViolation VRawMkDerivation srcSpan "mkDerivation { ... }"]
+    | name == "runCommand" = [nixViolation VRawRunCommand srcSpan "runCommand ..."]
+    | name == "writeShellApplication" = [nixViolation VRawWriteShellApplication srcSpan "writeShellApplication { ... }"]
+    | name == "writeShellScript" || name == "writeShellScriptBin" = [nixViolation VWriteShellScript srcSpan (name <> " ...")]
+    | otherwise = []
 
 -- ── inline string length ───────────────────────────────────────────
 -- Long inline strings clutter source files and should be extracted to
@@ -168,10 +162,9 @@ checkInlineStringLength srcSpan parts
 -- !? this doesn't handle `with`-imported names or recursive attr lookups
 
 leafSym :: NExprLoc -> Maybe Text
-leafSym (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NSym name -> Just (coerce name)
-  NSelect _ _base (StaticKey key :| _) -> Just (coerce key)
-  _ -> Nothing
+leafSym (Layer (NSym name)) = Just (coerce name)
+leafSym (Layer (NSelect _ _base (StaticKey key :| _))) = Just (coerce key)
+leafSym _ = Nothing
 
 -- ── string part helpers ────────────────────────────────────────────
 
@@ -183,35 +176,15 @@ nixPartExprs :: Antiquoted Text NExprLoc -> [NixViolation]
 nixPartExprs (Antiquoted expr) = traverseNixExpr expr
 nixPartExprs _ = []
 
--- ── span conversion ────────────────────────────────────────────────
--- hnix's SrcSpan uses NSourcePos with megaparsec's Pos type. We
--- unwrap to our own Span type which strips out megaparsec details.
-
-toSpan :: SrcSpan -> Span
-toSpan srcSpan =
-  let begin = getSpanBegin srcSpan
-      end = getSpanEnd srcSpan
-      fileFromBegin = case begin of
-        NSourcePos path _ _ -> Just (coerce path)
-   in Span
-        { spanStart = Loc (srcPosLine begin) (srcPosCol begin)
-        , spanEnd = Loc (srcPosLine end) (srcPosCol end)
-        , spanFile = fileFromBegin
-        }
- where
-  srcPosLine (NSourcePos _ (NPos l) _) = fromIntegral (unPos l)
-  srcPosCol (NSourcePos _ _ (NPos c)) = fromIntegral (unPos c)
-
 -- ── pretty-printing for context ────────────────────────────────────
 -- Produces a short, human-readable summary of a sub-expression for
 -- embedding in violation context messages. Not intended to be valid
 -- Nix — just enough for a developer to locate the problem.
 
 prettyExpr :: NExprLoc -> Text
-prettyExpr (Fix (Compose (AnnUnit _ expr))) = case expr of
-  NSym name -> coerce name
-  NSelect _ base _ -> prettyExpr base <> ".‥"
-  _ -> "‥"
+prettyExpr (Layer (NSym name)) = coerce name
+prettyExpr (Layer (NSelect _ base _)) = prettyExpr base <> ".‥"
+prettyExpr _ = "‥"
 
 -- ── violation construction ─────────────────────────────────────────
 
@@ -219,7 +192,7 @@ nixViolation :: ViolationType -> SrcSpan -> Text -> NixViolation
 nixViolation typ srcSpan ctx =
   NixViolation
     { nvType = typ
-    , nvSpan = toSpan srcSpan
+    , nvSpan = srcSpanToSpan srcSpan
     , nvContext = ctx
     }
 
@@ -240,12 +213,9 @@ formatOneNixViolation v =
     ]
 
 formatNixLoc :: Span -> Text
-formatNixLoc span' =
-  let line = T.pack (show (locLine (spanStart span')))
-      col = T.pack (show (locCol (spanStart span')))
-   in case spanFile span' of
-        Just f -> T.pack f <> ":" <> line <> ":" <> col
-        Nothing -> line <> ":" <> col
+formatNixLoc span' = maybe loc (\f -> T.pack f <> ":" <> loc) (spanFile span')
+ where
+  loc = T.pack (show (locLine (spanStart span'))) <> ":" <> T.pack (show (locCol (spanStart span')))
 
 -- ── error codes ────────────────────────────────────────────────────
 -- Each violation type maps to an ALEPH-Nxxx code that is stable across
