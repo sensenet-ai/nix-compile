@@ -51,11 +51,12 @@ makeDocItem srcLines scopeKinds decl =
     }
 
 inferDocKind :: Map ScopeId ScopeKind -> Declaration -> DocKind
-inferDocKind scopeKinds decl = case Map.lookup (declScope decl) scopeKinds of
-  Just FunctionScope -> Function
-  Just AttrSetScope -> Attribute
-  Just RecAttrSetScope -> Attribute
-  _ -> Variable
+inferDocKind scopeKinds decl = kindFor (Map.lookup (declScope decl) scopeKinds)
+ where
+  kindFor (Just FunctionScope) = Function
+  kindFor (Just AttrSetScope) = Attribute
+  kindFor (Just RecAttrSetScope) = Attribute
+  kindFor _ = Variable
 
 extractComment :: [Text] -> SourceSpan -> Text
 extractComment lines_ sourceSpan =

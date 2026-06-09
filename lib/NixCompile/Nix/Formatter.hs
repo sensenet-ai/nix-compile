@@ -40,9 +40,7 @@ input verbatim.
 -}
 nixfmtFormat :: FilePath -> Text -> Text
 nixfmtFormat path srcTxt =
-  case Nixfmt.format (layout 100 2 False) path srcTxt of
-    Right formatted -> formatted
-    Left _ -> srcTxt
+  either (const srcTxt) id (Nixfmt.format (layout 100 2 False) path srcTxt)
 
 formatNix :: Text -> NExprLoc -> Text
 formatNix srcTxt _expr = nixfmtFormat "<nix>" srcTxt

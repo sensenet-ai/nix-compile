@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -129,11 +128,8 @@ composeSubst substitution1 substitution2 =
 applySubst :: Subst -> Type -> Type
 applySubst substitution = go
  where
-  go = \case
-    TVar variable -> case Map.lookup variable substitution of
-      Just t -> go t
-      Nothing -> TVar variable
-    typ -> typ
+  go (TVar variable) = maybe (TVar variable) go (Map.lookup variable substitution)
+  go typ = typ
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Source Locations
@@ -173,11 +169,10 @@ instance FromJSON Literal
 instance ToJSON Literal
 
 literalType :: Literal -> Type
-literalType = \case
-  LitInt _ -> TInt
-  LitString _ -> TString
-  LitBool _ -> TBool
-  LitPath _ -> TPath
+literalType (LitInt _) = TInt
+literalType (LitString _) = TString
+literalType (LitBool _) = TBool
+literalType (LitPath _) = TPath
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Facts
@@ -278,9 +273,8 @@ mergeEnvSpec envSpec1 envSpec2 =
   EnvSpec
     { envType = envType envSpec1
     , envRequired = envRequired envSpec1 || envRequired envSpec2
-    , envDefault = case envDefault envSpec1 of
-        Just _ -> envDefault envSpec1
-        Nothing -> envDefault envSpec2
+    , -- keep envSpec1's default if it has one, else fall back to envSpec2's
+      envDefault = maybe (envDefault envSpec2) Just (envDefault envSpec1)
     , envSpan = envSpan envSpec1
     }
 

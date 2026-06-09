@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -84,23 +83,17 @@ When parsing from a file, we propagate the file path into 'Span's
 parseScriptFile :: FilePath -> IO (Either Text Script)
 parseScriptFile path = do
   result <- try (TIO.readFile path)
-  case result of
-    Left (e :: IOException) -> return $ Left $ T.pack $ show e
-    Right src -> return (parseScriptWithFile (Just path) src)
+  either (\(e :: IOException) -> return $ Left $ T.pack $ show e) (return . parseScriptWithFile (Just path)) result
 
 -- | Internal worker that allows attaching a file path to spans.
 parseScriptWithFile :: Maybe FilePath -> Text -> Either Text Script
 parseScriptWithFile mFile src = do
-  ast <- case mFile of
-    Nothing -> parseBash src
-    Just file -> parseBashWithFilename file src
+  ast <- maybe (parseBash src) (`parseBashWithFilename` src) mFile
   let facts0 = extractFacts ast
       facts = attachFileToFacts mFile facts0
       constraints = factsToConstraints facts
   validateConfigPaths facts
-  subst <- case solve constraints of
-    Left err -> Left (T.pack (show err))
-    Right s -> Right s
+  subst <- either (Left . T.pack . show) Right (solve constraints)
   let schema = buildSchema facts subst
   Right
     Script
@@ -114,19 +107,18 @@ attachFileToFacts :: Maybe FilePath -> [Fact] -> [Fact]
 attachFileToFacts mFile = map (attachFileToFact mFile)
 
 attachFileToFact :: Maybe FilePath -> Fact -> Fact
-attachFileToFact mFile = \case
-  DefaultIs v lit sp -> DefaultIs v lit (attachFileToSpan mFile sp)
-  DefaultFrom v o sp -> DefaultFrom v o (attachFileToSpan mFile sp)
-  Required v sp -> Required v (attachFileToSpan mFile sp)
-  AssignFrom v o sp -> AssignFrom v o (attachFileToSpan mFile sp)
-  AssignLit v lit sp -> AssignLit v lit (attachFileToSpan mFile sp)
-  ConfigAssign p v q sp -> ConfigAssign p v q (attachFileToSpan mFile sp)
-  ConfigLit p lit sp -> ConfigLit p lit (attachFileToSpan mFile sp)
-  ConfigTemplate p parts q sp -> ConfigTemplate p parts q (attachFileToSpan mFile sp)
-  CmdArg c a v sp -> CmdArg c a v (attachFileToSpan mFile sp)
-  UsesStorePath p sp -> UsesStorePath p (attachFileToSpan mFile sp)
-  BareCommand c sp -> BareCommand c (attachFileToSpan mFile sp)
-  DynamicCommand v sp -> DynamicCommand v (attachFileToSpan mFile sp)
+attachFileToFact mFile (DefaultIs v lit sp) = DefaultIs v lit (attachFileToSpan mFile sp)
+attachFileToFact mFile (DefaultFrom v o sp) = DefaultFrom v o (attachFileToSpan mFile sp)
+attachFileToFact mFile (Required v sp) = Required v (attachFileToSpan mFile sp)
+attachFileToFact mFile (AssignFrom v o sp) = AssignFrom v o (attachFileToSpan mFile sp)
+attachFileToFact mFile (AssignLit v lit sp) = AssignLit v lit (attachFileToSpan mFile sp)
+attachFileToFact mFile (ConfigAssign p v q sp) = ConfigAssign p v q (attachFileToSpan mFile sp)
+attachFileToFact mFile (ConfigLit p lit sp) = ConfigLit p lit (attachFileToSpan mFile sp)
+attachFileToFact mFile (ConfigTemplate p parts q sp) = ConfigTemplate p parts q (attachFileToSpan mFile sp)
+attachFileToFact mFile (CmdArg c a v sp) = CmdArg c a v (attachFileToSpan mFile sp)
+attachFileToFact mFile (UsesStorePath p sp) = UsesStorePath p (attachFileToSpan mFile sp)
+attachFileToFact mFile (BareCommand c sp) = BareCommand c (attachFileToSpan mFile sp)
+attachFileToFact mFile (DynamicCommand v sp) = DynamicCommand v (attachFileToSpan mFile sp)
 
 attachFileToSpan :: Maybe FilePath -> Span -> Span
 attachFileToSpan Nothing sp = sp

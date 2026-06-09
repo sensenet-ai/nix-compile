@@ -39,22 +39,22 @@ parseVerbose args = (InfoS, args)
 loadConfiguration :: Maybe FilePath -> AppM Config.Config
 loadConfiguration (Just configPath) = do
   result <- liftIO $ Config.loadConfig configPath
-  case result of
-    Left errorMessage -> do
-      $(logTM) WarningS $ logStr $ "Failed to load config: " <> errorMessage
-      pure Config.defaultConfig
-    Right configuration -> pure configuration
+  either onErr pure result
+ where
+  onErr errorMessage = do
+    $(logTM) WarningS $ logStr $ "Failed to load config: " <> errorMessage
+    pure Config.defaultConfig
 loadConfiguration Nothing = do
   configFileExists <- liftIO $ doesFileExist ".nix-compile.dhall"
   if configFileExists
     then do
       result <- liftIO $ Config.loadConfig ".nix-compile.dhall"
-      case result of
-        Left errorMessage -> do
-          $(logTM) WarningS $ logStr $ "Failed to load .nix-compile.dhall: " <> errorMessage
-          pure Config.defaultConfig
-        Right configuration -> pure configuration
+      either onErr pure result
     else pure Config.defaultConfig
+ where
+  onErr errorMessage = do
+    $(logTM) WarningS $ logStr $ "Failed to load .nix-compile.dhall: " <> errorMessage
+    pure Config.defaultConfig
 
 dispatchCommand :: Config.Config -> [String] -> AppM ()
 dispatchCommand config ["check", path] = cmdCheck config path

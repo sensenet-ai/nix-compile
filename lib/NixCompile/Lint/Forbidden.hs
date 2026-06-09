@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -71,16 +70,13 @@ go (SA.OuterToken shellCheckId inner) = do
 localViolations :: SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Violation]
 localViolations shellCheckId inner = do
   violationSpan <- mkSpan shellCheckId
-  case inner of
-    SA.Inner_T_HereDoc{} ->
-      pure [Violation VHeredoc violationSpan "heredoc (<<)"]
-    SA.Inner_T_HereString{} ->
-      pure [Violation VHereString violationSpan "here-string (<<<)"]
-    SA.Inner_T_Backticked{} ->
-      pure [Violation VBacktick violationSpan "backticks (`...`)"]
-    SA.Inner_T_SimpleCommand _ commandWords ->
-      checkForEval shellCheckId commandWords
-    _ -> pure []
+  dispatch violationSpan inner
+ where
+  dispatch violationSpan SA.Inner_T_HereDoc{} = pure [Violation VHeredoc violationSpan "heredoc (<<)"]
+  dispatch violationSpan SA.Inner_T_HereString{} = pure [Violation VHereString violationSpan "here-string (<<<)"]
+  dispatch violationSpan SA.Inner_T_Backticked{} = pure [Violation VBacktick violationSpan "backticks (`...`)"]
+  dispatch _ (SA.Inner_T_SimpleCommand _ commandWords) = checkForEval shellCheckId commandWords
+  dispatch _ _ = pure []
 
 checkForEval :: SA.Id -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Violation]
 checkForEval tokenId commandWords
@@ -108,12 +104,11 @@ tokenToText :: SA.Token -> Text
 tokenToText (SA.OuterToken _ inner) = innerToText inner
 
 innerToText :: SA.InnerToken SA.Token -> Text
-innerToText = \case
-  SA.Inner_T_Literal content -> T.pack content
-  SA.Inner_T_SingleQuoted content -> T.pack content
-  SA.Inner_T_NormalWord parts -> T.concat (map tokenToText parts)
-  SA.Inner_T_DoubleQuoted parts -> T.concat (map tokenToText parts)
-  _ -> ""
+innerToText (SA.Inner_T_Literal content) = T.pack content
+innerToText (SA.Inner_T_SingleQuoted content) = T.pack content
+innerToText (SA.Inner_T_NormalWord parts) = T.concat (map tokenToText parts)
+innerToText (SA.Inner_T_DoubleQuoted parts) = T.concat (map tokenToText parts)
+innerToText _ = ""
 
 mkSpan :: SA.Id -> Reader (Map SA.Id (Position, Position)) Span
 mkSpan tokenId = do
@@ -163,21 +158,19 @@ formatViolationAt src Violation{..} =
 -- Short, human-readable classification strings for each violation type.
 
 forbiddenTypeLabel :: ViolationType -> Text
-forbiddenTypeLabel = \case
-  VHeredoc -> "heredoc"
-  VHereString -> "here-string"
-  VEval -> "eval"
-  VBacktick -> "backtick"
+forbiddenTypeLabel VHeredoc = "heredoc"
+forbiddenTypeLabel VHereString = "here-string"
+forbiddenTypeLabel VEval = "eval"
+forbiddenTypeLabel VBacktick = "backtick"
 
 -- ── error codes ────────────────────────────────────────────────────
 -- Stable ALEPH-Bxxx codes. B-prefix denotes bash/shell violations.
 
 forbiddenErrorCode :: ViolationType -> Text
-forbiddenErrorCode = \case
-  VHeredoc -> "ALEPH-B001"
-  VHereString -> "ALEPH-B002"
-  VEval -> "ALEPH-B003"
-  VBacktick -> "ALEPH-B004"
+forbiddenErrorCode VHeredoc = "ALEPH-B001"
+forbiddenErrorCode VHereString = "ALEPH-B002"
+forbiddenErrorCode VEval = "ALEPH-B003"
+forbiddenErrorCode VBacktick = "ALEPH-B004"
 
 -- ── remediation suggestions ────────────────────────────────────────
 -- Each forbidden bash construct has a suggested replacement. The text
@@ -187,47 +180,46 @@ forbiddenErrorCode = \case
 -- a Nix context — the user must plumb the path through their build.
 
 forbiddenSuggestion :: ViolationType -> Text
-forbiddenSuggestion = \case
-  VHeredoc ->
-    T.unlines
-      [ "  Prefer nix-compile's generated emitter for structured config:"
-      , "    emit-config json   # or: yaml | toml"
-      , ""
-      , "  Or printf for simple strings:"
-      , "    printf 'Hello, %s\\n' \"$NAME\""
-      , ""
-      , "  Or generate content in Nix, reference in bash:"
-      , "    cat ${pkgs.writeText \"msg\" ''...''}"
-      ]
-  VHereString ->
-    T.unlines
-      [ "  Use echo with pipe:"
-      , "    echo \"string\" | command"
-      , ""
-      , "  Or printf:"
-      , "    printf '%s' \"string\" | command"
-      ]
-  VEval ->
-    T.unlines
-      [ "  eval is forbidden. Refactor to avoid dynamic code execution."
-      , ""
-      , "  If you need to set variables dynamically:"
-      , "    declare \"$name=$value\""
-      , ""
-      , "  If you need to choose between commands:"
-      , "    case \"$mode\" in"
-      , "      a) /nix/store/...-tool/bin/tool ... ;;"
-      , "      b) /nix/store/...-other/bin/other ... ;;"
-      , "    esac"
-      ]
-  VBacktick ->
-    T.unlines
-      [ "  Use $() instead of backticks:"
-      , "    result=$(command)"
-      , ""
-      , "  Not:"
-      , "    result=`command`"
-      ]
+forbiddenSuggestion VHeredoc =
+  T.unlines
+    [ "  Prefer nix-compile's generated emitter for structured config:"
+    , "    emit-config json   # or: yaml | toml"
+    , ""
+    , "  Or printf for simple strings:"
+    , "    printf 'Hello, %s\\n' \"$NAME\""
+    , ""
+    , "  Or generate content in Nix, reference in bash:"
+    , "    cat ${pkgs.writeText \"msg\" ''...''}"
+    ]
+forbiddenSuggestion VHereString =
+  T.unlines
+    [ "  Use echo with pipe:"
+    , "    echo \"string\" | command"
+    , ""
+    , "  Or printf:"
+    , "    printf '%s' \"string\" | command"
+    ]
+forbiddenSuggestion VEval =
+  T.unlines
+    [ "  eval is forbidden. Refactor to avoid dynamic code execution."
+    , ""
+    , "  If you need to set variables dynamically:"
+    , "    declare \"$name=$value\""
+    , ""
+    , "  If you need to choose between commands:"
+    , "    case \"$mode\" in"
+    , "      a) /nix/store/...-tool/bin/tool ... ;;"
+    , "      b) /nix/store/...-other/bin/other ... ;;"
+    , "    esac"
+    ]
+forbiddenSuggestion VBacktick =
+  T.unlines
+    [ "  Use $() instead of backticks:"
+    , "    result=$(command)"
+    , ""
+    , "  Not:"
+    , "    result=`command`"
+    ]
 
 formatViolation :: Violation -> Text
 formatViolation = formatViolationAt "<input>"

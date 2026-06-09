@@ -47,28 +47,22 @@ knowledge by inferring with the empty env.
 annotateFileWithEnv :: TypeEnv -> FilePath -> IO (Either Text Text)
 annotateFileWithEnv env path = do
   readResult <- Safety.safeReadFile path
-  case readResult of
-    Left e -> pure $ Left (Safety.renderSafetyError e)
-    Right src -> do
-      parseResult <- parseNixFile path
-      case parseResult of
-        Left err -> pure (Left err)
-        Right expr -> pure (annotateExprWithEnv env src expr)
+  either (pure . Left . Safety.renderSafetyError) fromSrc readResult
+ where
+  fromSrc src = do
+    parseResult <- parseNixFile path
+    pure $ either Left (annotateExprWithEnv env src) parseResult
 
 annotateExpr :: Text -> Either Text Text
-annotateExpr src = case parseNix "<input>" src of
-  Left err -> Left err
-  Right expr -> annotateExprWithEnv builtinEnv src expr
+annotateExpr src = either Left (annotateExprWithEnv builtinEnv src) (parseNix "<input>" src)
 
 annotateExprWithEnv :: TypeEnv -> Text -> NExprLoc -> Either Text Text
 annotateExprWithEnv env src expr =
-  case Safety.analyzeDepth expr of
-    Left de -> Left (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
-    Right () -> case inferExprWithEnv env expr of
-      Left err -> Left err
-      Right (_, bindings) ->
-        let res = InferResult bindings []
-         in Right $ annotateSource src res
+  either onDepth (const inferred) (Safety.analyzeDepth expr)
+ where
+  onDepth de = Left (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+  inferred = either Left fromBindings (inferExprWithEnv env expr)
+  fromBindings (_, bindings) = Right $ annotateSource src (InferResult bindings [])
 
 annotateSource :: Text -> InferResult -> Text
 annotateSource src InferResult{..} =

@@ -51,21 +51,21 @@ emitDiagnostic d = do
 file's text, when it has a span but no snippet yet.
 -}
 attachSnippet :: Text -> Diag.Diagnostic -> Diag.Diagnostic
-attachSnippet src d = case Diag.diagSpan d of
-  Just sp
-    | isNothing (Diag.diagSnippet d)
-    , (l : _) <- drop (locLine (spanStart sp) - 1) (T.lines src) ->
-        d
-          { Diag.diagSnippet =
-              Just
-                Diag.Snippet
-                  { Diag.snLine = locLine (spanStart sp)
-                  , Diag.snText = l
-                  , Diag.snCol = locCol (spanStart sp)
-                  , Diag.snWidth = max 1 (locCol (spanEnd sp) - locCol (spanStart sp))
-                  }
-          }
-  _ -> d
+attachSnippet src d
+  | Just sp <- Diag.diagSpan d
+  , isNothing (Diag.diagSnippet d)
+  , (l : _) <- drop (locLine (spanStart sp) - 1) (T.lines src) =
+      d
+        { Diag.diagSnippet =
+            Just
+              Diag.Snippet
+                { Diag.snLine = locLine (spanStart sp)
+                , Diag.snText = l
+                , Diag.snCol = locCol (spanStart sp)
+                , Diag.snWidth = max 1 (locCol (spanEnd sp) - locCol (spanStart sp))
+                }
+        }
+  | otherwise = d
 
 {- | Build a TYPE diagnostic from an engine error string, parsing a leading
 @"line:col: "@ prefix into a span when present.
@@ -81,14 +81,14 @@ typeDiagnostic sev file raw =
     , Diag.diagSnippet = Nothing
     }
  where
-  (mspan, summary) = case T.breakOn ": " raw of
-    (loc, rest)
-      | not (T.null rest)
-      , [lt, ct] <- T.splitOn ":" loc
-      , Just l <- readMaybe (T.unpack lt)
-      , Just c <- readMaybe (T.unpack ct) ->
-          (Just (Span (Loc l c) (Loc l c) (Just file)), T.drop 2 rest)
-    _ -> (Nothing, raw)
+  (mspan, summary) = parseLoc (T.breakOn ": " raw)
+  parseLoc (loc, rest)
+    | not (T.null rest)
+    , [lt, ct] <- T.splitOn ":" loc
+    , Just l <- readMaybe (T.unpack lt)
+    , Just c <- readMaybe (T.unpack ct) =
+        (Just (Span (Loc l c) (Loc l c) (Just file)), T.drop 2 rest)
+  parseLoc _ = (Nothing, raw)
 
 partitionViolations :: Config.Config -> [Violation] -> ([Violation], [Violation])
 partitionViolations config = foldr go ([], [])

@@ -40,10 +40,10 @@ runLog minSeverity action = do
   -- ColorIfTerminal still colours each line by severity on a TTY. A "[ERROR]"
   -- prefix here only doubled up ("[ERROR] error[TYPE]: …"). Debug lines keep a
   -- marker since they have no inherent one and only appear under -vv.
-  let fmt _color _verb item =
-        let pfx = case _itemSeverity item of
-              DebugS -> "[debug] "
-              _ -> ""
+  let prefixFor DebugS = "[debug] "
+      prefixFor _ = ""
+      fmt _color _verb item =
+        let pfx = prefixFor (_itemSeverity item)
             msg = unLogStr (_itemMessage item)
          in Builder.fromText pfx <> msg
   handleScribe <- mkHandleScribeWithFormatter fmt ColorIfTerminal stderr (permitItem minSeverity) V0

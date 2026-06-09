@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -31,19 +30,18 @@ import NixCompile.Types
 
 -- | Unify two types, producing a substitution
 unify :: Type -> Type -> Either TypeError Subst
-unify type1 type2 = case (type1, type2) of
-  (TInt, TInt) -> Right emptySubst
-  (TString, TString) -> Right emptySubst
-  (TBool, TBool) -> Right emptySubst
-  (TPath, TPath) -> Right emptySubst
-  (TNumeric, TInt) -> Right emptySubst
-  (TInt, TNumeric) -> Right emptySubst
-  (TNumeric, TBool) -> Right emptySubst
-  (TBool, TNumeric) -> Right emptySubst
-  (TNumeric, TNumeric) -> Right emptySubst
-  (TVar typeVariable, typeValue) -> bindVar typeVariable typeValue
-  (typeValue, TVar typeVariable) -> bindVar typeVariable typeValue
-  _ -> Left (Mismatch type1 type2 emptySpan)
+unify TInt TInt = Right emptySubst
+unify TString TString = Right emptySubst
+unify TBool TBool = Right emptySubst
+unify TPath TPath = Right emptySubst
+unify TNumeric TInt = Right emptySubst
+unify TInt TNumeric = Right emptySubst
+unify TNumeric TBool = Right emptySubst
+unify TBool TNumeric = Right emptySubst
+unify TNumeric TNumeric = Right emptySubst
+unify (TVar typeVariable) typeValue = bindVar typeVariable typeValue
+unify typeValue (TVar typeVariable) = bindVar typeVariable typeValue
+unify type1 type2 = Left (Mismatch type1 type2 emptySpan)
  where
   emptySpan = Span (Loc 0 0) (Loc 0 0) Nothing
 
@@ -56,9 +54,8 @@ bindVar typeVariable typeValue
   emptySpan = Span (Loc 0 0) (Loc 0 0) Nothing
 
 occursIn :: TypeVar -> Type -> Bool
-occursIn typeVariable = \case
-  TVar typeVariable' -> typeVariable == typeVariable'
-  _ -> False
+occursIn typeVariable (TVar typeVariable') = typeVariable == typeVariable'
+occursIn _ _ = False
 
 unifyAll :: [Constraint] -> Either TypeError Subst
 unifyAll = foldM unifyConstraint emptySubst
@@ -100,19 +97,17 @@ solve constraints = do
   rep = findIn uf
 
   -- accumulate each group's resolved concrete type; check concrete~concrete
-  gather acc (l :~: r) = case (l, r) of
-    (TVar _, TVar _) -> Right acc -- handled by union-find
-    (TVar a, t) -> addConcrete (rep a) t acc
-    (t, TVar a) -> addConcrete (rep a) t acc
-    (t1, t2)
-      | compatible t1 t2 -> Right acc
-      | otherwise -> Left (Mismatch t1 t2 emptySpan)
+  gather acc (TVar _ :~: TVar _) = Right acc -- handled by union-find
+  gather acc (TVar a :~: t) = addConcrete (rep a) t acc
+  gather acc (t :~: TVar a) = addConcrete (rep a) t acc
+  gather acc (t1 :~: t2)
+    | compatible t1 t2 = Right acc
+    | otherwise = Left (Mismatch t1 t2 emptySpan)
 
-  addConcrete groupRep t acc = case Map.lookup groupRep acc of
-    Nothing -> Right (Map.insert groupRep t acc)
-    Just current -> case joinTypes current t of
-      Just joined -> Right (Map.insert groupRep joined acc)
-      Nothing -> Left (Mismatch current t emptySpan)
+  addConcrete groupRep t acc = maybe (Right (Map.insert groupRep t acc)) joinExisting (Map.lookup groupRep acc)
+   where
+    joinExisting current =
+      maybe (Left (Mismatch current t emptySpan)) (\joined -> Right (Map.insert groupRep joined acc)) (joinTypes current t)
 
   -- least upper bound in the numeric lattice (Nothing if incompatible)
   joinTypes a b

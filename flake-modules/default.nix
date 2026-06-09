@@ -49,47 +49,25 @@
           ${nix-compile}/bin/nix-compile --config ${self}/.nix-compile.dhall check ${self}/flake.nix
           touch $out
         '';
-        # straylint case-ban gate. Enforces zero `case` / `\case` over the
-        # ALLOWLIST of modules already swept to the house style — they cannot
-        # regress. The list grows as the sweep proceeds; when it covers the tree,
-        # the whole codebase is case-free by construction. (~433 survivors today
-        # across 48 files; run `straylint lib app` to see the rest.)
+        # straylint case-ban gate. Enforces zero `case` / `\case` across the
+        # ENTIRE first-party Haskell tree (lib/, app/, straylint/): if a `case`
+        # can be written as function-clause equations, guards, or an eliminator
+        # (maybe/either/…), it is. The whole codebase is case-free by
+        # construction — new files are covered automatically, so the rule can't
+        # be regressed by adding a module. See doc/HOUSE_STYLE.md for the law.
         "nix-compile:case-ban" =
           let
-            # files swept clean of `case` / `\case` (guards & equations only)
-            sweptClean = [
-              "lib/NixCompile/Bash/Facts.hs"
-              "lib/NixCompile/Bash/Parse.hs"
-              "lib/NixCompile/Bash/Patterns.hs"
-              "lib/NixCompile/CLI/Check.hs"
-              "lib/NixCompile/Config.hs"
-              "lib/NixCompile/Diagnostic.hs"
-              "lib/NixCompile/Emit/Config.hs"
-              "lib/NixCompile/LSP/Handlers.hs"
-              "lib/NixCompile/LSP/ProjectCache.hs"
-              "lib/NixCompile/Nix/Naming.hs"
-              "lib/NixCompile/Safety.hs"
-              "lib/NixCompile/Schema/Build.hs"
-              "lib/NixCompile/Nix/Flake.hs"
-              "lib/NixCompile/Nix/Inference.hs"
-              "lib/NixCompile/Nix/LayoutConvention.hs"
-              "lib/NixCompile/Nix/Lint.hs"
-              "lib/NixCompile/Nix/LintCombined.hs"
-              "lib/NixCompile/Nix/LintDerivation.hs"
-              "lib/NixCompile/Nix/LintPackages.hs"
-              "lib/NixCompile/Nix/LintPatterns.hs"
-              "lib/NixCompile/Nix/Module.hs"
-              "lib/NixCompile/Nix/ModuleKind.hs"
-              "lib/NixCompile/Nix/ModuleSystem.hs"
-              "lib/NixCompile/Nix/Parse.hs"
-              "lib/NixCompile/Nix/Types.hs"
-              "lib/NixCompile/Nix/Scope.hs"
-              "lib/NixCompile/Nix/Utils.hs"
-            ];
+            # every first-party .hs file (straylint takes an explicit file list;
+            # it does not recurse directory arguments)
+            haskellSources = builtins.filter (path: lib.hasSuffix ".hs" (toString path)) (
+              lib.filesystem.listFilesRecursive (self + "/lib")
+              ++ lib.filesystem.listFilesRecursive (self + "/app")
+              ++ lib.filesystem.listFilesRecursive (self + "/straylint")
+            );
           in
           pkgs.runCommandLocal "nix-compile-case-ban" { } ''
             ${nix-compile}/bin/straylint --strict ${
-              lib.concatMapStringsSep " " (f: "${self}/${f}") sweptClean
+              lib.concatMapStringsSep " " toString haskellSources
             }
             touch $out
           '';
