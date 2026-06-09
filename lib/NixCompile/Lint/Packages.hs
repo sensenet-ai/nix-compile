@@ -28,7 +28,7 @@ import Data.Text (Text)
 import System.Directory (doesFileExist, listDirectory)
 import System.FilePath (takeDirectory, takeExtension, (</>))
 
-import NixCompile.Nix.ModuleKind (detectKindFromFile, isPackage)
+import NixCompile.Layout.ModuleKind (detectKindFromFile, isPackage)
 
 data PackageViolationCode
   = P001

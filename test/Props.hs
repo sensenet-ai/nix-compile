@@ -57,6 +57,10 @@ import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunct
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
+import NixCompile.Layout.Convention qualified as LC
+import NixCompile.Layout.Graph (buildModuleGraph, moduleTypes)
+import NixCompile.Layout.ModuleKind
+import NixCompile.Layout.Naming qualified as Naming
 import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Lint.Nix
@@ -67,10 +71,6 @@ import NixCompile.Nix.Effect
 import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Inference (Binding, inferExpr, inferModuleExpr)
-import NixCompile.Nix.LayoutConvention qualified as LC
-import NixCompile.Nix.Module (buildModuleGraph, moduleTypes)
-import NixCompile.Nix.ModuleKind
-import NixCompile.Nix.Naming qualified as Naming
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Safety qualified as Safety

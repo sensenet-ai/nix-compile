@@ -25,9 +25,9 @@ import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile (Schema (..), Script (..), parseScript)
+import NixCompile.Layout.Convention (ErrorCode (..), LayoutError (..), validateFileExpr)
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Nix.Inference (inferFile)
-import NixCompile.Nix.LayoutConvention (ErrorCode (..), LayoutError (..), validateFileExpr)
 import NixCompile.Nix.Parse (parseNixFile)
 import NixCompile.Types (Fact (..))
 import System.Exit (exitFailure, exitSuccess)

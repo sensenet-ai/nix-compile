@@ -33,10 +33,10 @@ import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
 import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Layout.Convention qualified as Layout
+import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Lint.Packages qualified as LintPackages
 import NixCompile.Log
-import NixCompile.Nix.LayoutConvention qualified as Layout
-import NixCompile.Nix.Module qualified as Mod
 import NixCompile.Safety qualified as Safety
 import NixCompile.Types (Loc (..), Span (..))
 

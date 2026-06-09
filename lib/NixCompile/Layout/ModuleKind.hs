@@ -38,7 +38,7 @@ highest-confidence one. The recognized kinds:
   * 'Shell' — a devShell / @shell.nix@
   * 'Unknown' — no signal strong enough to commit
 -}
-module NixCompile.Nix.ModuleKind (
+module NixCompile.Layout.ModuleKind (
   -- * Types
   ModuleKind (..),
   Detection (..),

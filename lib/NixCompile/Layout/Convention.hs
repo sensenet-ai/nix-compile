@@ -23,7 +23,7 @@ Conventions define:
 The key insight: if everything is a flake module, we get uniform structure.
 Parse once, analyze everything.
 -}
-module NixCompile.Nix.LayoutConvention (
+module NixCompile.Layout.Convention (
   -- * Conventions
   Convention (..),
   ConventionRule (..),
@@ -72,7 +72,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import NixCompile.Nix.ModuleKind
+import NixCompile.Layout.ModuleKind
 import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Types (Span)
 import System.FilePath (makeRelative, splitDirectories, takeFileName)

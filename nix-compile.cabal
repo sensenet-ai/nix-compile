@@ -79,16 +79,16 @@ library
         NixCompile.Nix.Effect
         NixCompile.Nix.Flake
         NixCompile.Nix.Infer
-        NixCompile.Nix.LayoutConvention
+        NixCompile.Layout.Convention
         NixCompile.Lint.Nix
         NixCompile.Lint.Combined
         NixCompile.Lint.Derivation
         NixCompile.Lint.Packages
         NixCompile.Lint.Patterns
-        NixCompile.Nix.Module
-        NixCompile.Nix.ModuleKind
-        NixCompile.Nix.ModuleSystem
-        NixCompile.Nix.Naming
+        NixCompile.Layout.Graph
+        NixCompile.Layout.ModuleKind
+        NixCompile.Layout.ModuleSystem
+        NixCompile.Layout.Naming
         NixCompile.Nix.Parse
         NixCompile.Nix.Formatter
         NixCompile.Nix.Scope

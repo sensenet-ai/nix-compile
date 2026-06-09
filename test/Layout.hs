@@ -14,7 +14,7 @@
 module Main (main) where
 
 import Control.Monad (forM)
-import NixCompile.Nix.LayoutConvention (
+import NixCompile.Layout.Convention (
   Convention,
   allFlakeModule,
   flakeParts,

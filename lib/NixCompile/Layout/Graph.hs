@@ -14,7 +14,7 @@
 --                                                     // module // graph
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.Module (
+module NixCompile.Layout.Graph (
   -- * Module graph
   ModuleGraph (..),
   Module (..),
@@ -54,9 +54,9 @@ import Nix.Expr.Types hiding (Binding)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils qualified as NixPath
+import NixCompile.Layout.Convention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Lint.Nix (NixViolation, findNixViolations)
 import NixCompile.Nix.Inference (builtinEnv, extendImport, inferExpr, inferExprWithEnv)
-import NixCompile.Nix.LayoutConvention (Convention, LayoutError, validateFileFromExpr)
 import NixCompile.Nix.Types
 import NixCompile.Nix.Utils (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import NixCompile.Safety qualified as Safety

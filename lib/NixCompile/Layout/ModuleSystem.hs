@@ -15,7 +15,7 @@
 --                                                // module // option // system
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.ModuleSystem (
+module NixCompile.Layout.ModuleSystem (
   -- * Types
   OptionInfo (..),
   ModuleOptions (..),

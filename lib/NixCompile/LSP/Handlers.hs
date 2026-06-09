@@ -41,15 +41,15 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.LSP.ProjectCache qualified as PC
+import NixCompile.Layout.Convention (straylight)
+import NixCompile.Layout.Graph qualified as Mod
+import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Lint.Derivation qualified as Deriv
 import NixCompile.Lint.Forbidden qualified as Forbidden
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Nix.Inference (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Nix.Inference qualified as Infer
-import NixCompile.Nix.LayoutConvention (straylight)
-import NixCompile.Nix.Module qualified as Mod
-import NixCompile.Nix.ModuleSystem qualified as MS
 import NixCompile.Nix.Parse qualified as NixParse
 import NixCompile.Nix.Scope qualified as Scope
 import NixCompile.Nix.Types qualified as NT

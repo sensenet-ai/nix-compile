@@ -28,13 +28,13 @@ import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Config qualified as Config
 import NixCompile.Diagnostic qualified as Diag
+import NixCompile.Layout.ModuleKind (ModuleKind (..), detectKind, detectedKind)
 import NixCompile.Lint.Combined qualified as Combined
 import NixCompile.Lint.Derivation qualified as Derivation
 import NixCompile.Lint.Nix qualified as Lint
 import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Log
 import NixCompile.Nix.Inference qualified
-import NixCompile.Nix.ModuleKind (ModuleKind (..), detectKind, detectedKind)
 import NixCompile.Nix.Parse qualified as Nix
 import NixCompile.Nix.Types qualified
 import NixCompile.Nix.Utils (pattern Layer)

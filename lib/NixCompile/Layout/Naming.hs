@@ -25,7 +25,7 @@ Conventions:
   * 'SnakeCase': python_style_names
   * 'CamelCase': nixpkgsStyleNames
 -}
-module NixCompile.Nix.Naming (
+module NixCompile.Layout.Naming (
   -- * Conventions
   NamingConvention (..),
 
