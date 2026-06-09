@@ -27,8 +27,8 @@ import Data.Text.IO qualified as TIO
 import NixCompile (Script (..), parseScript)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
-import NixCompile.Nix.Lint (NixViolation (..), findNixViolations)
-import NixCompile.Nix.Lint qualified as NixLint
+import NixCompile.Lint.Nix (NixViolation (..), findNixViolations)
+import NixCompile.Lint.Nix qualified as NixLint
 import NixCompile.Nix.Parse (BashScript (..), extractBashScripts, parseNixFile)
 import NixCompile.Types (Fact (..))
 import System.Exit (exitFailure, exitSuccess)

@@ -1,5 +1,5 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                      // NixCompile.Nix.LintPatterns // lint
+--                                      // NixCompile.Lint.Patterns // lint
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "There was some magic chemistry in that impending darkness, something that
@@ -13,7 +13,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
-module NixCompile.Nix.LintPatterns (
+module NixCompile.Lint.Patterns (
   PatternViolationType (..),
   PatternViolation (..),
   findPatternViolations,

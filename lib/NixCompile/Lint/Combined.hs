@@ -2,7 +2,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                      // NixCompile.Nix.LintCombined // walk
+--                                      // NixCompile.Lint.Combined // walk
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "He touched the jaws and cheekbones, and it was like she was standing
@@ -14,7 +14,7 @@
 --                                          // Nix // single-pass combined lint
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.LintCombined (
+module NixCompile.Lint.Combined (
   LintBundle (..),
   LintResult (..),
   emptyBundle,
@@ -30,15 +30,15 @@ import Data.Text qualified as T
 import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import NixCompile.Nix.Lint (
-  NixViolation (..),
-  ViolationType (VLongInlineString, VRawMkDerivation, VRawRunCommand, VRawWriteShellApplication, VRec, VSubstituteAll, VWith, VWriteShellScript),
- )
-import NixCompile.Nix.LintDerivation (
+import NixCompile.Lint.Derivation (
   DerivViolation (..),
   DerivViolationType (VMissingDescription, VMissingMeta),
  )
-import NixCompile.Nix.LintPatterns (
+import NixCompile.Lint.Nix (
+  NixViolation (..),
+  ViolationType (VLongInlineString, VRawMkDerivation, VRawRunCommand, VRawWriteShellApplication, VRec, VSubstituteAll, VWith, VWriteShellScript),
+ )
+import NixCompile.Lint.Patterns (
   PatternViolation (..),
   PatternViolationType (VAttrTranslation, VOrNullFallback),
  )

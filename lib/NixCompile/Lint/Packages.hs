@@ -1,5 +1,5 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                          // NixCompile.Nix.LintPackages // check
+--                                          // NixCompile.Lint.Packages // check
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "The black Honda hovered twenty meters above the octagonal deck of the
@@ -13,7 +13,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module NixCompile.Nix.LintPackages (
+module NixCompile.Lint.Packages (
   PackageViolationCode (..),
   PackageViolation (..),
   checkPackageDirs,

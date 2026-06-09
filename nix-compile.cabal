@@ -80,11 +80,11 @@ library
         NixCompile.Nix.Flake
         NixCompile.Nix.Infer
         NixCompile.Nix.LayoutConvention
-        NixCompile.Nix.Lint
-        NixCompile.Nix.LintCombined
-        NixCompile.Nix.LintDerivation
-        NixCompile.Nix.LintPackages
-        NixCompile.Nix.LintPatterns
+        NixCompile.Lint.Nix
+        NixCompile.Lint.Combined
+        NixCompile.Lint.Derivation
+        NixCompile.Lint.Packages
+        NixCompile.Lint.Patterns
         NixCompile.Nix.Module
         NixCompile.Nix.ModuleKind
         NixCompile.Nix.ModuleSystem

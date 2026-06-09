@@ -1,5 +1,5 @@
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                   // NixCompile.Nix.Lint // lint
+--                                                   // NixCompile.Lint.Nix // lint
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "It was such an easy thing, death. He saw that now: It just happened."
@@ -12,7 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
-module NixCompile.Nix.Lint (
+module NixCompile.Lint.Nix (
   NixViolation (..),
   ViolationType (..),
   findNixViolations,

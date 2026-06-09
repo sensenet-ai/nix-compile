@@ -2,7 +2,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                    // NixCompile.Nix.LintDerivation // lint
+--                                    // NixCompile.Lint.Derivation // lint
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "He was good as new. How good was that?"
@@ -13,7 +13,7 @@
 --                                          // Nix // derivation quality lint rules
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Nix.LintDerivation (
+module NixCompile.Lint.Derivation (
   DerivViolationType (..),
   DerivViolation (..),
   findDerivViolations,

@@ -32,8 +32,9 @@ import Data.Text qualified as T
 import Nix.Parser (parseNixTextLoc)
 
 -- nix-compile Nix inference
+
+import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Nix.Inference qualified as Infer (inferExpr, runInfer, unify)
-import NixCompile.Nix.LintDerivation qualified as DerivLint
 import NixCompile.Nix.Types qualified as NT
 import Test.QuickCheck
 import Test.QuickCheck.Monadic (assert, monadicIO, run)

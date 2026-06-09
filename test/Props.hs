@@ -57,17 +57,17 @@ import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunct
 import NixCompile.Infer.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
 import NixCompile.LSP.Handlers (inferExprAt, lintFile, spToDiagnostic)
+import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
+import NixCompile.Lint.Nix
+import NixCompile.Lint.Packages qualified as PackageLint
+import NixCompile.Lint.Patterns qualified as PatternLint
 import NixCompile.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Nix.Effect
 import NixCompile.Nix.Formatter (formatNixFile)
 import NixCompile.Nix.Infer (annotateExpr)
 import NixCompile.Nix.Inference (Binding, inferExpr, inferModuleExpr)
 import NixCompile.Nix.LayoutConvention qualified as LC
-import NixCompile.Nix.Lint
-import NixCompile.Nix.LintDerivation qualified as DerivLint
-import NixCompile.Nix.LintPackages qualified as PackageLint
-import NixCompile.Nix.LintPatterns qualified as PatternLint
 import NixCompile.Nix.Module (buildModuleGraph, moduleTypes)
 import NixCompile.Nix.ModuleKind
 import NixCompile.Nix.Naming qualified as Naming
@@ -2504,8 +2504,8 @@ prop_nix_lint_substitute_all =
     Left _ -> False
     Right expr ->
       let violations = findNixViolations expr
-          hasSubstAll v = case NixCompile.Nix.Lint.nvType v of
-            NixCompile.Nix.Lint.VSubstituteAll -> True
+          hasSubstAll v = case NixCompile.Lint.Nix.nvType v of
+            NixCompile.Lint.Nix.VSubstituteAll -> True
             _ -> False
        in any hasSubstAll violations
 
@@ -2516,8 +2516,8 @@ prop_nix_lint_raw_mkderivation =
     Left _ -> False
     Right expr ->
       let violations = findNixViolations expr
-          hasRawMkDeriv v = case NixCompile.Nix.Lint.nvType v of
-            NixCompile.Nix.Lint.VRawMkDerivation -> True
+          hasRawMkDeriv v = case NixCompile.Lint.Nix.nvType v of
+            NixCompile.Lint.Nix.VRawMkDerivation -> True
             _ -> False
        in any hasRawMkDeriv violations
 
@@ -2528,8 +2528,8 @@ prop_nix_lint_raw_runcommand =
     Left _ -> False
     Right expr ->
       let violations = findNixViolations expr
-          hasRunCmd v = case NixCompile.Nix.Lint.nvType v of
-            NixCompile.Nix.Lint.VRawRunCommand -> True
+          hasRunCmd v = case NixCompile.Lint.Nix.nvType v of
+            NixCompile.Lint.Nix.VRawRunCommand -> True
             _ -> False
        in any hasRunCmd violations
 
@@ -2540,8 +2540,8 @@ prop_nix_lint_raw_wsa =
     Left _ -> False
     Right expr ->
       let violations = findNixViolations expr
-          hasRawWSA v = case NixCompile.Nix.Lint.nvType v of
-            NixCompile.Nix.Lint.VRawWriteShellApplication -> True
+          hasRawWSA v = case NixCompile.Lint.Nix.nvType v of
+            NixCompile.Lint.Nix.VRawWriteShellApplication -> True
             _ -> False
        in any hasRawWSA violations
 
@@ -2552,8 +2552,8 @@ prop_nix_lint_write_shell_script =
     Left _ -> False
     Right expr ->
       let violations = findNixViolations expr
-          hasWSS v = case NixCompile.Nix.Lint.nvType v of
-            NixCompile.Nix.Lint.VWriteShellScript -> True
+          hasWSS v = case NixCompile.Lint.Nix.nvType v of
+            NixCompile.Lint.Nix.VWriteShellScript -> True
             _ -> False
        in any hasWSS violations
 
@@ -2565,8 +2565,8 @@ prop_nix_lint_long_string =
         Left _ -> False
         Right expr ->
           let violations = findNixViolations expr
-              hasLongStr v = case NixCompile.Nix.Lint.nvType v of
-                NixCompile.Nix.Lint.VLongInlineString _ -> True
+              hasLongStr v = case NixCompile.Lint.Nix.nvType v of
+                NixCompile.Lint.Nix.VLongInlineString _ -> True
                 _ -> False
            in any hasLongStr violations
 
@@ -2578,8 +2578,8 @@ prop_nix_lint_short_string_ok =
         Left _ -> False
         Right expr ->
           let violations = findNixViolations expr
-              hasLongStr v = case NixCompile.Nix.Lint.nvType v of
-                NixCompile.Nix.Lint.VLongInlineString _ -> True
+              hasLongStr v = case NixCompile.Lint.Nix.nvType v of
+                NixCompile.Lint.Nix.VLongInlineString _ -> True
                 _ -> False
            in not (any hasLongStr violations)
 
@@ -2672,8 +2672,8 @@ prop_nix_lint_stdenv_path =
     Left _ -> False
     Right expr ->
       let violations = findNixViolations expr
-          hasRawMkDeriv v = case NixCompile.Nix.Lint.nvType v of
-            NixCompile.Nix.Lint.VRawMkDerivation -> True
+          hasRawMkDeriv v = case NixCompile.Lint.Nix.nvType v of
+            NixCompile.Lint.Nix.VRawMkDerivation -> True
             _ -> False
        in any hasRawMkDeriv violations
 

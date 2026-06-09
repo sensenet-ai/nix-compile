@@ -47,12 +47,12 @@ import Dhall.Parser qualified as DhallParser
 import GHC.Generics (Generic)
 import System.FilePath qualified as FP
 
+import NixCompile.Lint.Derivation qualified as Deriv
 import NixCompile.Lint.Forbidden qualified as Bash
+import NixCompile.Lint.Nix qualified as NixLint
+import NixCompile.Lint.Packages qualified as LintPackages
+import NixCompile.Lint.Patterns qualified as LintPatterns
 import NixCompile.Nix.LayoutConvention (Convention, layoutFromName)
-import NixCompile.Nix.Lint qualified as NixLint
-import NixCompile.Nix.LintDerivation qualified as Deriv
-import NixCompile.Nix.LintPackages qualified as LintPackages
-import NixCompile.Nix.LintPatterns qualified as LintPatterns
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- Types

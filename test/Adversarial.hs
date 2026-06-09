@@ -46,11 +46,11 @@ import NixCompile.Config qualified as Cfg
 import NixCompile.Emit.Config (emitConfigFunction)
 import NixCompile.Infer.Constraint (factsToConstraints)
 import NixCompile.Infer.Unify (solve, unify)
+import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
-import NixCompile.Nix.Lint (NixViolation (..), ViolationType (..), findNixViolations, formatNixViolations)
-import NixCompile.Nix.LintDerivation qualified as DerivLint
-import NixCompile.Nix.LintPackages qualified as PackageLint
-import NixCompile.Nix.LintPatterns qualified as PatternLint
+import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations, formatNixViolations)
+import NixCompile.Lint.Packages qualified as PackageLint
+import NixCompile.Lint.Patterns qualified as PatternLint
 import NixCompile.Nix.Types qualified as NT
 import NixCompile.Schema.Build (buildSchema)
 import System.Timeout (timeout)
