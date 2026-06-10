@@ -73,9 +73,12 @@ localViolations shellCheckId inner = do
   violationSpan <- mkSpan shellCheckId
   dispatch violationSpan inner
  where
-  dispatch violationSpan SA.Inner_T_HereDoc{} = pure [Violation VHeredoc violationSpan "heredoc (<<)"]
-  dispatch violationSpan SA.Inner_T_HereString{} = pure [Violation VHereString violationSpan "here-string (<<<)"]
-  dispatch violationSpan SA.Inner_T_Backticked{} = pure [Violation VBacktick violationSpan "backticks (`...`)"]
+  dispatch violationSpan SA.Inner_T_HereDoc{} =
+    pure [Violation VHeredoc violationSpan "heredoc (<<)"]
+  dispatch violationSpan SA.Inner_T_HereString{} =
+    pure [Violation VHereString violationSpan "here-string (<<<)"]
+  dispatch violationSpan SA.Inner_T_Backticked{} =
+    pure [Violation VBacktick violationSpan "backticks (`...`)"]
   dispatch _ (SA.Inner_T_SimpleCommand _ commandWords) = checkForEval shellCheckId commandWords
   dispatch _ _ = pure []
 
@@ -99,7 +102,18 @@ isEvalInvocation = scan . map tokenToText
   -- words that run their remaining arguments as a command
   evalModifiers :: [Text]
   evalModifiers =
-    ["command", "builtin", "exec", "env", "time", "nice", "ionice", "sudo", "nohup", "setsid", "stdbuf"]
+    [ "command"
+    , "builtin"
+    , "exec"
+    , "env"
+    , "time"
+    , "nice"
+    , "ionice"
+    , "sudo"
+    , "nohup"
+    , "setsid"
+    , "stdbuf"
+    ]
 
 tokenToText :: SA.Token -> Text
 tokenToText (SA.OuterToken _ inner) = innerToText inner

@@ -90,7 +90,10 @@ solve constraints = do
 
   -- union-find over variables linked by var~var constraints
   uf =
-    foldl' link (Map.fromList [(v, v) | v <- allTypeVars]) [(a, b) | (TVar a :~: TVar b) <- constraints]
+    foldl'
+      link
+      (Map.fromList [(v, v) | v <- allTypeVars])
+      [(a, b) | (TVar a :~: TVar b) <- constraints]
   link m (a, b) =
     let ra = findIn m a
         rb = findIn m b
@@ -106,7 +109,8 @@ solve constraints = do
     | compatible t1 t2 = Right acc
     | otherwise = Left (Mismatch t1 t2 emptySpan)
 
-  addConcrete groupRep t acc = maybe (Right (Map.insert groupRep t acc)) joinExisting (Map.lookup groupRep acc)
+  addConcrete groupRep t acc =
+    maybe (Right (Map.insert groupRep t acc)) joinExisting (Map.lookup groupRep acc)
    where
     joinExisting current =
       maybe

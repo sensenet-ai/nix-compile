@@ -197,7 +197,11 @@ hoverHandler req responder = do
   withExpr uri (Position l c) expr = do
     env <- liftIO $ buildCrossEnv uri
     hover
-      (maybe noExpr (contents env expr l c) (inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c)))
+      ( maybe
+          noExpr
+          (contents env expr l c)
+          (inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c))
+      )
   noExpr = MarkupContent MarkupKind_Markdown "`no expression at cursor`"
   contents env expr l c t =
     MarkupContent MarkupKind_Markdown ("`: " <> t <> "`" <> optInfo)
@@ -255,7 +259,8 @@ renameHandler req responder = do
         cl = fromIntegral l + 1
         cc = fromIntegral c + 1
      in maybe nullResp (resolveRef uri sg newName) (findRef (cl, cc) sg)
-  resolveRef uri sg newName ref = either (const nullResp) (emitEdit uri sg newName) (Scope.resolve sg ref)
+  resolveRef uri sg newName ref =
+    either (const nullResp) (emitEdit uri sg newName) (Scope.resolve sg ref)
   emitEdit uri sg newName decl =
     let allRefs = Scope.findReferences sg decl
         declEdit =

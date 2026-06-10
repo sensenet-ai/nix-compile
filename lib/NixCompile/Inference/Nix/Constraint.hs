@@ -79,7 +79,8 @@ starts with empty substitution / fresh-var counter at 0
 -}
 runInfer :: Infer a -> Either Text (a, [Binding])
 runInfer inference =
-  let (eitherResult, inferState) = runState (runExceptT inference) (InferState 0 emptySubst [] Nothing Map.empty)
+  let (eitherResult, inferState) =
+        runState (runExceptT inference) (InferState 0 emptySubst [] Nothing Map.empty)
    in (\res -> (res, inferBinds inferState)) <$> eitherResult
 
 -- ── emit a binding into the result list (prepended, reversed later) ──
@@ -102,7 +103,8 @@ throwTypeError msg = do
   mSpan <- gets inferSpan
   maybe (throwError msg) located mSpan
  where
-  located (Span (Loc l c) _ _) = throwError $ T.pack (show l) <> ":" <> T.pack (show c) <> ": " <> msg
+  located (Span (Loc l c) _ _) =
+    throwError $ T.pack (show l) <> ":" <> T.pack (show c) <> ": " <> msg
 
 -- ── allocate a fresh type variable (monotonically increasing id) ──
 freshVar :: Infer NixType

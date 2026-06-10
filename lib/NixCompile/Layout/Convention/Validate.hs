@@ -68,7 +68,8 @@ checkBannedFiles path
           { errCode = E007
           , errPath = path
           , errKind = Unknown
-          , errMessage = "_index.nix files are banned; module graph is derived from directory structure"
+          , errMessage =
+              "_index.nix files are banned; module graph is derived from directory structure"
           , errExpected = Nothing
           }
       ]
@@ -115,8 +116,10 @@ findClassAttrWithSpan = go
   extractClass _ = Nothing
 
   extractStringValue :: NExprLoc -> Maybe (Text, Span)
-  extractStringValue (LayerAnn srcSpan (NStr (DoubleQuoted [Plain t]))) = Just (t, srcSpanToSpan srcSpan)
-  extractStringValue (LayerAnn srcSpan (NStr (Indented _ [Plain t]))) = Just (t, srcSpanToSpan srcSpan)
+  extractStringValue (LayerAnn srcSpan (NStr (DoubleQuoted [Plain t]))) =
+    Just (t, srcSpanToSpan srcSpan)
+  extractStringValue (LayerAnn srcSpan (NStr (Indented _ [Plain t]))) =
+    Just (t, srcSpanToSpan srcSpan)
   extractStringValue _ = Nothing
 
   varNameText :: VarName -> Text
@@ -187,7 +190,8 @@ validateLayout :: Convention -> FilePath -> [(FilePath, Detection)] -> [LayoutEr
 validateLayout conv root = concatMap (uncurry (validateFile conv root))
 
 validateLocation :: Convention -> FilePath -> [String] -> ModuleKind -> [LayoutError]
-validateLocation conv relPath components kind = maybe [] check (findRuleForKind (convRules conv) kind)
+validateLocation conv relPath components kind =
+  maybe [] check (findRuleForKind (convRules conv) kind)
  where
   check rule
     | matchesPattern (rulePattern rule) components = []
@@ -202,7 +206,8 @@ validateLocation conv relPath components kind = maybe [] check (findRuleForKind 
         ]
 
 validateForbidden :: Convention -> FilePath -> [String] -> ModuleKind -> [LayoutError]
-validateForbidden conv relPath components kind = maybe [] check (findRuleForKind (convRules conv) kind)
+validateForbidden conv relPath components kind =
+  maybe [] check (findRuleForKind (convRules conv) kind)
  where
   check rule = map toError (filter (`matchesPattern` components) (ruleForbidden rule))
   toError pat =
@@ -236,7 +241,8 @@ validateFlakeModReq conv relPath kind _detection =
       { errCode = E006
       , errPath = relPath
       , errKind = kind
-      , errMessage = "File must be a flake module or package (convention requires uniform structure)"
+      , errMessage =
+          "File must be a flake module or package (convention requires uniform structure)"
       , errExpected = Just "flake-parts module or package.nix"
       }
   | convRequireFlakeMod conv && kind `notElem` [Flake, FlakeModule, Package]

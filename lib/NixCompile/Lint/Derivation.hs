@@ -78,17 +78,27 @@ traverseDerivExpr filePath (LayerAnn srcSpan (NApp func arg)) =
   checkDerivCall filePath srcSpan func arg
     ++ traverseDerivExpr filePath func
     ++ traverseDerivExpr filePath arg
-traverseDerivExpr filePath (Layer (NSet _ bindings)) = concatMap (traverseDerivBinding filePath) bindings
-traverseDerivExpr filePath (Layer (NLet bindings body)) = concatMap (traverseDerivBinding filePath) bindings ++ traverseDerivExpr filePath body
+traverseDerivExpr filePath (Layer (NSet _ bindings)) =
+  concatMap (traverseDerivBinding filePath) bindings
+traverseDerivExpr filePath (Layer (NLet bindings body)) =
+  concatMap (traverseDerivBinding filePath) bindings
+    ++ traverseDerivExpr filePath body
 traverseDerivExpr filePath (Layer (NList xs)) = concatMap (traverseDerivExpr filePath) xs
-traverseDerivExpr filePath (Layer (NIf c t f)) = traverseDerivExpr filePath c ++ traverseDerivExpr filePath t ++ traverseDerivExpr filePath f
-traverseDerivExpr filePath (Layer (NAssert c b)) = traverseDerivExpr filePath c ++ traverseDerivExpr filePath b
+traverseDerivExpr filePath (Layer (NIf c t f)) =
+  traverseDerivExpr filePath c
+    ++ traverseDerivExpr filePath t
+    ++ traverseDerivExpr filePath f
+traverseDerivExpr filePath (Layer (NAssert c b)) =
+  traverseDerivExpr filePath c ++ traverseDerivExpr filePath b
 traverseDerivExpr filePath (Layer (NAbs _ b)) = traverseDerivExpr filePath b
-traverseDerivExpr filePath (Layer (NWith scope body)) = traverseDerivExpr filePath scope ++ traverseDerivExpr filePath body
-traverseDerivExpr filePath (Layer (NSelect alt b _)) = maybe [] (traverseDerivExpr filePath) alt ++ traverseDerivExpr filePath b
+traverseDerivExpr filePath (Layer (NWith scope body)) =
+  traverseDerivExpr filePath scope ++ traverseDerivExpr filePath body
+traverseDerivExpr filePath (Layer (NSelect alt b _)) =
+  maybe [] (traverseDerivExpr filePath) alt ++ traverseDerivExpr filePath b
 traverseDerivExpr filePath (Layer (NHasAttr b _)) = traverseDerivExpr filePath b
 traverseDerivExpr filePath (Layer (NUnary _ x)) = traverseDerivExpr filePath x
-traverseDerivExpr filePath (Layer (NBinary _ x y)) = traverseDerivExpr filePath x ++ traverseDerivExpr filePath y
+traverseDerivExpr filePath (Layer (NBinary _ x y)) =
+  traverseDerivExpr filePath x ++ traverseDerivExpr filePath y
 traverseDerivExpr _ _ = []
 
 traverseDerivBinding :: FilePath -> Binding NExprLoc -> [DerivViolation]
@@ -124,7 +134,8 @@ isMkDerivationCall _ = False
 -- elsewhere and we can't verify statically.
 
 checkDerivArg :: FilePath -> SrcSpan -> NExprLoc -> [DerivViolation]
-checkDerivArg filePath sourceSpan (Layer (NSet _ bindings)) = checkDerivMeta filePath sourceSpan bindings
+checkDerivArg filePath sourceSpan (Layer (NSet _ bindings)) =
+  checkDerivMeta filePath sourceSpan bindings
 checkDerivArg _ _ (Layer (NSym _)) = []
 checkDerivArg _ _ _ = []
 
@@ -176,7 +187,8 @@ findMetaBinding = find isMetaBinding
   isMetaBinding _ = False
 
 isDescriptionBinding :: Binding NExprLoc -> Bool
-isDescriptionBinding (NamedVar (StaticKey bindingName :| []) _ _) = varNameText bindingName == "description"
+isDescriptionBinding (NamedVar (StaticKey bindingName :| []) _ _) =
+  varNameText bindingName == "description"
 isDescriptionBinding _ = False
 
 derivRuleId :: DerivViolationType -> Text

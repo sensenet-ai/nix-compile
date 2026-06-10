@@ -119,11 +119,13 @@ parseExpansionBody body
       && isValidStart text
       && T.all isVarChar text
 
-  isValidStart text = maybe False (\(character, _) -> isAsciiAlpha character || character == '_') (T.uncons text)
+  isValidStart text =
+    maybe False (\(character, _) -> isAsciiAlpha character || character == '_') (T.uncons text)
 
   isVarChar character = isAsciiAlphaNum character || character == '_'
 
-  isAsciiAlpha character = (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')
+  isAsciiAlpha character =
+    (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')
   isAsciiAlphaNum character = isAsciiAlpha character || (character >= '0' && character <= '9')
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -221,7 +223,11 @@ parseConfigValue text
   | "\"${" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
       let inner = T.dropEnd 1 (T.drop 1 text)
        in if "${" `T.isPrefixOf` inner && "}" `T.isSuffixOf` inner
-            then Just (maybe (Right (parseLiteralValue inner)) leftVar (parseParamExpansion inner), Quoted)
+            then
+              Just
+                ( maybe (Right (parseLiteralValue inner)) leftVar (parseParamExpansion inner)
+                , Quoted
+                )
             else Just (Right (parseLiteralValue inner), Quoted)
   | "\"$" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =
       -- "$VAR" — only a var ref if VAR is a valid name (#21/#22: `"$|"` must
@@ -305,7 +311,8 @@ isNumericLiteral text =
   fitsInt64 sourceText =
     maybe False inRange (readMaybe (T.unpack sourceText) :: Maybe Integer)
    where
-    inRange parsedInteger = parsedInteger >= -9223372036854775808 && parsedInteger <= 9223372036854775807
+    inRange parsedInteger =
+      parsedInteger >= -9223372036854775808 && parsedInteger <= 9223372036854775807
 
 -- | parse text as Int, returning Nothing if out of range
 safeParseInt :: Text -> Maybe Int

@@ -117,7 +117,13 @@ buildConfigSchema facts subst = Map.fromListWith mergeConfigSpec (concatMap fact
   factToConfigSpec (ConfigAssign path variable quoted sourceSpan) =
     [
       ( path
-      , ConfigSpec (resolveType subst variable) (Just variable) (Just quoted) Nothing Nothing sourceSpan
+      , ConfigSpec
+          (resolveType subst variable)
+          (Just variable)
+          (Just quoted)
+          Nothing
+          Nothing
+          sourceSpan
       )
     ]
   factToConfigSpec (ConfigLit path literal sourceSpan) =

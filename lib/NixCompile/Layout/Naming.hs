@@ -100,9 +100,11 @@ findNamingViolations conv expr = go expr
   go (LayerAnn srcSpan (NLet bindings body)) =
     concatMap (checkBinding conv "let binding" srcSpan) bindings ++ go body
   -- Attribute set: { foo = ...; bar = ...; }
-  go (LayerAnn srcSpan (NSet _ bindings)) = concatMap (checkBinding conv "attribute" srcSpan) bindings
+  go (LayerAnn srcSpan (NSet _ bindings)) =
+    concatMap (checkBinding conv "attribute" srcSpan) bindings
   -- Function with pattern: { foo, bar, ... }: ...
-  go (LayerAnn srcSpan (NAbs (ParamSet _ _ params) body)) = mapMaybe (checkParam conv srcSpan) params ++ go body
+  go (LayerAnn srcSpan (NAbs (ParamSet _ _ params) body)) =
+    mapMaybe (checkParam conv srcSpan) params ++ go body
   -- Recurse into children
   go (Layer (NAbs _ body)) = go body
   go (Layer (NWith _ body)) = go body

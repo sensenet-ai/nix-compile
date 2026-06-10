@@ -143,7 +143,11 @@ printScopeGraph scopeGraph = do
       putStrLn "  References:"
       forM_ refs $ \reference -> do
         TIO.putStrLn $
-          "    " <> Scope.refName reference <> " (" <> T.pack (show (Scope.refKind reference)) <> ")"
+          "    "
+            <> Scope.refName reference
+            <> " ("
+            <> T.pack (show (Scope.refKind reference))
+            <> ")"
 
     let edges = Scope.scopeEdges scope
     unless (null edges) $ do
@@ -166,4 +170,5 @@ printScopeGraph scopeGraph = do
   reportResolved resolved =
     putStrLn $ "=== All " ++ show (length resolved) ++ " references resolved ==="
   printUnresolved (Scope.Unresolved ref) = TIO.putStrLn $ "  " <> Scope.refName ref
-  printUnresolved (Scope.Ambiguous ref _) = TIO.putStrLn $ "  " <> Scope.refName ref <> " (ambiguous)"
+  printUnresolved (Scope.Ambiguous ref _) =
+    TIO.putStrLn $ "  " <> Scope.refName ref <> " (ambiguous)"

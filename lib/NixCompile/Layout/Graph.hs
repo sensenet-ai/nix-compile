@@ -190,7 +190,8 @@ processParsedFile conv path visited state expr =
     pure $
       state
         { bsFailures =
-            ParseFailure path (Safety.renderSafetyError (Safety.SafetyDepthExceeded de)) : bsFailures state
+            ParseFailure path (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
+              : bsFailures state
         }
 
 processParsedFile' ::

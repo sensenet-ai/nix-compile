@@ -252,7 +252,8 @@ addImportEdges scopeGraph [] = scopeGraph
 addImportEdges scopeGraph [single] = scopeGraph{sgRoot = single}
 addImportEdges scopeGraph fileRoots =
   let globalRoot = ScopeId (sgNextId scopeGraph)
-      globalScope = Scope globalRoot [] [] (map (\fr -> Edge globalRoot fr Import) fileRoots) FileScope
+      globalScope =
+        Scope globalRoot [] [] (map (\fr -> Edge globalRoot fr Import) fileRoots) FileScope
    in scopeGraph
         { sgScopes = Map.insert globalRoot globalScope (sgScopes scopeGraph)
         , sgRoot = globalRoot

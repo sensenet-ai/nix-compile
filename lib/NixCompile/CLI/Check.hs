@@ -60,7 +60,10 @@ checkFile config file = do
   -- past parse: enforce the depth guard, then check (unless an unsupported
   -- construct means we skip the type-check phase)
   afterParse expression =
-    either (onDepthExceeded expression) (const (afterDepth expression)) (Safety.analyzeDepth expression)
+    either
+      (onDepthExceeded expression)
+      (const (afterDepth expression))
+      (Safety.analyzeDepth expression)
 
   onDepthExceeded _ de = do
     $(logTM) ErrorS $
@@ -101,7 +104,10 @@ checkWithViolations config file expression skipTypeCheck = do
   emitAll Patterns.patternViolationDiagnostic activePatternViolations
 
   typeCheckResult <- performTypeCheck config file expression skipTypeCheck
-  let allClean = null activeNixViolations && null activeDerivViolations && null activePatternViolations
+  let allClean =
+        null activeNixViolations
+          && null activeDerivViolations
+          && null activePatternViolations
       report TCFail = return TCFail
       report TCOk
         | skipTypeCheck = do
@@ -149,12 +155,14 @@ performTypeCheck config file expression skipTypeCheck
         , Diag.diagCode = Just "INTERNAL"
         , Diag.diagSpan = Nothing
         , Diag.diagSummary =
-            "internal error (this is a bug in nix-compile): " <> T.pack (show (exception :: SomeException))
+            "internal error (this is a bug in nix-compile): "
+              <> T.pack (show (exception :: SomeException))
         , Diag.diagHelp = []
         , Diag.diagSnippet = Nothing
         }
     return TCFail
-  handleResult (Right (Left typeError)) = bySeverity (Config.effectiveSeverity config Config.typeCheckRuleId)
+  handleResult (Right (Left typeError)) =
+    bySeverity (Config.effectiveSeverity config Config.typeCheckRuleId)
    where
     bySeverity (Just Config.SevOff) = return TCOk
     bySeverity (Just Config.SevWarning) = emitType WarningS typeError >> return TCOk
@@ -170,7 +178,9 @@ performTypeCheck config file expression skipTypeCheck
 formatTypeError :: T.Text -> T.Text
 formatTypeError errorText = format (T.lines errorText)
  where
-  format (firstLine : remainingLines) = T.unlines $ ("  TYPE WARNING: " <> firstLine) : map ("         " <>) remainingLines
+  format (firstLine : remainingLines) =
+    T.unlines $
+      ("  TYPE WARNING: " <> firstLine) : map ("         " <>) remainingLines
   format [] = "  TYPE WARNING: unknown error"
 
 {- | Detect AST shapes that are syntactically valid but semantically unsupported.

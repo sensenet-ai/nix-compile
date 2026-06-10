@@ -91,7 +91,10 @@ completionsForExpr _env expr l c =
         opts = MS.extractOptions expr
         matchingOpts = Map.filterWithKey (\k _ -> pfx `T.isPrefixOf` k) opts
         optItems =
-          [ mkCompletionItem k (Just CompletionItemKind_Property) (Just (NT.prettyType (MS.optType v)))
+          [ mkCompletionItem
+              k
+              (Just CompletionItemKind_Property)
+              (Just (NT.prettyType (MS.optType v)))
           | (k, v) <- Map.toList matchingOpts
           ]
      in nub $ scoped ++ builtins' ++ optItems
@@ -111,7 +114,10 @@ builtinCompletions pfx =
 builtinItem :: Text -> CompletionItem
 builtinItem name =
   let detail = fmap NT.prettyScheme (Map.lookup name (envBindings builtinEnv))
-      kind = if "builtins" `T.isPrefixOf` name then CompletionItemKind_Module else CompletionItemKind_Function
+      kind =
+        if "builtins" `T.isPrefixOf` name
+          then CompletionItemKind_Module
+          else CompletionItemKind_Function
    in mkCompletionItem name (Just kind) detail
 
 mkCompletionItem :: Text -> Maybe CompletionItemKind -> Maybe Text -> CompletionItem
@@ -166,7 +172,11 @@ lookupBuiltinSig name = do
   scheme <- Map.lookup name (envBindings builtinEnv)
   let typeStr = NT.prettyScheme scheme
       params = extractParamLabels scheme
-      paramInfos = [ParameterInformation (InL p) Nothing | (p, i) <- zip params [(0 :: Int) ..], i < (5 :: Int)]
+      paramInfos =
+        [ ParameterInformation (InL p) Nothing
+        | (p, i) <- zip params [(0 :: Int) ..]
+        , i < (5 :: Int)
+        ]
       sigInfo =
         SignatureInformation
           (name <> " : " <> typeStr)
@@ -221,7 +231,10 @@ inlayHintsForExpr env expr range = either (const []) withBindings (inferExprWith
  where
   withBindings (_, bindings) =
     [ InlayHint
-        (Position (fromIntegral (locLine (spanStart sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1)))
+        ( Position
+            (fromIntegral (locLine (spanStart sp) - 1))
+            (fromIntegral (locCol (spanEnd sp) + 1))
+        )
         (InL (": " <> NT.prettyType bindType))
         (Just InlayHintKind_Type)
         Nothing
@@ -232,7 +245,10 @@ inlayHintsForExpr env expr range = either (const []) withBindings (inferExprWith
     | Infer.Binding name bindType sp <- bindings
     , not (T.null name)
     , cursorInRange
-        (Position (fromIntegral (locLine (spanEnd sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1)))
+        ( Position
+            (fromIntegral (locLine (spanEnd sp) - 1))
+            (fromIntegral (locCol (spanEnd sp) + 1))
+        )
         range
     ]
 

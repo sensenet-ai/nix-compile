@@ -107,7 +107,8 @@ data FileEntry = FileEntry
   }
 
 instance Show FileEntry where
-  show e = "FileEntry { feType = " <> show (feType e) <> ", feStatus = " <> show (feStatus e) <> " }"
+  show e =
+    "FileEntry { feType = " <> show (feType e) <> ", feStatus = " <> show (feStatus e) <> " }"
 
 data EntryStatus
   = -- | the entry reflects the current on-disk (or last-saved) content
@@ -250,7 +251,8 @@ updateCache pc fp entry = atomically $ do
 
   modifyTVar' (pcReverse pc) $ \rev ->
     let stripped = Set.foldl' (\acc i -> Map.adjust (Set.delete fp) i acc) rev removed
-        extended = Set.foldl' (\acc i -> Map.insertWith Set.union i (Set.singleton fp) acc) stripped added
+        extended =
+          Set.foldl' (\acc i -> Map.insertWith Set.union i (Set.singleton fp) acc) stripped added
      in extended
 
   modifyTVar' (pcFiles pc) (Map.insert fp entry)
@@ -300,7 +302,9 @@ buildEnvForFile pc fp = do
   -- import entries we have, and extend the env via 'extendImport' so that
   -- both keying conventions hit.
   let addImport impFp acc
-        | Just ie <- Map.lookup impFp files, feStatus ie == Fresh = extendImport impFp (feType ie) acc
+        | Just ie <- Map.lookup impFp files
+        , feStatus ie == Fresh =
+            extendImport impFp (feType ie) acc
         | otherwise = acc
   pure $ maybe builtinEnv (\e -> foldr addImport builtinEnv (feImports e)) (Map.lookup canon files)
 

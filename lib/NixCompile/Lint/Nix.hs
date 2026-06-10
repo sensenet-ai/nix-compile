@@ -105,7 +105,8 @@ traverseNixExpr (Layer (NStr (Indented _ parts))) = concatMap nixPartExprs parts
 -- everything else: no local violation, just recurse into sub-expressions
 traverseNixExpr (Layer (NSet NonRecursive bindings)) = concatMap traverseNixBinding bindings
 traverseNixExpr (Layer (NList xs)) = concatMap traverseNixExpr xs
-traverseNixExpr (Layer (NLet bindings body)) = concatMap traverseNixBinding bindings ++ traverseNixExpr body
+traverseNixExpr (Layer (NLet bindings body)) =
+  concatMap traverseNixBinding bindings ++ traverseNixExpr body
 traverseNixExpr (Layer (NIf c t f)) = traverseNixExpr c ++ traverseNixExpr t ++ traverseNixExpr f
 traverseNixExpr (Layer (NAssert c b)) = traverseNixExpr c ++ traverseNixExpr b
 traverseNixExpr (Layer (NAbs _ b)) = traverseNixExpr b
@@ -232,7 +233,8 @@ formatNixErrorCode VRawMkDerivation = "ALEPH-N006: raw `mkDerivation`"
 formatNixErrorCode VRawRunCommand = "ALEPH-N007: raw `runCommand`"
 formatNixErrorCode VRawWriteShellApplication = "ALEPH-N008: raw `writeShellApplication`"
 formatNixErrorCode VWriteShellScript = "ALEPH-N011: `writeShellScript`"
-formatNixErrorCode (VLongInlineString n) = "ALEPH-N012: long inline string (" <> T.pack (show n) <> " chars)"
+formatNixErrorCode (VLongInlineString n) =
+  "ALEPH-N012: long inline string (" <> T.pack (show n) <> " chars)"
 
 -- ── remediation notes ──────────────────────────────────────────────
 -- These are the full-text explanations shown to the user after the
@@ -303,7 +305,9 @@ formatNixNote VWriteShellScript =
     ]
 formatNixNote (VLongInlineString n) =
   T.unlines
-    [ "  Inline strings longer than " <> T.pack (show maxInlineStringLength) <> " characters are banned"
+    [ "  Inline strings longer than "
+        <> T.pack (show maxInlineStringLength)
+        <> " characters are banned"
     , "    because they:"
     , "    - Clutter source files"
     , "    - Are hard to review and maintain"

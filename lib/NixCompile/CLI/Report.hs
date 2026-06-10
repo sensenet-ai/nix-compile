@@ -112,7 +112,8 @@ partitionDerivViolations ::
 partitionDerivViolations config = foldr go ([], [])
  where
   go v (suppressed, active)
-    | Config.isSuppressed config (Config.derivRuleId (Derivation.dvType v)) = (v : suppressed, active)
+    | Config.isSuppressed config (Config.derivRuleId (Derivation.dvType v)) =
+        (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
 partitionPackageViolations ::

@@ -53,7 +53,9 @@ isPackageDir directory = do
  where
   onError (_ :: IOException) = pure False
   onListing entries =
-    anyM (\file -> isPackageModule (directory </> file)) (filter ((== ".nix") . takeExtension) entries)
+    anyM
+      (\file -> isPackageModule (directory </> file))
+      (filter ((== ".nix") . takeExtension) entries)
 
 isPackageModule :: FilePath -> IO Bool
 isPackageModule path = do

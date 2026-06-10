@@ -63,7 +63,11 @@ extractSimpleVar text
       && T.all isVarChar name
       && not (isNumericLiteral name)
       && not (isBoolLiteral name)
-  isVarChar character = character == '_' || isAsciiUpper character || isAsciiLower character || isDigit character
+  isVarChar character =
+    character == '_'
+      || isAsciiUpper character
+      || isAsciiLower character
+      || isDigit character
 
 -- | extract a variable reference that starts with $ (either $VAR or ${VAR})
 extractVarRef :: Text -> Maybe Text
@@ -84,9 +88,12 @@ data ConfigValueDynamic
 
 -- | convert a dynamic value to the corresponding Fact constructor
 configValueFact :: ConfigPath -> Quoted -> Span -> ConfigValueDynamic -> Fact
-configValueFact configPath quoted sourceSpan (CVDVar variable) = ConfigAssign configPath variable quoted sourceSpan
-configValueFact configPath _quoted sourceSpan (CVDLit literal) = ConfigLit configPath literal sourceSpan
-configValueFact configPath quoted sourceSpan (CVDTemplate templateParts) = ConfigTemplate configPath templateParts quoted sourceSpan
+configValueFact configPath quoted sourceSpan (CVDVar variable) =
+  ConfigAssign configPath variable quoted sourceSpan
+configValueFact configPath _quoted sourceSpan (CVDLit literal) =
+  ConfigLit configPath literal sourceSpan
+configValueFact configPath quoted sourceSpan (CVDTemplate templateParts) =
+  ConfigTemplate configPath templateParts quoted sourceSpan
 
 -- ── value parser selection ───────────────────────────────────────
 
@@ -152,10 +159,13 @@ parseConfigTemplateTokens tokens =
   expansionPart text = classify (parseParamExpansion text)
    where
     classify (Just (SimpleRef variable)) = [ConfigVar variable]
-    classify (Just (DefaultValue variable defaultValue)) = [ConfigVarDefault variable (fromMaybe "" defaultValue)]
-    classify (Just (AssignDefault variable defaultValue)) = [ConfigVarDefault variable (fromMaybe "" defaultValue)]
+    classify (Just (DefaultValue variable defaultValue)) =
+      [ConfigVarDefault variable (fromMaybe "" defaultValue)]
+    classify (Just (AssignDefault variable defaultValue)) =
+      [ConfigVarDefault variable (fromMaybe "" defaultValue)]
     classify (Just (ErrorIfUnset variable _)) = [ConfigVarRequired variable]
-    classify (Just (UseAlternate variable alternate)) = [ConfigVarAlternate variable (fromMaybe "" alternate)]
+    classify (Just (UseAlternate variable alternate)) =
+      [ConfigVarAlternate variable (fromMaybe "" alternate)]
     classify Nothing = [ConfigText text]
 
   -- ── merge adjacent ConfigText parts ──
@@ -165,7 +175,8 @@ parseConfigTemplateTokens tokens =
     step part xs = part : xs
 
 -- -- text → config parts -- --
--- Parses raw text like "$A-${B:-default}" into [ConfigVar "A", ConfigText "-", ConfigVarDefault "B" "default"]
+-- Parses raw text like "$A-${B:-default}" into
+-- [ConfigVar "A", ConfigText "-", ConfigVarDefault "B" "default"]
 -- n.b. this is the text-level fallback when token-level parsing didn't apply
 
 parseConfigTemplate :: Text -> Maybe [ConfigPart]
@@ -202,10 +213,13 @@ parseConfigTemplate sourceText =
         (name, textAfterName) = T.breakOn "}" textAfterDollarBrace
         rest = parseParts (T.drop 1 textAfterName)
         classify (Just (SimpleRef variable)) = ConfigVar variable : rest
-        classify (Just (DefaultValue variable defaultValue)) = ConfigVarDefault variable (fromMaybe "" defaultValue) : rest
-        classify (Just (AssignDefault variable defaultValue)) = ConfigVarDefault variable (fromMaybe "" defaultValue) : rest
+        classify (Just (DefaultValue variable defaultValue)) =
+          ConfigVarDefault variable (fromMaybe "" defaultValue) : rest
+        classify (Just (AssignDefault variable defaultValue)) =
+          ConfigVarDefault variable (fromMaybe "" defaultValue) : rest
         classify (Just (ErrorIfUnset variable _)) = ConfigVarRequired variable : rest
-        classify (Just (UseAlternate variable alternate)) = ConfigVarAlternate variable (fromMaybe "" alternate) : rest
+        classify (Just (UseAlternate variable alternate)) =
+          ConfigVarAlternate variable (fromMaybe "" alternate) : rest
         classify Nothing = splitText text
      in if "}" `T.isPrefixOf` textAfterName
           then classify (parseParamExpansion ("${" <> name <> "}"))
@@ -233,7 +247,11 @@ parseConfigTemplate sourceText =
       && not (isBoolLiteral name)
       && T.all isVarChar name
 
-  isVarChar character = character == '_' || isAsciiUpper character || isAsciiLower character || isDigit character
+  isVarChar character =
+    character == '_'
+      || isAsciiUpper character
+      || isAsciiLower character
+      || isDigit character
 
   -- ── merge adjacent ConfigText parts (post-processing) ──
   mergeTextParts = foldr step []

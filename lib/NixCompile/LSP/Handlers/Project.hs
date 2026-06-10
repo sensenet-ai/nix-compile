@@ -97,7 +97,8 @@ findProjectRoot uri = maybe (pure Nothing) fromPath (uriToFilePath uri)
     if hasFlake || hasConfig
       then pure (Just dir)
       else
-        let parent = takeDirectory dir in if parent == dir then pure Nothing else findRoot parent (n - 1)
+        let parent = takeDirectory dir
+         in if parent == dir then pure Nothing else findRoot parent (n - 1)
 
 {- | Build a TypeEnv enriched with cross-module type information.
 
@@ -149,7 +150,10 @@ legacyBuildCrossEnv uri = do
             foldr
               ( \imp acc' ->
                   let raw = T.unpack (Mod.impRawPath imp)
-                   in maybe acc' (\t -> extendImport raw t acc') (Map.lookup (Mod.impPath imp) canonicalTypes)
+                   in maybe
+                        acc'
+                        (\t -> extendImport raw t acc')
+                        (Map.lookup (Mod.impPath imp) canonicalTypes)
               )
               acc
               (Mod.modImports m)
@@ -165,7 +169,8 @@ buildCrossScopeGraphWith uri mCurrentExpr = do
   withMg mg =
     let exprs = Map.map Mod.modExpr (Mod.mgModules mg)
         currentFile = uriToFilePath uri
-        exprs' = maybe exprs (\(f, e) -> Map.insert f e exprs) ((,) <$> currentFile <*> mCurrentExpr)
+        exprs' =
+          maybe exprs (\(f, e) -> Map.insert f e exprs) ((,) <$> currentFile <*> mCurrentExpr)
      in pure $ Scope.fromModuleGraph exprs'
 
 {- | Look up or build the module graph for a project root.

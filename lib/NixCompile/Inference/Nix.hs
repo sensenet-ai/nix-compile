@@ -333,7 +333,9 @@ inferBinary environment op left right = do
     plusResult TPath = pure TPath
     plusResult resolved@(TVar _) = pure resolved
     plusResult TAny = pure TAny
-    plusResult resolved = throwTypeError $ "operator `+` expects Int, Float, String, or Path; got " <> prettyType resolved
+    plusResult resolved =
+      throwTypeError $
+        "operator `+` expects Int, Float, String, or Path; got " <> prettyType resolved
     -- both operands concrete: the legal +-combinations (TStrLit ≈ TString)
     plusConcrete a b = combine (norm a) (norm b)
     combine TInt TInt = Just TInt
@@ -424,7 +426,10 @@ inferLambda environment (ParamSet mName variadic paramList) body = do
         | envModuleParams environment = TAny
         | otherwise = attrsT
   let environment'' =
-        maybe environment' (\name -> extendEnv (varNameText name) (Forall [] boundType) environment') mName
+        maybe
+          environment'
+          (\name -> extendEnv (varNameText name) (Forall [] boundType) environment')
+          mName
 
   resultT <- infer environment'' body
   pure $ TFun attrsT resultT
@@ -488,7 +493,10 @@ infer environment (LayerAnn sp expr) = withSpan (srcSpanToSpan sp) (go expr)
   go (NApp func arg) = inferAppWithImport environment func arg
   -- `builtins.<name>`: a modeled namespace field gets a fresh polymorphic instance
   go (NSelect mDef base path) =
-    maybe (inferSelect environment base path (isJust mDef)) instantiate (builtinsFieldScheme base path)
+    maybe
+      (inferSelect environment base path (isJust mDef))
+      instantiate
+      (builtinsFieldScheme base path)
   go (NHasAttr base attr) = inferHasAttr environment base attr
   go (NUnary op e) = inferUnary environment op e
   go (NBinary op left right) = inferBinary environment op left right
@@ -561,11 +569,14 @@ inferRecursiveBindings environment bindings'' = do
   let bindings' = desugarNestedBindings bindings''
   let names = concatMap bindingNames bindings'
   freshTypeVars <- replicateM (length names) freshVar
-  let extendedEnv = foldr (\(n, t) e -> extendEnv n (Forall [] t) e) environment (zip names freshTypeVars)
+  let extendedEnv =
+        foldr (\(n, t) e -> extendEnv n (Forall [] t) e) environment (zip names freshTypeVars)
   let varChunks = assignChunks freshTypeVars bindings'
   inferredBindings <-
     sequence
-      [inferRecBinding extendedEnv binding typeVars | (binding, typeVars) <- zip bindings' varChunks]
+      [ inferRecBinding extendedEnv binding typeVars
+      | (binding, typeVars) <- zip bindings' varChunks
+      ]
   resolvedVars <- forM freshTypeVars applyCurrentSubst
   when
     (all resolvedToSelf (zip resolvedVars freshTypeVars))
@@ -593,7 +604,9 @@ inferNonRecursiveBinding environment (Nix.Inherit maybeScope keys _) =
  where
   fromScope key scope =
     let LayerAnn scopeSp _ = scope
-     in infer environment (Fix (Compose (AnnUnit scopeSp (NSelect Nothing scope (StaticKey key :| [])))))
+     in infer
+          environment
+          (Fix (Compose (AnnUnit scopeSp (NSelect Nothing scope (StaticKey key :| [])))))
   fromEnv keyName = maybe freshVar instantiate (lookupEnv keyName environment)
 inferNonRecursiveBinding _ _ = pure []
 
@@ -693,7 +706,8 @@ inferLetGroup _baseEnv currentEnv scc = do
   let names = map (\(n, _, _) -> n) groupBindings
   freshVars <- replicateM (length names) freshVar
 
-  let envRecursive = foldr (\(n, t) e -> extendEnv n (Forall [] t) e) currentEnv (zip names freshVars)
+  let envRecursive =
+        foldr (\(n, t) e -> extendEnv n (Forall [] t) e) currentEnv (zip names freshVars)
 
   forM_ (zip groupBindings freshVars) $ \((name, expr, sp), typeVar) -> do
     t <- infer envRecursive expr
@@ -728,7 +742,8 @@ collectFreeVars :: NExprLoc -> [Text]
 collectFreeVars (Layer (NSym name)) = [varNameText name]
 collectFreeVars (Layer (NList elems)) = concatMap collectFreeVars elems
 collectFreeVars (Layer (NSet _ bindings)) = concatMap collectFreeVarsBinding bindings
-collectFreeVars (Layer (NLet bindings body)) = concatMap collectFreeVarsBinding bindings ++ collectFreeVars body
+collectFreeVars (Layer (NLet bindings body)) =
+  concatMap collectFreeVarsBinding bindings ++ collectFreeVars body
 collectFreeVars (Layer (NIf c t f)) = collectFreeVars c ++ collectFreeVars t ++ collectFreeVars f
 collectFreeVars (Layer (NWith s b)) = collectFreeVars s ++ collectFreeVars b
 collectFreeVars (Layer (NAssert c b)) = collectFreeVars c ++ collectFreeVars b

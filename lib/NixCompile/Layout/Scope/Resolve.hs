@@ -125,7 +125,8 @@ declarationsInScope scopeGraph = go Set.empty
 
 -- | all references in a specific scope
 referencesInScope :: ScopeGraph -> ScopeId -> [Reference]
-referencesInScope scopeGraph scopeId = maybe [] scopeReferences (Map.lookup scopeId (sgScopes scopeGraph))
+referencesInScope scopeGraph scopeId =
+  maybe [] scopeReferences (Map.lookup scopeId (sgScopes scopeGraph))
 
 -- | find all declarations with a given name across the whole graph
 findDeclaration :: ScopeGraph -> Text -> [Declaration]

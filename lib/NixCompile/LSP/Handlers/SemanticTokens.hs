@@ -94,10 +94,16 @@ encToken tokens = go tokens (0, 0) []
   go [] _ acc = reverse acc
   go (t : ts) (prevLine, prevCol) acc =
     let dLine = fromIntegral (rtLine t - prevLine)
-        dCol = if rtLine t == prevLine then fromIntegral (rtCol t - prevCol) else fromIntegral (rtCol t)
+        dCol =
+          if rtLine t == prevLine
+            then fromIntegral (rtCol t - prevCol)
+            else fromIntegral (rtCol t)
         tIdx = fromIntegral (tokenTypeIndex (rtType t))
         bits = sum [modifierBit m | m <- rtMods t]
-     in go ts (rtLine t, rtCol t) (acc ++ [dLine, dCol, fromIntegral (rtLen t), tIdx, fromIntegral bits])
+     in go
+          ts
+          (rtLine t, rtCol t)
+          (acc ++ [dLine, dCol, fromIntegral (rtLen t), tIdx, fromIntegral bits])
 
 tokenTypeIndex :: SemanticTokenTypes -> Int
 tokenTypeIndex = idx . toEnumBaseType

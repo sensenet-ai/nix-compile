@@ -278,7 +278,8 @@ detectFromAttrNames names
   named = (`elem` names)
   hasOptions = named "options"
   hasConfig = named "config"
-  hasMkDeriv = any named ["mkDerivation", "stdenv.mkDerivation", "buildPythonPackage", "buildGoModule"]
+  hasMkDeriv =
+    any named ["mkDerivation", "stdenv.mkDerivation", "buildPythonPackage", "buildGoModule"]
   hasPname = named "pname"
   hasVersion = named "version"
   -- `imports` (with none of the stronger signals above) marks a flake-parts

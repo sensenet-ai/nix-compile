@@ -89,10 +89,12 @@ parseNixFile path = either (Left . Safety.renderSafetyError) Right <$> Safety.sa
 n.b. this is the safe variant — exception-handling lives in Safety.
 -}
 parseNixExpr :: Text -> Either Text NExprLoc
-parseNixExpr src = either (Left . Safety.renderSafetyError) Right (Safety.safeAnalyze =<< parseNoIO src)
+parseNixExpr src =
+  either (Left . Safety.renderSafetyError) Right (Safety.safeAnalyze =<< parseNoIO src)
  where
   parseNoIO :: Text -> Either Safety.SafetyError NExprLoc
-  parseNoIO s = either (Left . Safety.SafetyParseFailed . T.pack . show) Right (Nix.Parser.parseNixTextLoc s)
+  parseNoIO s =
+    either (Left . Safety.SafetyParseFailed . T.pack . show) Right (Nix.Parser.parseNixTextLoc s)
 
 -- | Parse a Nix expression from text with filepath for error context
 parseNix :: FilePath -> Text -> Either Text NExprLoc
@@ -173,7 +175,8 @@ extractPartsWithInterps = go 0
 e.g., ${pkgs.curl} or ${lib.getExe pkgs.ripgrep}
 -}
 isStorePathExpr :: NExprLoc -> Bool
-isStorePathExpr (Layer (NSelect _ base (k :| _))) = isPackageBase base || keyTextIs "pkgs" k || keyTextIs "lib" k
+isStorePathExpr (Layer (NSelect _ base (k :| _))) =
+  isPackageBase base || keyTextIs "pkgs" k || keyTextIs "lib" k
 isStorePathExpr (Layer (NApp func arg)) = isStorePathExpr func || isStorePathExpr arg
 isStorePathExpr (Layer (NSym name)) = isLikelyPackageVar (varNameText name)
 isStorePathExpr (Layer (NLiteralPath p)) = "/nix/store" `T.isPrefixOf` T.pack (show p)

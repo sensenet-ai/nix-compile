@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                                                       // straylint
+--                                                                                      // straylint
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "He'd waited in the booth, watching the door, the gun a dead weight."
@@ -103,7 +103,8 @@ caseBan = Rule "case-ban" check
         col
         "case-ban"
         ( caseExprKind expr
-            <> " — prefer equations or guards (HOUSE_STYLE.md); mark a justified survivor with CASE-OK"
+            <> " — prefer equations or guards (HOUSE_STYLE.md);"
+            <> " mark a justified survivor with CASE-OK"
         )
     | located <- listify isCaseLike modul
     , let expr = unLoc located

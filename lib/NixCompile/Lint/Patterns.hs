@@ -150,7 +150,8 @@ fmtCall _ = "translateAttrs call"
 
 prettyShort :: NExprLoc -> Text
 prettyShort (Layer (NSym name)) = varNameText name
-prettyShort (Layer (NSelect _ b path)) = maybe "‥" (\k -> prettyShort b <> "." <> k) (lastStaticKey path)
+prettyShort (Layer (NSelect _ b path)) =
+  maybe "‥" (\k -> prettyShort b <> "." <> k) (lastStaticKey path)
 prettyShort _ = "‥"
 
 lastStaticKey :: NE.NonEmpty (NKeyName NExprLoc) -> Maybe Text
@@ -172,7 +173,8 @@ patternSubExprs (NWith s b) = [s, b]
 patternSubExprs (NAssert c b) = [c, b]
 patternSubExprs (NAbs _ b) = [b]
 patternSubExprs (NApp f x) = [f, x]
-patternSubExprs (NSelect mDef b path) = b : maybeToList mDef ++ [e | DynamicKey (Antiquoted e) <- toList path]
+patternSubExprs (NSelect mDef b path) =
+  b : maybeToList mDef ++ [e | DynamicKey (Antiquoted e) <- toList path]
 patternSubExprs (NHasAttr b path) = b : [e | DynamicKey (Antiquoted e) <- toList path]
 patternSubExprs (NUnary _ x) = [x]
 patternSubExprs (NBinary _ x y) = [x, y]

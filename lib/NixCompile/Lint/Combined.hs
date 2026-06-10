@@ -158,7 +158,8 @@ bannedApp srcSpan f = dispatch (leafName f)
   dispatch (Just "substituteAll") = [mkNV VSubstituteAll "substituteAll ..."]
   dispatch (Just "mkDerivation") = [mkNV VRawMkDerivation "mkDerivation { ... }"]
   dispatch (Just "runCommand") = [mkNV VRawRunCommand "runCommand ..."]
-  dispatch (Just "writeShellApplication") = [mkNV VRawWriteShellApplication "writeShellApplication { ... }"]
+  dispatch (Just "writeShellApplication") =
+    [mkNV VRawWriteShellApplication "writeShellApplication { ... }"]
   dispatch (Just n)
     | n == "writeShellScript" || n == "writeShellScriptBin" = [mkNV VWriteShellScript (n <> " ...")]
   dispatch _ = []
@@ -186,7 +187,8 @@ checkDerivMeta filePath srcSpan (Layer (NSet _ bindings)) =
   metaBody = findMetaBody bindings
   hasDesc = maybe False hasDescription metaBody
   missingMeta = [DerivViolation VMissingMeta filePath (srcSpanToSpan srcSpan) | not hasMeta]
-  missingDesc = [DerivViolation VMissingDescription filePath (srcSpanToSpan srcSpan) | hasMeta && not hasDesc]
+  missingDesc =
+    [DerivViolation VMissingDescription filePath (srcSpanToSpan srcSpan) | hasMeta && not hasDesc]
 
   isMetaBinding (NamedVar (StaticKey name :| _) _ _) = varNameText name == "meta"
   isMetaBinding _ = False
@@ -197,7 +199,8 @@ checkDerivMeta filePath srcSpan (Layer (NSet _ bindings)) =
   hasDescription _ = False
   isDescBinding (NamedVar (StaticKey n :| _) _ _) = varNameText n == "description"
   isDescBinding _ = False
-checkDerivMeta _ srcSpan _ = LintBundle [] [DerivViolation VMissingMeta "<buffer>" (srcSpanToSpan srcSpan)] []
+checkDerivMeta _ srcSpan _ =
+  LintBundle [] [DerivViolation VMissingMeta "<buffer>" (srcSpanToSpan srcSpan)] []
 
 -- ── Pattern lint checks ────────────────────────────────────────────
 
@@ -206,7 +209,10 @@ patternViolations srcSpan = go
  where
   go (NSelect (Just defaultExpr) _ _) -- NSelect alt base path
     | isNullExpr defaultExpr =
-        LintBundle [] [] [PatternViolation VOrNullFallback (srcSpanToSpan srcSpan) "or null fallback"]
+        LintBundle
+          []
+          []
+          [PatternViolation VOrNullFallback (srcSpanToSpan srcSpan) "or null fallback"]
   go (NApp func _)
     | isTranslateCall func =
         LintBundle

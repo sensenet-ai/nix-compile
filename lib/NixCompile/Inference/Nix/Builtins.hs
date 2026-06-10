@@ -108,7 +108,8 @@ builtinEnv =
   -- 'builtins' record as monotypes without prematurely monomorphizing them.
   -- The same table backs `builtins.<name>` via selection interception (see
   -- 'builtinsFieldScheme').
-  builtinBindings = Map.union builtinsAttr (Map.union builtinSchemeTable (Map.map (mono . fst) builtinsTypes))
+  builtinBindings =
+    Map.union builtinsAttr (Map.union builtinSchemeTable (Map.map (mono . fst) builtinsTypes))
 
   -- n.b. hand-maintained signatures — must stay in sync with nixpkgs
   builtinsTypes :: Map Text (NixType, Bool)
@@ -143,7 +144,9 @@ builtinEnv =
         , ("removeAttrs", TFun TAny (TFun (TList TString) TAny))
         ,
           ( "listToAttrs"
-          , TFun (TList (TAttrs (Map.fromList [("name", (TString, False)), ("value", (TAny, False))]))) TAny
+          , TFun
+              (TList (TAttrs (Map.fromList [("name", (TString, False)), ("value", (TAny, False))])))
+              TAny
           )
         , -- ── type predicates ──
           ("isNull", TFun TAny TBool)
@@ -174,6 +177,8 @@ builtinEnv =
         , ("deepSeq", TFun TAny (TFun TAny TAny))
         ,
           ( "tryEval"
-          , TFun TAny (TAttrs (Map.fromList [("success", (TBool, False)), ("value", (TAny, False))]))
+          , TFun
+              TAny
+              (TAttrs (Map.fromList [("success", (TBool, False)), ("value", (TAny, False))]))
           )
         ]

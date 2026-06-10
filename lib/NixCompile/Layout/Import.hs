@@ -58,7 +58,8 @@ findImports baseDir = walkExpr
   walkExpr (LayerAnn srcSpan (NApp func arg)) = processApplication baseDir srcSpan func arg walkExpr
   walkExpr (Layer (NLet bindings body)) = concatMap walkBinding bindings ++ walkExpr body
   walkExpr (Layer (NSet _ bindings)) = concatMap walkBinding bindings
-  walkExpr (Layer (NIf cond thenBranch elseBranch)) = walkExpr cond ++ walkExpr thenBranch ++ walkExpr elseBranch
+  walkExpr (Layer (NIf cond thenBranch elseBranch)) =
+    walkExpr cond ++ walkExpr thenBranch ++ walkExpr elseBranch
   walkExpr (Layer (NWith scope body)) = walkExpr scope ++ walkExpr body
   walkExpr (Layer (NAssert cond body)) = walkExpr cond ++ walkExpr body
   walkExpr (Layer (NAbs _ body)) = walkExpr body

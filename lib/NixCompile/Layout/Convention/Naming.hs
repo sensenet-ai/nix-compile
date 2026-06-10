@@ -52,7 +52,11 @@ isKebabCase [] = False
 isKebabCase s = all validChar s && not (badPattern s)
  where
   validChar c = isLower c || isDigit c || c == '-'
-  badPattern x = "--" `isPrefixOf` x || "--" `isSuffixOf` x || "-" `isPrefixOf` x || "-" `isSuffixOf` x
+  badPattern x =
+    "--" `isPrefixOf` x
+      || "--" `isSuffixOf` x
+      || "-" `isPrefixOf` x
+      || "-" `isSuffixOf` x
 
 isSnakeCase :: String -> Bool
 isSnakeCase [] = False

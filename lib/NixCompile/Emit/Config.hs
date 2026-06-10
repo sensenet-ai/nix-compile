@@ -334,7 +334,8 @@ renderJsonValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
      in if asString
           then
             literalTemplate "\""
-              `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
+              `appendTemplate` dynamicTemplate
+                ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
               `appendTemplate` literalTemplate "\""
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
@@ -359,7 +360,8 @@ renderYamlTree env indent = go
    where
     indentStr = T.replicate ind "  "
     render (ConfigBranch _) =
-      literalTemplate (indentStr <> key <> ":\n") `appendTemplate` renderYamlTree env (ind + 1) subtree
+      literalTemplate (indentStr <> key <> ":\n")
+        `appendTemplate` renderYamlTree env (ind + 1) subtree
     render (ConfigLeaf spec') =
       literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue env spec'
 
@@ -381,7 +383,8 @@ renderYamlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
      in if asString
           then
             literalTemplate "\""
-              `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
+              `appendTemplate` dynamicTemplate
+                ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
               `appendTemplate` literalTemplate "\""
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
@@ -409,7 +412,9 @@ renderTomlTree env path = go
      in concatTemplates $
           [literalTemplate sectionHeader]
             ++ intersperseTemplate (literalTemplate "\n") leafLines
-            ++ [literalTemplate (if not (Map.null leaves) && not (Map.null branches) then "\n\n" else "")]
+            ++ [ literalTemplate
+                   (if not (Map.null leaves) && not (Map.null branches) then "\n\n" else "")
+               ]
             ++ intersperseTemplate (literalTemplate "\n\n") branchLines
   go (ConfigLeaf _) = literalTemplate ""
   renderTomlLeaf (key, ConfigLeaf spec) =
@@ -437,7 +442,8 @@ renderTomlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
      in if asString
           then
             literalTemplate "\""
-              `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
+              `appendTemplate` dynamicTemplate
+                ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
               `appendTemplate` literalTemplate "\""
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "\"\""
@@ -446,14 +452,18 @@ renderTemplateParts :: [ConfigPart] -> Template
 renderTemplateParts = concatTemplates . map renderPart
  where
   renderPart (ConfigText txt) = literalTemplate (jsonEscape txt)
-  renderPart (ConfigVar var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
+  renderPart (ConfigVar var) =
+    dynamicTemplate
+      ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
   -- n.b. escape def/alt before embedding (closes C1 from review-2). The user-controlled
   -- default text from `${VAR:-…}` flows in raw; bash would otherwise evaluate $(…), backticks,
   -- etc. inside the default and execute arbitrary commands.
   renderPart (ConfigVarDefault var def) =
     dynamicTemplate
       ("$(__nix_compile_escape_json \"${" <> var <> ":-" <> escapeForParamExpansion def <> "}\")")
-  renderPart (ConfigVarRequired var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
+  renderPart (ConfigVarRequired var) =
+    dynamicTemplate
+      ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
   renderPart (ConfigVarAlternate var alt) =
     dynamicTemplate
       ("$(__nix_compile_escape_json \"${" <> var <> ":+" <> escapeForParamExpansion alt <> "}\")")

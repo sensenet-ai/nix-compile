@@ -308,7 +308,10 @@ classifyEntries basePath ignoredDirs =
             if isDirectory
               then pure (nixFiles, fullPath : subDirectories)
               else
-                pure (if takeExtension fullPath == ".nix" then fullPath : nixFiles else nixFiles, subDirectories)
+                pure
+                  ( if takeExtension fullPath == ".nix" then fullPath : nixFiles else nixFiles
+                  , subDirectories
+                  )
     )
     ([], [])
 

@@ -40,7 +40,8 @@ import ShellCheck.Interface (Position (..))
 -- | determine if a token is quoted or unquoted (for config value semantics)
 isQuotedToken :: SA.Token -> Quoted
 isQuotedToken (SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)) = Quoted
-isQuotedToken (SA.OuterToken _ (SA.Inner_T_NormalWord [SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)])) = Quoted
+isQuotedToken
+  (SA.OuterToken _ (SA.Inner_T_NormalWord [SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)])) = Quoted
 isQuotedToken _ = Unquoted
 
 -- ── token → parameter expansion / literal ────────────────────────

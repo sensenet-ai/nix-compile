@@ -51,7 +51,8 @@ unifyFunctor funT attrsT
   lookupFunctor ft m = dispatch (Map.lookup "__functor" m)
    where
     dispatch (Just (TFun _ innerT, _)) = unify innerT ft
-    dispatch (Just (ftFunctor, _)) = throwTypeError $ "__functor must be a function, got " <> prettyType ftFunctor
+    dispatch (Just (ftFunctor, _)) =
+      throwTypeError $ "__functor must be a function, got " <> prettyType ftFunctor
     dispatch Nothing = typeMismatch ft attrsT
 
 -- | apply current subst, then unify the normalised forms
@@ -172,7 +173,8 @@ bindRowVar :: TypeVar -> NixType -> Infer ()
 bindRowVar r t
   | isAnonRowVar r = pure ()
   | occursCheck r t =
-      throwTypeError $ "recursive row type: " <> prettyType (TVar r) <> " occurs in " <> prettyType t
+      throwTypeError $
+        "recursive row type: " <> prettyType (TVar r) <> " occurs in " <> prettyType t
   | otherwise = addSubst r t
 
 {- | unify a union (sum) type against a concrete type
@@ -242,7 +244,8 @@ mergeAttrs m1 m2 = do
       pure (k, (t, o1 || o2))
     combine (Just (t1, _)) Nothing = pure (k, (t1, True))
     combine Nothing (Just (t2, _)) = pure (k, (t2, True))
-    combine Nothing Nothing = throwTypeError $ "internal error: key " <> k <> " missing from both attr sets"
+    combine Nothing Nothing =
+      throwTypeError $ "internal error: key " <> k <> " missing from both attr sets"
 
 {- | constrain a field in a scope type to a specific type
 used by `with` scope resolution

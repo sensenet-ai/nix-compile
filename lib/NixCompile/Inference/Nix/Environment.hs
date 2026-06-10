@@ -59,7 +59,8 @@ emptyEnv = TypeEnv Map.empty Nothing Map.empty False False
 n.b. this shadows — if a name already exists the new scheme wins
 -}
 extendEnv :: Text -> Scheme -> TypeEnv -> TypeEnv
-extendEnv name scheme environment = environment{envBindings = Map.insert name scheme (envBindings environment)}
+extendEnv name scheme environment =
+  environment{envBindings = Map.insert name scheme (envBindings environment)}
 
 -- | look up a name; returns Nothing if absent (type defaults to fresh var downstream)
 lookupEnv :: Text -> TypeEnv -> Maybe Scheme

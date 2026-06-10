@@ -266,7 +266,8 @@ envVarFacts sourceSpan variableName valueToken =
   fromExpansion (SimpleRef variable) = [AssignFrom variableName variable sourceSpan]
   fromExpansion (UseAlternate _var _) = []
 
-  fromLiteral = maybe [] (\lit -> [AssignLit variableName lit sourceSpan]) (extractLiteral valueToken)
+  fromLiteral =
+    maybe [] (\lit -> [AssignLit variableName lit sourceSpan]) (extractLiteral valueToken)
 
   defaultFacts defaultValue =
     maybe

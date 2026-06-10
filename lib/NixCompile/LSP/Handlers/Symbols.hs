@@ -47,8 +47,14 @@ exprSpan :: NExprLoc -> Range
 exprSpan (LayerAnn srcSpan _) =
   let sp = srcSpanToSpan srcSpan
    in Range
-        (Position (fromIntegral (locLine (spanStart sp) - 1)) (fromIntegral (locCol (spanStart sp) - 1)))
-        (Position (fromIntegral (locLine (spanEnd sp) - 1)) (fromIntegral (locCol (spanEnd sp) - 1)))
+        ( Position
+            (fromIntegral (locLine (spanStart sp) - 1))
+            (fromIntegral (locCol (spanStart sp) - 1))
+        )
+        ( Position
+            (fromIntegral (locLine (spanEnd sp) - 1))
+            (fromIntegral (locCol (spanEnd sp) - 1))
+        )
 
 mkDocumentSymbol :: Text -> SymbolKind -> Range -> [DocumentSymbol] -> DocumentSymbol
 mkDocumentSymbol name kind range children =

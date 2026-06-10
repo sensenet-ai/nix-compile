@@ -115,7 +115,8 @@ attachFileToFact mFile (AssignFrom v o sp) = AssignFrom v o (attachFileToSpan mF
 attachFileToFact mFile (AssignLit v lit sp) = AssignLit v lit (attachFileToSpan mFile sp)
 attachFileToFact mFile (ConfigAssign p v q sp) = ConfigAssign p v q (attachFileToSpan mFile sp)
 attachFileToFact mFile (ConfigLit p lit sp) = ConfigLit p lit (attachFileToSpan mFile sp)
-attachFileToFact mFile (ConfigTemplate p parts q sp) = ConfigTemplate p parts q (attachFileToSpan mFile sp)
+attachFileToFact mFile (ConfigTemplate p parts q sp) =
+  ConfigTemplate p parts q (attachFileToSpan mFile sp)
 attachFileToFact mFile (CmdArg c a v sp) = CmdArg c a v (attachFileToSpan mFile sp)
 attachFileToFact mFile (UsesStorePath p sp) = UsesStorePath p (attachFileToSpan mFile sp)
 attachFileToFact mFile (BareCommand c sp) = BareCommand c (attachFileToSpan mFile sp)
