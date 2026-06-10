@@ -18,9 +18,9 @@
 module NixCompile.Emit.Config (
   -- * Generation
   emitConfigFunction,
-  emitConfigJson,
-  emitConfigYaml,
-  emitConfigToml,
+  emitConfigJSON,
+  emitConfigYAML,
+  emitConfigTOML,
 
   -- * Schema helpers
   ConfigTree (..),
@@ -52,26 +52,26 @@ jsonEscape = T.concatMap escapeChar
     | character < '\x20' = "\\u" <> T.justifyRight 4 '0' (T.pack (showHex (fromEnum character) ""))
     | otherwise = T.singleton character
 
-renderJsonLit :: Literal -> Text
-renderJsonLit (LitInt n) = T.pack (show n)
-renderJsonLit (LitBool True) = "true"
-renderJsonLit (LitBool False) = "false"
-renderJsonLit (LitString s) = "\"" <> jsonEscape s <> "\""
-renderJsonLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
+renderJSONLit :: Literal -> Text
+renderJSONLit (LitInt n) = T.pack (show n)
+renderJSONLit (LitBool True) = "true"
+renderJSONLit (LitBool False) = "false"
+renderJSONLit (LitString s) = "\"" <> jsonEscape s <> "\""
+renderJSONLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
 
-renderYamlLit :: Literal -> Text
-renderYamlLit (LitInt n) = T.pack (show n)
-renderYamlLit (LitBool True) = "true"
-renderYamlLit (LitBool False) = "false"
-renderYamlLit (LitString s) = "\"" <> jsonEscape s <> "\""
-renderYamlLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
+renderYAMLLit :: Literal -> Text
+renderYAMLLit (LitInt n) = T.pack (show n)
+renderYAMLLit (LitBool True) = "true"
+renderYAMLLit (LitBool False) = "false"
+renderYAMLLit (LitString s) = "\"" <> jsonEscape s <> "\""
+renderYAMLLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
 
-renderTomlLit :: Literal -> Text
-renderTomlLit (LitInt n) = T.pack (show n)
-renderTomlLit (LitBool True) = "true"
-renderTomlLit (LitBool False) = "false"
-renderTomlLit (LitString s) = "\"" <> jsonEscape s <> "\""
-renderTomlLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
+renderTOMLLit :: Literal -> Text
+renderTOMLLit (LitInt n) = T.pack (show n)
+renderTOMLLit (LitBool True) = "true"
+renderTOMLLit (LitBool False) = "false"
+renderTOMLLit (LitString s) = "\"" <> jsonEscape s <> "\""
+renderTOMLLit (LitPath sp) = "\"" <> jsonEscape (unStorePath sp) <> "\""
 
 -- | does this config type render as a quoted string in JSON/YAML/TOML output?
 cfgTypeIsStringy :: Type -> Bool
@@ -107,7 +107,7 @@ emitConfigFunction schema =
   T.unlines $
     concat
       [ emitConfigHeader
-      , emitEscapeJsonFn
+      , emitEscapeJSONFn
       , emitRequireIntFn
       , emitRequireBoolFn
       , emitRuntimeBlock schema
@@ -119,9 +119,9 @@ emitConfigHeader =
   , "emit-config() {"
   ]
 
-emitEscapeJsonFn :: [Text]
+emitEscapeJSONFn :: [Text]
 -- shell-native JSON string escaper; mirrors the Haskell jsonEscape logic
-emitEscapeJsonFn =
+emitEscapeJSONFn =
   [ "  __nix_compile_escape_json() {"
   , "    local s=\"$1\" out=\"\" c code esc i"
   , "    for ((i = 0; i < ${#s}; i++)); do"
@@ -188,13 +188,13 @@ emitRuntimeBlock schema =
   , renderRuntimeGuards schema
   , "  case \"$format\" in"
   , "    json)"
-  , "      " <> emitConfigJson schema
+  , "      " <> emitConfigJSON schema
   , "      ;;"
   , "    yaml)"
-  , "      " <> emitConfigYaml schema
+  , "      " <> emitConfigYAML schema
   , "      ;;"
   , "    toml)"
-  , "      " <> emitConfigToml schema
+  , "      " <> emitConfigTOML schema
   , "      ;;"
   , "    *)"
   , "      echo \"Unknown format: $format\" >&2"
@@ -255,11 +255,11 @@ renderRuntimeGuards schema =
     templateVar (ConfigVarRequired var) = [var]
     templateVar _ = []
 
-emitConfigJson :: Schema -> Text
-emitConfigJson schema =
+emitConfigJSON :: Schema -> Text
+emitConfigJSON schema =
   let env = schemaEnv schema
       tree = buildConfigTree (schemaConfig schema)
-   in emitTemplate (renderJsonTree env 0 tree)
+   in emitTemplate (renderJSONTree env 0 tree)
 
 escapeForPrintf :: Text -> Text
 escapeForPrintf = T.concatMap escapeChar
@@ -296,8 +296,8 @@ intersperseTemplate _ [] = []
 intersperseTemplate _ [x] = [x]
 intersperseTemplate sep (x : xs) = x : sep : intersperseTemplate sep xs
 
-renderJsonTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
-renderJsonTree env indent = go
+renderJSONTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
+renderJSONTree env indent = go
  where
   go (ConfigBranch m) | Map.null m = literalTemplate "{}"
   go (ConfigBranch m) =
@@ -311,15 +311,15 @@ renderJsonTree env indent = go
               (literalTemplate ",\n")
               (map (appendTemplate (literalTemplate nextIndent)) rendered)
             ++ [literalTemplate ("\n" <> indentStr <> "}")]
-  go (ConfigLeaf spec) = renderJsonValue env spec
+  go (ConfigLeaf spec) = renderJSONValue env spec
 
   renderEntry ind (key, subtree) =
-    literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJsonTree env (ind + 1) subtree
+    literalTemplate ("\"" <> key <> "\": ") `appendTemplate` renderJSONTree env (ind + 1) subtree
 
-renderJsonValue :: Map Text EnvSpec -> ConfigSpec -> Template
-renderJsonValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
+renderJSONValue :: Map Text EnvSpec -> ConfigSpec -> Template
+renderJSONValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
  where
-  go _ (Just lit) _ = literalTemplate (renderJsonLit lit)
+  go _ (Just lit) _ = literalTemplate (renderJSONLit lit)
   go _ _ (Just parts) =
     literalTemplate "\""
       `appendTemplate` renderTemplateParts parts
@@ -340,35 +340,35 @@ renderJsonValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
 
-emitConfigYaml :: Schema -> Text
-emitConfigYaml schema =
+emitConfigYAML :: Schema -> Text
+emitConfigYAML schema =
   let env = schemaEnv schema
       tree = buildConfigTree (schemaConfig schema)
-   in emitTemplate (renderYamlTree env 0 tree)
+   in emitTemplate (renderYAMLTree env 0 tree)
 
-renderYamlTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
-renderYamlTree env indent = go
+renderYAMLTree :: Map Text EnvSpec -> Int -> ConfigTree -> Template
+renderYAMLTree env indent = go
  where
   go (ConfigBranch m) | Map.null m = literalTemplate "{}"
   go (ConfigBranch m) =
     let entries = sortOn fst (Map.toList m)
-        rendered = map (renderYamlEntry indent) entries
+        rendered = map (renderYAMLEntry indent) entries
      in concatTemplates (intersperseTemplate (literalTemplate "\n") rendered)
-  go (ConfigLeaf spec) = renderYamlValue env spec
+  go (ConfigLeaf spec) = renderYAMLValue env spec
 
-  renderYamlEntry ind (key, subtree) = render subtree
+  renderYAMLEntry ind (key, subtree) = render subtree
    where
     indentStr = T.replicate ind "  "
     render (ConfigBranch _) =
       literalTemplate (indentStr <> key <> ":\n")
-        `appendTemplate` renderYamlTree env (ind + 1) subtree
+        `appendTemplate` renderYAMLTree env (ind + 1) subtree
     render (ConfigLeaf spec') =
-      literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYamlValue env spec'
+      literalTemplate (indentStr <> key <> ": ") `appendTemplate` renderYAMLValue env spec'
 
-renderYamlValue :: Map Text EnvSpec -> ConfigSpec -> Template
-renderYamlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
+renderYAMLValue :: Map Text EnvSpec -> ConfigSpec -> Template
+renderYAMLValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
  where
-  go _ (Just lit) _ = literalTemplate (renderYamlLit lit)
+  go _ (Just lit) _ = literalTemplate (renderYAMLLit lit)
   go _ _ (Just parts) =
     literalTemplate "\""
       `appendTemplate` renderTemplateParts parts
@@ -389,14 +389,14 @@ renderYamlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
 
-emitConfigToml :: Schema -> Text
-emitConfigToml schema =
+emitConfigTOML :: Schema -> Text
+emitConfigTOML schema =
   let env = schemaEnv schema
       tree = buildConfigTree (schemaConfig schema)
-   in emitTemplate (renderTomlTree env [] tree)
+   in emitTemplate (renderTOMLTree env [] tree)
 
-renderTomlTree :: Map Text EnvSpec -> [Text] -> ConfigTree -> Template
-renderTomlTree env path = go
+renderTOMLTree :: Map Text EnvSpec -> [Text] -> ConfigTree -> Template
+renderTOMLTree env path = go
  where
   go (ConfigBranch m) | Map.null m = literalTemplate ""
   go (ConfigBranch m) =
@@ -407,8 +407,8 @@ renderTomlTree env path = go
           if not (null path) && not (Map.null leaves)
             then "[" <> T.intercalate "." path <> "]\n"
             else ""
-        leafLines = map renderTomlLeaf (sortOn fst (Map.toList leaves))
-        branchLines = map (renderTomlBranch path) (sortOn fst (Map.toList branches))
+        leafLines = map renderTOMLLeaf (sortOn fst (Map.toList leaves))
+        branchLines = map (renderTOMLBranch path) (sortOn fst (Map.toList branches))
      in concatTemplates $
           [literalTemplate sectionHeader]
             ++ intersperseTemplate (literalTemplate "\n") leafLines
@@ -417,17 +417,17 @@ renderTomlTree env path = go
                ]
             ++ intersperseTemplate (literalTemplate "\n\n") branchLines
   go (ConfigLeaf _) = literalTemplate ""
-  renderTomlLeaf (key, ConfigLeaf spec) =
-    literalTemplate (key <> " = ") `appendTemplate` renderTomlValue env spec
-  renderTomlLeaf _ = literalTemplate ""
+  renderTOMLLeaf (key, ConfigLeaf spec) =
+    literalTemplate (key <> " = ") `appendTemplate` renderTOMLValue env spec
+  renderTOMLLeaf _ = literalTemplate ""
 
-  renderTomlBranch parentPath (key, subtree) =
-    renderTomlTree env (parentPath ++ [key]) subtree
+  renderTOMLBranch parentPath (key, subtree) =
+    renderTOMLTree env (parentPath ++ [key]) subtree
 
-renderTomlValue :: Map Text EnvSpec -> ConfigSpec -> Template
-renderTomlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
+renderTOMLValue :: Map Text EnvSpec -> ConfigSpec -> Template
+renderTOMLValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
  where
-  go _ (Just lit) _ = literalTemplate (renderTomlLit lit)
+  go _ (Just lit) _ = literalTemplate (renderTOMLLit lit)
   go _ _ (Just parts) =
     literalTemplate "\""
       `appendTemplate` renderTemplateParts parts

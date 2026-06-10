@@ -78,9 +78,9 @@ import NixCompile.Emit.Config (
   ConfigTree (..),
   buildConfigTree,
   emitConfigFunction,
-  emitConfigJson,
-  emitConfigToml,
-  emitConfigYaml,
+  emitConfigJSON,
+  emitConfigTOML,
+  emitConfigYAML,
  )
 import NixCompile.Inference.Bash.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Inference.Bash.Schema (buildSchema)
@@ -2316,7 +2316,7 @@ prop_emit_json_guarded =
           Nothing
           (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
-      output = emitConfigJson schema
+      output = emitConfigJSON schema
    in property $ ":?" `T.isInfixOf` output
 
 {- | emit-config JSON passes runtime vars as printf arguments, not inert
@@ -2333,7 +2333,7 @@ prop_emit_json_runtime_args =
           Nothing
           (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
-      output = emitConfigJson schema
+      output = emitConfigJSON schema
    in property $ "%s" `T.isInfixOf` output && " \"${PORT:?" `T.isInfixOf` output
 
 -- | emit-config function performs preflight guards outside command substitutions
@@ -2425,14 +2425,14 @@ prop_emit_yaml_guarded =
           Nothing
           (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
-      output = emitConfigYaml schema
+      output = emitConfigYAML schema
    in property $ ":?" `T.isInfixOf` output
 
 -- | emit-config TOML never outputs invalid "null"
 prop_emit_toml_no_null :: [Fact] -> Bool
 prop_emit_toml_no_null facts =
   let schema = buildSchema facts emptySubst
-      output = emitConfigToml schema
+      output = emitConfigTOML schema
       hasNullValue = "= null" `T.isInfixOf` output || "=null" `T.isInfixOf` output
    in not hasNullValue || "\"\"" `T.isInfixOf` output || T.null output
 
@@ -2448,7 +2448,7 @@ prop_emit_json_literal =
           Nothing
           (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
-      output = emitConfigJson schema
+      output = emitConfigJSON schema
    in "8080" `T.isInfixOf` output
 
 -- | emit-config string values are quoted in JSON
@@ -2463,7 +2463,7 @@ prop_emit_json_string_quoted =
           Nothing
           (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["host"] spec}
-      output = emitConfigJson schema
+      output = emitConfigJSON schema
    in "__nix_compile_escape_json" `T.isInfixOf` output
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
@@ -3405,7 +3405,7 @@ prop_edge_all_fact_types =
 prop_emit_json_balanced :: Property
 prop_emit_json_balanced = forAll genConfigFacts $ \facts ->
   let schema = buildSchema facts emptySubst
-      output = emitConfigJson schema
+      output = emitConfigJSON schema
    in T.count "{" output == T.count "}" output
 
 -- | emit-config function never contains heredocs
@@ -3433,7 +3433,7 @@ prop_emit_json_nested =
                   )
                 ]
           }
-      output = emitConfigJson schema
+      output = emitConfigJSON schema
    in "server" `T.isInfixOf` output
         && "port" `T.isInfixOf` output
         && "host" `T.isInfixOf` output

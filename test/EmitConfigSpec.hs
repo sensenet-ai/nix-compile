@@ -76,9 +76,9 @@ testSchema =
     }
 
 -- | Test that JSON output has correct structure
-testJsonOutput :: Bool
-testJsonOutput =
-  let json = emitConfigJson testSchema
+testJSONOutput :: Bool
+testJSONOutput =
+  let json = emitConfigJSON testSchema
    in -- JSON should contain printf, proper quoting
       T.isInfixOf "printf" json
         && T.isInfixOf "server" json
@@ -89,18 +89,18 @@ testJsonOutput =
         && T.isInfixOf "true" json -- Boolean literal
 
 -- | Test that YAML output has correct structure
-testYamlOutput :: Bool
-testYamlOutput =
-  let yaml = emitConfigYaml testSchema
+testYAMLOutput :: Bool
+testYAMLOutput =
+  let yaml = emitConfigYAML testSchema
    in T.isInfixOf "printf" yaml
         && T.isInfixOf "server:" yaml
         && T.isInfixOf "  host:" yaml -- Proper indentation
         && T.isInfixOf "  port:" yaml
 
 -- | Test that TOML output has correct structure
-testTomlOutput :: Bool
-testTomlOutput =
-  let toml = emitConfigToml testSchema
+testTOMLOutput :: Bool
+testTOMLOutput =
+  let toml = emitConfigTOML testSchema
    in T.isInfixOf "printf" toml
         && T.isInfixOf "[server]" toml
         && T.isInfixOf "host = " toml
@@ -127,8 +127,8 @@ testInvalidKeyDetection =
 {- | Test JSON escape function correctness
 The escape function must produce valid JSON when run
 -}
-testJsonEscapeInOutput :: Bool
-testJsonEscapeInOutput =
+testJSONEscapeInOutput :: Bool
+testJSONEscapeInOutput =
   let func = toText (emitConfigFunction testSchema)
    in -- The generated bash should have the correct escape pattern
       -- s=${s//\"/\\\"} which replaces " with \"
@@ -142,12 +142,12 @@ main = do
   TIO.putStrLn (Draw.framed Draw.Double "EmitConfig Generator Tests")
   results <-
     sequence
-      [ check "JSON output structure" testJsonOutput
-      , check "YAML output structure" testYamlOutput
-      , check "TOML output structure" testTomlOutput
+      [ check "JSON output structure" testJSONOutput
+      , check "YAML output structure" testYAMLOutput
+      , check "TOML output structure" testTOMLOutput
       , check "Config key validation" testKeyValidation
       , check "Invalid key detection" testInvalidKeyDetection
-      , check "JSON escape function" testJsonEscapeInOutput
+      , check "JSON escape function" testJSONEscapeInOutput
       ]
   if and results
     then do

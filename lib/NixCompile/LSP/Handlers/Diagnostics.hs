@@ -84,8 +84,8 @@ embeddedBashDiags expr = concatMap bashDiagFromCall (NixParse.findShellScriptCal
 bashDiagFromCall :: NixParse.ShellScriptCall -> [Diagnostic]
 bashDiagFromCall ssc = maybe [] withContent (NixParse.extractString (NixParse.sscBody ssc))
  where
-  withContent (content, _, _) = either (const []) withAst (parseBash content)
-  withAst ast = map (toBashDiag (NixParse.sscName ssc)) (Forbidden.findViolations ast)
+  withContent (content, _, _) = either (const []) withAST (parseBash content)
+  withAST ast = map (toBashDiag (NixParse.sscName ssc)) (Forbidden.findViolations ast)
 
 toBashDiag :: Text -> Forbidden.Violation -> Diagnostic
 toBashDiag scriptName v =

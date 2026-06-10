@@ -46,9 +46,9 @@ checkBashFile config file = do
     liftIO exitFailure
 
   onSource sourceText =
-    either (abort . ("Parse error: " <>)) (onAst sourceText) (parseBash sourceText)
+    either (abort . ("Parse error: " <>)) (onAST sourceText) (parseBash sourceText)
 
-  onAst sourceText ast = do
+  onAST sourceText ast = do
     let allViolations = findViolations ast
     let (_suppressed, violations) = partitionViolations config allViolations
     unless (null violations) $
@@ -112,7 +112,7 @@ reportNixResults _file totalErrors
 checkScript :: Config.Config -> FilePath -> Nix.BashScript -> AppM Int
 checkScript configuration _file bs = do
   $(logTM) DebugS $ logStr $ "\n" <> Draw.framed Draw.Double (Nix.bsName bs)
-  either onParseError onAst (parseBash (Nix.bsContent bs))
+  either onParseError onAST (parseBash (Nix.bsContent bs))
  where
   onParseError err = do
     $(logTM) ErrorS $ logStr $ "  Parse error: " <> err
@@ -123,7 +123,7 @@ checkScript configuration _file bs = do
     $(logTM) ErrorS $ logStr $ prefix <> err
     return (1 :: Int)
 
-  onAst ast = do
+  onAST ast = do
     let allViolations = findViolations ast
     let (_, violations) = partitionViolations configuration allViolations
     unless (null violations) $
