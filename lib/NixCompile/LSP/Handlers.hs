@@ -39,23 +39,25 @@ import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..), Params (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
-import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Inference.Nix qualified as Infer
 import NixCompile.Inference.Nix.Type qualified as NT
+import NixCompile.LSP.Handlers.Diagnostics (
+  NixViolation (..),
+  ViolationType (..),
+  diagnosticsForExpr,
+  nixCode,
+  spToDiagnostic,
+  toNixDiag,
+ )
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.Convention (straylight)
 import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
-import NixCompile.Lint.Derivation qualified as Deriv
-import NixCompile.Lint.Forbidden qualified as Forbidden
-import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
-import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
-import NixCompile.Syntax.Parse qualified as NixParse
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Unsafe (unsafePerformIO)
@@ -447,7 +449,7 @@ signatureHelpHandler req responder = do
   nullResp = responder $ Right $ InR Null
   withExpr uri (Position l c) expr = do
     env <- liftIO $ buildCrossEnv uri
-    maybe nullResp (\sh -> responder $ Right $ InL sh) (signatureAtCursor env expr (fromIntegral l) (fromIntegral c))
+    maybe nullResp (responder . Right . InL) (signatureAtCursor env expr (fromIntegral l) (fromIntegral c))
 
 signatureAtCursor :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe SignatureHelp
 signatureAtCursor _env expr l c = do
@@ -562,7 +564,7 @@ bindingToSymbol (NamedVar (StaticKey name :| []) expr _) =
   let kind = symKind expr
       sp = exprSpan expr
    in [mkDocumentSymbol (varNameText name) kind sp (childSymbols expr)]
-bindingToSymbol (Inherit _ _ _) = []
+bindingToSymbol (Inherit{}) = []
 bindingToSymbol _ = []
 
 exprSpan :: NExprLoc -> Range
@@ -721,59 +723,7 @@ cursorInRange (Position l c) (Range (Position rl rc) (Position rel rec)) =
 -- ═══════════════════════ diagnostics engine ═══════════════════════
 
 fullLint :: Text -> [Diagnostic]
-fullLint txt = maybe [] withExpr (lspSafeParse txt)
- where
-  withExpr expr =
-    concat [nixVios' expr, derivVios' "<buffer>" expr, patternVios' expr, embeddedBashDiags expr]
-
-nixVios' :: NExprLoc -> [Diagnostic]
-nixVios' expr = map toNixDiag (findNixViolations expr)
-
-derivVios' :: FilePath -> NExprLoc -> [Diagnostic]
-derivVios' path expr = map toDerivDiag (Deriv.findDerivViolations path expr)
-
-toDerivDiag :: Deriv.DerivViolation -> Diagnostic
-toDerivDiag dv =
-  spToDiagnostic (Deriv.derivRuleId (Deriv.dvType dv) <> ": " <> derivMsg (Deriv.dvType dv)) (Deriv.dvSpan dv)
- where
-  derivMsg Deriv.VMissingMeta = "mkDerivation call without meta attribute"
-  derivMsg Deriv.VMissingDescription = "meta = { ... } without description key"
-
-patternVios' :: NExprLoc -> [Diagnostic]
-patternVios' expr = map toPatternDiag (Patterns.findPatternViolations expr)
-
-toPatternDiag :: Patterns.PatternViolation -> Diagnostic
-toPatternDiag pv =
-  spToDiagnostic (patternRuleId (Patterns.pvType pv) <> ": " <> Patterns.pvContext pv) (Patterns.pvSpan pv)
- where
-  patternRuleId Patterns.VOrNullFallback = "or-null-fallback"
-  patternRuleId Patterns.VAttrTranslation = "no-translate-attrs-outside-prelude"
-
-embeddedBashDiags :: NExprLoc -> [Diagnostic]
-embeddedBashDiags expr = concatMap bashDiagFromCall (NixParse.findShellScriptCalls expr)
-
-bashDiagFromCall :: NixParse.ShellScriptCall -> [Diagnostic]
-bashDiagFromCall ssc = maybe [] withContent (NixParse.extractString (NixParse.sscBody ssc))
- where
-  withContent (content, _, _) = either (const []) withAst (parseBash content)
-  withAst ast = map (toBashDiag (NixParse.sscName ssc)) (Forbidden.findViolations ast)
-
-toBashDiag :: Text -> Forbidden.Violation -> Diagnostic
-toBashDiag scriptName v =
-  spToDiagnostic
-    (bashErrorCode (Forbidden.vType v) <> ": " <> bashLabel (Forbidden.vType v) <> " in embedded script '" <> scriptName <> "'")
-    (Forbidden.vSpan v)
- where
-  bashLabel Forbidden.VHeredoc = "heredoc (<<) not allowed"
-  bashLabel Forbidden.VHereString = "here-string (<<<) not allowed"
-  bashLabel Forbidden.VEval = "eval not allowed"
-  bashLabel Forbidden.VBacktick = "backticks (`...`) not allowed"
-
-bashErrorCode :: Forbidden.ViolationType -> Text
-bashErrorCode Forbidden.VHeredoc = "ALEPH-B001"
-bashErrorCode Forbidden.VHereString = "ALEPH-B002"
-bashErrorCode Forbidden.VEval = "ALEPH-B003"
-bashErrorCode Forbidden.VBacktick = "ALEPH-B004"
+fullLint txt = maybe [] (diagnosticsForExpr "<buffer>") (lspSafeParse txt)
 
 -- ═══════════════════════ project-wide diagnostics ═══════════════════════
 
@@ -795,48 +745,10 @@ voidProjectDiags uri = do
 lintFile :: Text -> [Diagnostic]
 lintFile = fullLint
 
-toNixDiag :: NixViolation -> Diagnostic
-toNixDiag NixViolation{nvType = vt, nvSpan = sp, nvContext = ctx} =
-  spToDiagnostic (nixCode vt <> ": " <> ctx) sp
-
-nixCode :: ViolationType -> Text
-nixCode VWith = "ALEPH-N001"
-nixCode VRec = "ALEPH-N002"
-nixCode VSubstituteAll = "ALEPH-N005"
-nixCode VRawMkDerivation = "ALEPH-N006"
-nixCode VRawRunCommand = "ALEPH-N007"
-nixCode VRawWriteShellApplication = "ALEPH-N008"
-nixCode VWriteShellScript = "ALEPH-N011"
-nixCode (VLongInlineString n) = "ALEPH-N012 (" <> T.pack (show n) <> " chars)"
-
-spToDiagnostic :: Text -> Span -> Diagnostic
-spToDiagnostic msg (Span (Loc line col) (Loc endL endC) _) =
-  -- n.b. ShellCheck positions are 0-based; megaparsec positions are 1-based.
-  -- Clamp to zero rather than wrap unsigned underflow (B4 from review-2).
-  Diagnostic
-    { _range =
-        Range
-          (Position (clampU32 (line - 1)) (clampU32 (col - 1)))
-          (Position (clampU32 (endL - 1)) (clampU32 (endC - 1)))
-    , _severity = Just DiagnosticSeverity_Error
-    , _code = Nothing
-    , _codeDescription = Nothing
-    , _source = Just "nix-compile"
-    , _message = msg
-    , _tags = Nothing
-    , _relatedInformation = Nothing
-    , _data_ = Nothing
-    }
- where
-  clampU32 :: Int -> UInt
-  clampU32 n
-    | n < 0 = 0
-    | otherwise = fromIntegral n
-
 -- ═══════════════════════ expression traversal ═══════════════════════
 
 findExprAt :: Int -> Int -> NExprLoc -> Maybe NExprLoc
-findExprAt l c root = go root
+findExprAt l c = go
  where
   targetLine = l + 1
   targetCol = c + 1
@@ -894,7 +806,7 @@ bindExprs (NamedVar _ e _) = [e]
 bindExprs (Inherit mScope _ _) = maybeToList mScope
 
 inferExprAt :: NExprLoc -> Int -> Int -> Maybe Text
-inferExprAt expr l c = inferExprAtWithEnv builtinEnv expr l c
+inferExprAt = inferExprAtWithEnv builtinEnv
 
 inferExprAtWithEnv :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe Text
 inferExprAtWithEnv env expr l c = do
@@ -1067,7 +979,7 @@ inferOptionAtPath :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe MS.OptionInfo
 inferOptionAtPath _env expr l c = do
   target <- findExprAt l c expr
   let name = exprName target; opts = MS.extractOptions expr
-  name >>= (\n -> Map.lookup n opts)
+  name >>= (`Map.lookup` opts)
 
 noFile :: MarkupContent
 noFile = MarkupContent MarkupKind_Markdown "`no file`"
