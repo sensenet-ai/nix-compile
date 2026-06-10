@@ -91,6 +91,10 @@ library
         NixCompile.Inference.Nix.Lib
         NixCompile.Inference.Nix.Scheme
         NixCompile.Layout.Convention
+        NixCompile.Layout.Convention.Types
+        NixCompile.Layout.Convention.Presets
+        NixCompile.Layout.Convention.Naming
+        NixCompile.Layout.Convention.Validate
         NixCompile.Lint.Nix
         NixCompile.Lint.Combined
         NixCompile.Lint.Derivation
