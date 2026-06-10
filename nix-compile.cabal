@@ -77,6 +77,7 @@ library
         NixCompile.LSP.Handlers.Diagnostics
         NixCompile.LSP.Handlers.Project
         NixCompile.LSP.Handlers.SemanticTokens
+        NixCompile.LSP.Handlers.Symbols
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
         NixCompile.Inference.Nix

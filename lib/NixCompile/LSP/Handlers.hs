@@ -24,7 +24,6 @@ import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.List (nub)
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
@@ -33,8 +32,7 @@ import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
 import Language.LSP.Server
 import Language.LSP.VFS (virtualFileText)
-import Nix.Atoms (NAtom (..))
-import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
+import Nix.Expr.Types (NExprF (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Safety qualified as Safety
@@ -65,10 +63,11 @@ import NixCompile.LSP.Handlers.Project (
   voidProjectDiags,
  )
 import NixCompile.LSP.Handlers.SemanticTokens (semanticLegend, semanticTokens)
+import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
-import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
+import NixCompile.Syntax.Annotation (pattern Layer)
 import System.IO.Unsafe (unsafePerformIO)
 
 {- | Parse text inside an LSP handler. Returns Nothing on parse failure,
@@ -521,47 +520,6 @@ documentSymbolHandler req responder = do
  where
   emptyResp = responder $ Right $ InR (InL [])
   withExpr expr = responder $ Right $ InR (InL (collectTopBindingSymbols expr))
-
-collectTopBindingSymbols :: NExprLoc -> [DocumentSymbol]
-collectTopBindingSymbols (Layer (NSet _ bindings)) = concatMap bindingToSymbol bindings
-collectTopBindingSymbols (Layer (NAbs _ body)) = collectTopBindingSymbols body
-collectTopBindingSymbols (Layer (NLet _ body)) = collectTopBindingSymbols body
-collectTopBindingSymbols (Layer (NWith _ body)) = collectTopBindingSymbols body
-collectTopBindingSymbols _ = []
-
-bindingToSymbol :: Binding NExprLoc -> [DocumentSymbol]
-bindingToSymbol (NamedVar (StaticKey name :| []) expr _) =
-  let kind = symKind expr
-      sp = exprSpan expr
-   in [mkDocumentSymbol (varNameText name) kind sp (childSymbols expr)]
-bindingToSymbol (Inherit{}) = []
-bindingToSymbol _ = []
-
-exprSpan :: NExprLoc -> Range
-exprSpan (LayerAnn srcSpan _) =
-  let sp = srcSpanToSpan srcSpan
-   in Range
-        (Position (fromIntegral (locLine (spanStart sp) - 1)) (fromIntegral (locCol (spanStart sp) - 1)))
-        (Position (fromIntegral (locLine (spanEnd sp) - 1)) (fromIntegral (locCol (spanEnd sp) - 1)))
-
-mkDocumentSymbol :: Text -> SymbolKind -> Range -> [DocumentSymbol] -> DocumentSymbol
-mkDocumentSymbol name kind range children =
-  DocumentSymbol name Nothing kind Nothing Nothing range range (Just children)
-
-symKind :: NExprLoc -> SymbolKind
-symKind (Layer (NAbs _ _)) = SymbolKind_Function
-symKind (Layer (NSet _ _)) = SymbolKind_Object
-symKind (Layer (NList _)) = SymbolKind_Array
-symKind (Layer (NStr _)) = SymbolKind_String
-symKind (Layer (NConstant (NInt _))) = SymbolKind_Number
-symKind (Layer (NConstant (NFloat _))) = SymbolKind_Number
-symKind (Layer (NConstant (NBool _))) = SymbolKind_Boolean
-symKind (Layer (NApp _ _)) = SymbolKind_Function
-symKind _ = SymbolKind_Variable
-
-childSymbols :: NExprLoc -> [DocumentSymbol]
-childSymbols (Layer (NSet _ bindings)) = concatMap bindingToSymbol bindings
-childSymbols _ = []
 
 -- ═══════════════════════ semantic tokens ═══════════════════════
 
