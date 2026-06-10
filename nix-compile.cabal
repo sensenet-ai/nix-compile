@@ -75,6 +75,7 @@ library
         NixCompile.LSP.Handlers
         NixCompile.LSP.Handlers.Cursor
         NixCompile.LSP.Handlers.Diagnostics
+        NixCompile.LSP.Handlers.Project
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
         NixCompile.Inference.Nix
