@@ -104,6 +104,10 @@ library
         NixCompile.Syntax.Parse
         NixCompile.Syntax.Format
         NixCompile.Layout.Scope
+        NixCompile.Layout.Scope.Types
+        NixCompile.Layout.Scope.Build
+        NixCompile.Layout.Scope.Resolve
+        NixCompile.Layout.Scope.Dhall
         NixCompile.Inference.Nix.Type
         NixCompile.Inference.Nix.Unify
         NixCompile.Syntax.Annotation
