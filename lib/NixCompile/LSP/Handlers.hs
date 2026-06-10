@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 
 module NixCompile.LSP.Handlers (
@@ -19,30 +18,20 @@ module NixCompile.LSP.Handlers (
 )
 where
 
-import Control.Applicative ((<|>))
 import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.List (nub)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (listToMaybe)
 import Data.Text (Text)
-import Data.Text qualified as T
 import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
 import Language.LSP.Server
 import Language.LSP.VFS (virtualFileText)
-import Nix.Expr.Types (NExprF (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Safety qualified as Safety
-import NixCompile.Core.Span (Loc (..), Span (..))
-import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, inferExprWithEnv)
-import NixCompile.Inference.Nix qualified as Infer
 import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.LSP.Handlers.Cursor (
-  childExprs,
-  exprName,
   findExprAt,
   inferExprAt,
   inferExprAtWithEnv,
@@ -54,6 +43,18 @@ import NixCompile.LSP.Handlers.Diagnostics (
   nixCode,
   spToDiagnostic,
   toNixDiag,
+ )
+import NixCompile.LSP.Handlers.Features (
+  completionsForExpr,
+  findRef,
+  inferOptionAtPath,
+  inlayHintsForExpr,
+  noFile,
+  parseErr,
+  rangeOverlapsDiag,
+  signatureAtCursor,
+  toLspPos,
+  violationAction,
  )
 import NixCompile.LSP.Handlers.Project (
   buildCrossEnv,
@@ -67,7 +68,6 @@ import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
-import NixCompile.Syntax.Annotation (pattern Layer)
 import System.IO.Unsafe (unsafePerformIO)
 
 {- | Parse text inside an LSP handler. Returns Nothing on parse failure,
@@ -234,25 +234,6 @@ definitionHandler req responder = do
             )
      in responder $ Right $ InL (Definition (InL loc))
 
-findRef :: (Int, Int) -> Scope.ScopeGraph -> Maybe Scope.Reference
-findRef (l, c) sg =
-  let refs = [r | s <- Map.elems (Scope.sgScopes sg), r <- Scope.scopeReferences s]
-      matching = filter (spanContains (l, c) . Scope.refSpan) refs
-   in listToMaybe matching
-
-spanContains :: (Int, Int) -> Scope.SourceSpan -> Bool
-spanContains (cl, cc) sp =
-  let s = Scope.spanStart sp
-      e = Scope.spanEnd sp
-      sl = Scope.posLine s
-      sc = Scope.posCol s
-      el = Scope.posLine e
-      ec = Scope.posCol e
-   in cl >= sl && cl <= el && (cl /= sl || cc >= sc) && (cl /= el || cc <= ec)
-
-toLspPos :: Scope.SourcePos -> Position
-toLspPos sp = Position (fromIntegral (Scope.posLine sp - 1)) (fromIntegral (Scope.posCol sp - 1))
-
 -- ═══════════════════════ rename ═══════════════════════
 
 renameHandler ::
@@ -349,63 +330,6 @@ completionHandler req responder = do
     let items = completionsForExpr env expr (fromIntegral l) (fromIntegral c)
     responder $ Right $ InL items
 
-completionsForExpr :: TypeEnv -> NExprLoc -> Int -> Int -> [CompletionItem]
-completionsForExpr _env expr l c =
-  maybe [] withPfx (prefixAtCursor l c)
- where
-  withPfx pfx =
-    let scoped = scopeCompletions expr pfx
-        builtins' = builtinCompletions pfx
-        opts = MS.extractOptions expr
-        matchingOpts = Map.filterWithKey (\k _ -> pfx `T.isPrefixOf` k) opts
-        optItems =
-          [ mkCompletionItem k (Just CompletionItemKind_Property) (Just (NT.prettyType (MS.optType v)))
-          | (k, v) <- Map.toList matchingOpts
-          ]
-     in nub $ scoped ++ builtins' ++ optItems
-
-prefixAtCursor :: Int -> Int -> Maybe Text
-prefixAtCursor _l _c = Just ""
-
-scopeCompletions :: NExprLoc -> Text -> [CompletionItem]
-scopeCompletions _expr _pfx = []
-
-builtinCompletions :: Text -> [CompletionItem]
-builtinCompletions pfx =
-  let names = Map.keys (envBindings builtinEnv)
-      matching = filter (pfx `T.isPrefixOf`) names
-   in map builtinItem matching
-
-builtinItem :: Text -> CompletionItem
-builtinItem name =
-  let detail = fmap NT.prettyScheme (Map.lookup name (envBindings builtinEnv))
-      kind = if "builtins" `T.isPrefixOf` name then CompletionItemKind_Module else CompletionItemKind_Function
-   in mkCompletionItem name (Just kind) detail
-
-mkCompletionItem :: Text -> Maybe CompletionItemKind -> Maybe Text -> CompletionItem
-mkCompletionItem label' kind' detail' =
-  CompletionItem
-    { _label = label'
-    , _labelDetails = Nothing
-    , _kind = kind'
-    , _tags = Nothing
-    , _detail = detail'
-    , _documentation = Nothing
-    , _deprecated = Nothing
-    , _preselect = Nothing
-    , _sortText = Nothing
-    , _filterText = Nothing
-    , _insertText = Nothing
-    , _insertTextFormat = Nothing
-    , _insertTextMode = Nothing
-    , _textEdit = Nothing
-    , _textEditText = Nothing
-    , _additionalTextEdits = Nothing
-    , _commitCharacters = Nothing
-    , _command = Nothing
-    , _data_ = Nothing
-    }
-
 -- ═══════════════════════ signature help ═══════════════════════
 
 signatureHelpHandler req responder = do
@@ -419,45 +343,6 @@ signatureHelpHandler req responder = do
   withExpr uri (Position l c) expr = do
     env <- liftIO $ buildCrossEnv uri
     maybe nullResp (responder . Right . InL) (signatureAtCursor env expr (fromIntegral l) (fromIntegral c))
-
-signatureAtCursor :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe SignatureHelp
-signatureAtCursor _env expr l c = do
-  target <- findExprAt l c expr
-  (funcExpr, _) <- findEnclosingCall expr target
-  name <- exprName funcExpr
-  lookupBuiltinSig name
-
-findEnclosingCall :: NExprLoc -> NExprLoc -> Maybe (NExprLoc, [NExprLoc])
-findEnclosingCall root target = go root
- where
-  go (Layer (NApp func arg))
-    | arg == target = Just (func, [arg])
-    | otherwise = go func <|> go arg <|> deepSearch
-   where
-    deepSearch = maybe (fmap addArg (go arg)) (Just . addArg) (go func)
-     where
-      addArg (f, as) = (f, arg : as)
-  go (Layer e) = checkChildren (childExprs e)
-  checkChildren [] = Nothing
-  checkChildren (x : xs) = go x <|> checkChildren xs
-
-lookupBuiltinSig :: Text -> Maybe SignatureHelp
-lookupBuiltinSig name = do
-  scheme <- Map.lookup name (envBindings builtinEnv)
-  let typeStr = NT.prettyScheme scheme
-      params = extractParamLabels scheme
-      paramInfos = [ParameterInformation (InL p) Nothing | (p, i) <- zip params [(0 :: Int) ..], i < (5 :: Int)]
-      sigInfo =
-        SignatureInformation
-          (name <> " : " <> typeStr)
-          Nothing
-          (if null paramInfos then Nothing else Just paramInfos)
-          Nothing
-  pure $ SignatureHelp [sigInfo] (Just (0 :: UInt)) (Just (InL (0 :: UInt)))
- where
-  extractParamLabels (NT.Forall _ t) = collect t
-  collect (NT.TFun a b) = NT.prettyType a : collect b
-  collect _ = []
 
 -- ═══════════════════════ code actions ═══════════════════════
 
@@ -475,39 +360,6 @@ codeActionHandler req responder = do
         inRange = filter (rangeOverlapsDiag range) diags
         actions = concatMap violationAction inRange
     responder $ Right $ InL (map InR actions)
-
-rangeOverlapsDiag :: Range -> Diagnostic -> Bool
-rangeOverlapsDiag range (Diagnostic r _ _ _ _ _ _ _ _) =
-  let Range (Position rl rc) (Position rel rec) = range
-      Range (Position dl dc) _ = r
-   in (rl < dl || (rl == dl && rc <= dc)) && (rel > dl || (rel == dl && rec >= dc))
-
-violationAction :: Diagnostic -> [CodeAction]
-violationAction diag
-  | "ALEPH-N001" `T.isInfixOf` msg = [simpleAction "Replace `with` by explicit bindings" True diag]
-  | "ALEPH-N013" `T.isInfixOf` msg = [simpleAction "Insert `meta` attribute" True diag]
-  | "ALEPH-N014" `T.isInfixOf` msg = [simpleAction "Add description to meta" True diag]
-  | "ALEPH-N009" `T.isInfixOf` msg = [simpleAction "Replace `or null` by if-then-else" False diag]
-  | "ALEPH-N011" `T.isInfixOf` msg = [simpleAction "Use writeShellApplication instead" True diag]
-  | otherwise = []
- where
-  msg = T.toUpper (diagMsg diag)
-
-simpleAction :: Text -> Bool -> Diagnostic -> CodeAction
-simpleAction title preferred diag =
-  CodeAction
-    { _title = title
-    , _kind = Just CodeActionKind_QuickFix
-    , _diagnostics = Just [diag]
-    , _isPreferred = Just preferred
-    , _disabled = Nothing
-    , _edit = Nothing
-    , _command = Nothing
-    , _data_ = Nothing
-    }
-
-diagMsg :: Diagnostic -> Text
-diagMsg (Diagnostic _ _ _ _ _ msg _ _ _) = msg
 
 -- ═══════════════════════ document symbols ═══════════════════════
 
@@ -547,28 +399,6 @@ inlayHintHandler req responder = do
     env <- liftIO $ buildCrossEnv uri
     responder $ Right $ InL (inlayHintsForExpr env expr range)
 
-inlayHintsForExpr :: TypeEnv -> NExprLoc -> Range -> [InlayHint]
-inlayHintsForExpr env expr range = either (const []) withBindings (inferExprWithEnv env expr)
- where
-  withBindings (_, bindings) =
-    [ InlayHint
-        (Position (fromIntegral (locLine (spanStart sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1)))
-        (InL (": " <> NT.prettyType bindType))
-        (Just InlayHintKind_Type)
-        Nothing
-        Nothing
-        (Just True)
-        Nothing
-        Nothing
-    | Infer.Binding name bindType sp <- bindings
-    , not (T.null name)
-    , cursorInRange (Position (fromIntegral (locLine (spanEnd sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1))) range
-    ]
-
-cursorInRange :: Position -> Range -> Bool
-cursorInRange (Position l c) (Range (Position rl rc) (Position rel rec)) =
-  l >= rl && l <= rel && (l /= rl || c >= rc) && (l /= rel || c <= rec)
-
 -- ═══════════════════════ diagnostics engine ═══════════════════════
 
 fullLint :: Text -> [Diagnostic]
@@ -578,17 +408,3 @@ fullLint txt = maybe [] (diagnosticsForExpr "<buffer>") (lspSafeParse txt)
 
 lintFile :: Text -> [Diagnostic]
 lintFile = fullLint
-
--- ═══════════════════════ cross-module helpers ═══════════════════════
-
-inferOptionAtPath :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe MS.OptionInfo
-inferOptionAtPath _env expr l c = do
-  target <- findExprAt l c expr
-  let name = exprName target; opts = MS.extractOptions expr
-  name >>= (`Map.lookup` opts)
-
-noFile :: MarkupContent
-noFile = MarkupContent MarkupKind_Markdown "`no file`"
-
-parseErr :: MarkupContent
-parseErr = MarkupContent MarkupKind_Markdown "`parse error`"
