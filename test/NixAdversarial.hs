@@ -82,14 +82,18 @@ genMutualSCC n =
 prop_nix_occurs_check :: Bool
 prop_nix_occurs_check =
   case Infer.runInfer
-    (Infer.unify (NT.TVar (NT.TypeVar 0)) (NT.TFun (NT.TVar (NT.TypeVar 0)) (NT.TVar (NT.TypeVar 0)))) of
+    ( Infer.unify
+        (NT.TVar (NT.TypeVar 0))
+        (NT.TFun (NT.TVar (NT.TypeVar 0)) (NT.TVar (NT.TypeVar 0)))
+    ) of
     Left err -> "infinite type" `T.isInfixOf` err
     Right _ -> False
 
 -- | TUnion [TInt,TString,TBool,TNull] ~ TFloat must fail.
 prop_nix_union_mismatch :: Bool
 prop_nix_union_mismatch =
-  case Infer.runInfer (Infer.unify (NT.TUnion [NT.TInt, NT.TString, NT.TBool, NT.TNull]) NT.TFloat) of
+  case Infer.runInfer
+    (Infer.unify (NT.TUnion [NT.TInt, NT.TString, NT.TBool, NT.TNull]) NT.TFloat) of
     Left err -> "type mismatch" `T.isInfixOf` err
     Right _ -> False
 
@@ -99,7 +103,9 @@ prop_nix_attrs_required_missing =
   let a = NT.TAttrs (Map.singleton "a" (NT.TInt, False))
       b = NT.TAttrs Map.empty
    in case Infer.runInfer (Infer.unify a b) of
-        Left err -> "missing required field" `T.isInfixOf` err || "unexpected field" `T.isInfixOf` err
+        Left err ->
+          "missing required field" `T.isInfixOf` err
+            || "unexpected field" `T.isInfixOf` err
         Right _ -> False
 
 -- | TAttrs {"a"=(TInt,False)} vs TAttrsOpen {"b"=(TBool,False)} — closed missing open requirement.
@@ -121,7 +127,8 @@ prop_nix_row_empty_open_any =
 -- | Nested union: TUnion [TUnion [TInt,TBool], TString] ~ TInt.
 prop_nix_nested_union :: Bool
 prop_nix_nested_union =
-  case Infer.runInfer (Infer.unify (NT.TUnion [NT.TUnion [NT.TInt, NT.TBool], NT.TString]) NT.TInt) of
+  case Infer.runInfer
+    (Infer.unify (NT.TUnion [NT.TUnion [NT.TInt, NT.TBool], NT.TString]) NT.TInt) of
     Left _ -> False
     Right _ -> True
 
@@ -140,7 +147,9 @@ prop_nix_many_fresh_vars =
             let manyVars =
                   T.intercalate
                     "\n"
-                    ["a" <> T.pack (show i) <> " = " <> T.pack (show i) <> ";" | i <- [1 .. 300 :: Int]]
+                    [ "a" <> T.pack (show i) <> " = " <> T.pack (show i) <> ";"
+                    | i <- [1 .. 300 :: Int]
+                    ]
                 expr = "{ " <> manyVars <> " }"
              in case parseNixTextLoc expr of
                   Left _ -> ()
@@ -234,7 +243,9 @@ prop_nix_mutual_scc_stress =
 -- | Nested with: with a; with b; with c; expr — all scopes should stack correctly.
 prop_nix_nested_with :: Bool
 prop_nix_nested_with =
-  let src = "let a = { x = 1; }; b = { y = true; }; c = { z = \"hello\"; }; in with a; with b; with c; z"
+  let src =
+        "let a = { x = 1; }; b = { y = true; }; c = { z = \"hello\"; };"
+          <> " in with a; with b; with c; z"
    in case parseNixTextLoc src of
         Left _ -> False
         Right e -> case Infer.inferExpr e of
@@ -340,7 +351,9 @@ prop_nix_functor_chain =
       run $
         try @SomeException $
           evaluate $
-            let src = "let f = { __functor = self: x: x; }; g = { __functor = self: _: f; }; in g 1 2"
+            let src =
+                  "let f = { __functor = self: x: x; }; g = { __functor = self: _: f; };"
+                    <> " in g 1 2"
              in case parseNixTextLoc src of
                   Left _ -> ()
                   Right e -> case Infer.inferExpr e of
@@ -503,7 +516,8 @@ prop_nix_functor_valid =
 -- | Deep select chains (pkgs.llvmPackages.stdenv.mkDerivation) must be detected
 prop_deriv_deep_select :: Bool
 prop_deriv_deep_select =
-  case parseNixTextLoc "let pkgs = {}; in pkgs.llvmPackages.stdenv.mkDerivation { name = \"test\"; }" of
+  case parseNixTextLoc
+    "let pkgs = {}; in pkgs.llvmPackages.stdenv.mkDerivation { name = \"test\"; }" of
     Left _ -> False
     Right expr ->
       not (null (DerivLint.findDerivViolations "test.nix" expr))

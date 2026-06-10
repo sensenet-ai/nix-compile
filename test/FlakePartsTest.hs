@@ -100,10 +100,12 @@ testModuleLint = do
         if hasRec || hasWith
           then do
             -- flake-parts shouldn't use rec/with ideally, but let's see if it does.
-            -- If it does, we just report it but don't fail the test unless we expect it to be clean.
+            -- If it does, we just report it but don't fail the test unless we expect it to be
+            -- clean.
             -- For now, let's treat finding them as "OK" (tool works) but print them.
             -- Actually, to be useful, let's assert that core modules are CLEAN.
-            putStrLn $ "\n  VIOLATIONS in " ++ f ++ ": rec=" ++ show hasRec ++ ", with=" ++ show hasWith
+            putStrLn $
+              "\n  VIOLATIONS in " ++ f ++ ": rec=" ++ show hasRec ++ ", with=" ++ show hasWith
             return True -- For now, accept it (observation mode)
           else return True
 

@@ -130,7 +130,10 @@ testQemuCommon = do
         then return True
         else do
           putStrLn $
-            "Lint check failed (expected violations): rec=" ++ show hasRec ++ ", with=" ++ show hasWith
+            "Lint check failed (expected violations): rec="
+              ++ show hasRec
+              ++ ", with="
+              ++ show hasWith
           return False
 
   if inferOk && lintOk

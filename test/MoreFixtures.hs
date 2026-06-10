@@ -80,7 +80,8 @@ testNativelinkIntegration = do
       let hasDocker = any ("docker" `T.isInfixOf`) bareCommands
       let hasBazel = any ("bazel" `T.isInfixOf`) bareCommands
 
-      -- Note: Arrays are currently not extracted as Facts, so we skip checking them explicitly via Facts.
+      -- Note: Arrays are currently not extracted as Facts, so we skip checking them explicitly
+      -- via Facts.
       -- But the script parses successfully, which is part of the test.
 
       if hasDocker && hasBazel && hasHeredoc

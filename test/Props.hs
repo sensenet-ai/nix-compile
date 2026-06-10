@@ -141,7 +141,10 @@ genIntLiteral =
 genStringLiteral :: Gen Text
 genStringLiteral = do
   len <- choose (1, 20)
-  chars <- replicateM len $ elements $ ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ ['-', '_', '.']
+  chars <-
+    replicateM len $
+      elements $
+        ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ ['-', '_', '.']
   return $ T.pack chars
 
 -- | Generate boolean literals
@@ -448,7 +451,12 @@ genShadowingChain n =
             edges = if i == 0 then [] else [Scope.Edge sid (Scope.ScopeId (i - 1)) Scope.Parent]
          in (sid, Scope.Scope sid decls refs edges Scope.LetScope)
       scopes = Map.fromList [mkScope i | i <- [0 .. n - 1]]
-      sg = genScope0{Scope.sgScopes = scopes, Scope.sgNextId = n, Scope.sgRoot = Scope.ScopeId (n - 1)}
+      sg =
+        genScope0
+          { Scope.sgScopes = scopes
+          , Scope.sgNextId = n
+          , Scope.sgRoot = Scope.ScopeId (n - 1)
+          }
    in (sg, Scope.ScopeId (n - 1))
 
 genAllEdgesGraph :: Scope.ScopeGraph
@@ -1217,7 +1225,8 @@ genNixNestedLet n = do
   outer <- genNixIdent
   inner <- genNixIdent
   val <- genNixExpr (n `div` 3)
-  pure $ "let " <> outer <> " = let " <> inner <> " = " <> val <> "; in " <> inner <> "; in " <> outer
+  pure $
+    "let " <> outer <> " = let " <> inner <> " = " <> val <> "; in " <> inner <> "; in " <> outer
 
 -- | with expression: with scope; body
 genNixWith :: Int -> Gen Text
@@ -1410,7 +1419,11 @@ reformatPreservesMeaning src = case parseNixTextLoc src of
      in case parseNixTextLoc formatted of
           Left e ->
             counterexample
-              ("reformatted output does not parse:\n" <> T.unpack formatted <> "\nerror: " <> show e)
+              ( "reformatted output does not parse:\n"
+                  <> T.unpack formatted
+                  <> "\nerror: "
+                  <> show e
+              )
               (property False)
           Right ast1 ->
             counterexample
@@ -1488,7 +1501,9 @@ prop_diagnostic_render = full && minimal
       , "   = help: use `inherit (pkgs) git;` instead"
       ]
   minimal =
-    Diag.renderDiagnostic False (Diag.Diagnostic WarningS Nothing Nothing "something off" [] Nothing)
+    Diag.renderDiagnostic
+      False
+      (Diag.Diagnostic WarningS Nothing Nothing "something off" [] Nothing)
       == "warning: something off"
 
 prop_pretty_strlit_truncated :: Bool
@@ -1505,7 +1520,8 @@ prop_safety_error_categories :: Bool
 prop_safety_error_categories =
   Safety.renderSafetyError (Safety.SafetyIOError "boom") == "I/O error: boom"
     && Safety.renderSafetyError (Safety.SafetyParseFailed "boom") == "parse error: boom"
-    && Safety.renderSafetyError (Safety.SafetyInternalException "boom") == "internal exception: boom"
+    && Safety.renderSafetyError (Safety.SafetyInternalException "boom")
+      == "internal exception: boom"
     && Safety.renderSafetyError Safety.SafetyStackOverflow /= ""
 
 prop_welltyped_vectors :: Property
@@ -1609,7 +1625,9 @@ prop_lib_mkmerge_polymorphic =
 prop_module_flake_selfref_ok :: Bool
 prop_module_flake_selfref_ok =
   isRight
-    (parseAndInferModule "{ flake-parts, ... }@inputs: flake-parts.lib.mkFlake { inherit inputs; } { }")
+    ( parseAndInferModule
+        "{ flake-parts, ... }@inputs: flake-parts.lib.mkFlake { inherit inputs; } { }"
+    )
 
 -- Module mode only relaxes WELL-KNOWN external params; a self-reference through
 -- a non-external @-name is genuine infinite data and still errors.
@@ -1886,19 +1904,27 @@ prop_naming_roundtrip_snake =
 prop_layout_straylight_valid :: Bool
 prop_layout_straylight_valid =
   let violations =
-        LC.validateLayout LC.straylight "/" [("nix/modules/flake/broker.nix", Detection FlakeModule 100 [])]
+        LC.validateLayout
+          LC.straylight
+          "/"
+          [("nix/modules/flake/broker.nix", Detection FlakeModule 100 [])]
    in null violations
 
 -- | straylight convention rejects _class = "flake" in modules/nixos/
 prop_layout_straylight_invalid :: Bool
 prop_layout_straylight_invalid =
-  let violations = LC.validateLayout LC.straylight "/" [("modules/nixos/broker.nix", Detection FlakeModule 100 [])]
+  let violations =
+        LC.validateLayout
+          LC.straylight
+          "/"
+          [("modules/nixos/broker.nix", Detection FlakeModule 100 [])]
    in not (null violations)
 
 -- | flakeParts convention allows files in modules/
 prop_layout_flakeparts_valid :: Bool
 prop_layout_flakeparts_valid =
-  let violations = LC.validateLayout LC.flakeParts "/" [("modules/apps.nix", Detection FlakeModule 100 [])]
+  let violations =
+        LC.validateLayout LC.flakeParts "/" [("modules/apps.nix", Detection FlakeModule 100 [])]
    in null violations
 
 -- | nixpkgsByName convention validates packages in pkgs/by-name/
@@ -1914,55 +1940,72 @@ prop_layout_nixpkgs_package_valid =
 -- | nixpkgsByName silently accepts unmatched module kinds (no rule)
 prop_layout_nixpkgs_non_package :: Bool
 prop_layout_nixpkgs_non_package =
-  let violations = LC.validateLayout LC.nixpkgsByName "/" [("lib/utils.nix", Detection Library 100 [])]
+  let violations =
+        LC.validateLayout LC.nixpkgsByName "/" [("lib/utils.nix", Detection Library 100 [])]
    in null violations -- nixpkgsByName only defines Package rules; Library has no matching rule
 
 -- | nixosConfig validates modules in modules/
 prop_layout_nixos_modules_valid :: Bool
 prop_layout_nixos_modules_valid =
-  let violations = LC.validateLayout LC.nixosConfig "/" [("modules/system.nix", Detection NixOSModule 100 [])]
+  let violations =
+        LC.validateLayout LC.nixosConfig "/" [("modules/system.nix", Detection NixOSModule 100 [])]
    in null violations
 
 -- | nixosConfig validates modules in hosts/
 prop_layout_nixos_hosts_valid :: Bool
 prop_layout_nixos_hosts_valid =
-  let violations = LC.validateLayout LC.nixosConfig "/" [("hosts/mars.nix", Detection NixOSModule 100 [])]
+  let violations =
+        LC.validateLayout LC.nixosConfig "/" [("hosts/mars.nix", Detection NixOSModule 100 [])]
    in null violations
 
 -- | nixosConfig validates home modules in users/
 prop_layout_nixos_users_valid :: Bool
 prop_layout_nixos_users_valid =
-  let violations = LC.validateLayout LC.nixosConfig "/" [("users/alice.nix", Detection HomeModule 100 [])]
+  let violations =
+        LC.validateLayout LC.nixosConfig "/" [("users/alice.nix", Detection HomeModule 100 [])]
    in null violations
 
 -- | nixosConfig rejects files in wrong location
 prop_layout_nixos_wrong_location :: Bool
 prop_layout_nixos_wrong_location =
-  let violations = LC.validateLayout LC.nixosConfig "/" [("bin/script.nix", Detection NixOSModule 100 [])]
+  let violations =
+        LC.validateLayout LC.nixosConfig "/" [("bin/script.nix", Detection NixOSModule 100 [])]
    in not (null violations)
 
 -- | straylight: forbidden location for package in modules/
 prop_layout_forbidden_package :: Bool
 prop_layout_forbidden_package =
-  let violations = LC.validateLayout LC.straylight "/" [("nix/modules/flake/broker.nix", Detection Package 100 [])]
+  let violations =
+        LC.validateLayout
+          LC.straylight
+          "/"
+          [("nix/modules/flake/broker.nix", Detection Package 100 [])]
    in not (null violations) && any (\e -> LC.errCode e == LC.E002) violations
 
 -- | straylight: forbidden location for flake module in packages/
 prop_layout_forbidden_flake_mod :: Bool
 prop_layout_forbidden_flake_mod =
-  let violations = LC.validateLayout LC.straylight "/" [("nix/packages/broker.nix", Detection FlakeModule 100 [])]
+  let violations =
+        LC.validateLayout
+          LC.straylight
+          "/"
+          [("nix/packages/broker.nix", Detection FlakeModule 100 [])]
    in not (null violations) && any (\e -> LC.errCode e == LC.E002) violations
 
 -- | Exact path pattern: flake.nix must be exactly flake.nix
 prop_layout_exact_flake :: Bool
 prop_layout_exact_flake =
-  let violations = LC.validateLayout LC.straylight "/" [("nix/flake.nix", Detection Flake 100 [])]
+  let violations =
+        LC.validateLayout LC.straylight "/" [("nix/flake.nix", Detection Flake 100 [])]
    in not (null violations) -- "nix/flake.nix" ≠ Exact ["flake.nix"]
-        && null (LC.validateLayout LC.straylight "/" [("flake.nix", Detection Flake 100 [])]) -- Exact match
+        && null
+          -- Exact match
+          (LC.validateLayout LC.straylight "/" [("flake.nix", Detection Flake 100 [])])
 
 -- | Contains path pattern (nixpkgsByName has no Contains patterns, use constructed)
 prop_layout_contains_unused :: Bool
-prop_layout_contains_unused = True -- Contains pattern exists in PathPattern but no conventions use it
+-- Contains pattern exists in PathPattern but no conventions use it
+prop_layout_contains_unused = True
 
 -- | CamelCase naming convention
 prop_naming_camel_valid :: Bool
@@ -2053,9 +2096,15 @@ package leaves are permitted; any other recognized kind is rejected (E006).
 prop_layout_flake_mod_required :: Bool
 prop_layout_flake_mod_required =
   let strictConv = LC.straylight{LC.convRequireFlakeMod = True}
-      nixosViolations = LC.validateLayout strictConv "/" [("nix/modules/foo.nix", Detection NixOSModule 100 [])]
-      packageViolations = LC.validateLayout strictConv "/" [("nix/packages/foo.nix", Detection Package 100 [])]
-      flakeViolations = LC.validateLayout strictConv "/" [("nix/modules/flake/bar.nix", Detection FlakeModule 100 [])]
+      nixosViolations =
+        LC.validateLayout strictConv "/" [("nix/modules/foo.nix", Detection NixOSModule 100 [])]
+      packageViolations =
+        LC.validateLayout strictConv "/" [("nix/packages/foo.nix", Detection Package 100 [])]
+      flakeViolations =
+        LC.validateLayout
+          strictConv
+          "/"
+          [("nix/modules/flake/bar.nix", Detection FlakeModule 100 [])]
    in any (\e -> LC.errCode e == LC.E006) nixosViolations
         && null packageViolations
         && null flakeViolations
@@ -2063,7 +2112,8 @@ prop_layout_flake_mod_required =
 -- | validateLayout with unknown module kind produces no location errors
 prop_layout_unknown_kind :: Bool
 prop_layout_unknown_kind =
-  let violations = LC.validateLayout LC.straylight "/" [("anywhere/foo.nix", Detection Unknown 100 [])]
+  let violations =
+        LC.validateLayout LC.straylight "/" [("anywhere/foo.nix", Detection Unknown 100 [])]
    in null violations
 
 -- ============================================================================
@@ -2100,7 +2150,8 @@ prop_duplicate_var_merged =
       subst = case solve constraints of Right s -> s; Left _ -> emptySubst
       schema = buildSchema facts subst
    in case Map.lookup "PORT" (schemaEnv schema) of
-        Just spec -> envRequired spec && envDefault spec == Just (LitInt 8080) && envType spec == TInt
+        Just spec ->
+          envRequired spec && envDefault spec == Just (LitInt 8080) && envType spec == TInt
         Nothing -> False
 
 -- | mergeSchemas identity: empty `merge` s == s
@@ -2255,15 +2306,31 @@ prop_fact_config_empty_value =
 -- | emit-config JSON contains ${VAR:?} guards for variable refs
 prop_emit_json_guarded :: Property
 prop_emit_json_guarded =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          (Just "PORT")
+          (Just Unquoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
    in property $ ":?" `T.isInfixOf` output
 
--- | emit-config JSON passes runtime vars as printf arguments, not inert single-quoted text
+{- | emit-config JSON passes runtime vars as printf arguments, not inert
+single-quoted text
+-}
 prop_emit_json_runtime_args :: Property
 prop_emit_json_runtime_args =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          (Just "PORT")
+          (Just Unquoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
    in property $ "%s" `T.isInfixOf` output && " \"${PORT:?" `T.isInfixOf` output
@@ -2271,7 +2338,14 @@ prop_emit_json_runtime_args =
 -- | emit-config function performs preflight guards outside command substitutions
 prop_emit_preflight_guard :: Bool
 prop_emit_preflight_guard =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          (Just "PORT")
+          (Just Unquoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in "__nix_compile_require_int \"PORT\" \"${PORT:?PORT is required}\"" `T.isInfixOf` output
@@ -2279,7 +2353,14 @@ prop_emit_preflight_guard =
 -- | emit-config validates unquoted numeric values before output to prevent JSON injection
 prop_emit_numeric_preflight_guard :: Bool
 prop_emit_numeric_preflight_guard =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          (Just "PORT")
+          (Just Unquoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in "must be an integer" `T.isInfixOf` output
@@ -2290,7 +2371,13 @@ prop_emit_numeric_preflight_guard =
 prop_emit_bool_preflight_guard :: Bool
 prop_emit_bool_preflight_guard =
   let spec =
-        ConfigSpec TBool (Just "DEBUG") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+        ConfigSpec
+          TBool
+          (Just "DEBUG")
+          (Just Unquoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["debug"] spec}
       output = emitConfigFunction schema
    in "must be true or false" `T.isInfixOf` output
@@ -2298,7 +2385,14 @@ prop_emit_bool_preflight_guard =
 -- | Quoted config vars are emitted as strings and should not receive numeric/bool validators
 prop_emit_quoted_numeric_no_int_guard :: Bool
 prop_emit_quoted_numeric_no_int_guard =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Quoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          (Just "PORT")
+          (Just Quoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigFunction schema
    in not ("__nix_compile_require_int \"PORT\"" `T.isInfixOf` output)
@@ -2321,7 +2415,14 @@ prop_emit_runtime_escape_controls =
 -- | emit-config YAML contains ${VAR:?} guards
 prop_emit_yaml_guarded :: Property
 prop_emit_yaml_guarded =
-  let spec = ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          (Just "PORT")
+          (Just Unquoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigYaml schema
    in property $ ":?" `T.isInfixOf` output
@@ -2337,7 +2438,14 @@ prop_emit_toml_no_null facts =
 -- | emit-config JSON for literal values renders correctly
 prop_emit_json_literal :: Bool
 prop_emit_json_literal =
-  let spec = ConfigSpec TInt Nothing Nothing (Just (LitInt 8080)) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TInt
+          Nothing
+          Nothing
+          (Just (LitInt 8080))
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["port"] spec}
       output = emitConfigJson schema
    in "8080" `T.isInfixOf` output
@@ -2345,7 +2453,14 @@ prop_emit_json_literal =
 -- | emit-config string values are quoted in JSON
 prop_emit_json_string_quoted :: Bool
 prop_emit_json_string_quoted =
-  let spec = ConfigSpec TString (Just "HOST") (Just Quoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec
+          TString
+          (Just "HOST")
+          (Just Quoted)
+          Nothing
+          Nothing
+          (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["host"] spec}
       output = emitConfigJson schema
    in "__nix_compile_escape_json" `T.isInfixOf` output
@@ -2778,7 +2893,10 @@ prop_adv_fp_short_string =
    in case parseNixTextLoc short of
         Left _ -> False
         Right expr ->
-          not $ any (\v -> case nvType v of VLongInlineString _ -> True; _ -> False) (findNixViolations expr)
+          not $
+            any
+              (\v -> case nvType v of VLongInlineString _ -> True; _ -> False)
+              (findNixViolations expr)
 
 -- | FP-7: mkDerivation WITH meta does NOT trigger VMissingMeta
 prop_adv_fp_mkderiv_with_meta :: Bool
@@ -2860,7 +2978,9 @@ prop_adv_fn_wsa_path =
     Right expr ->
       any (\v -> nvType v == VRawWriteShellApplication) (findNixViolations expr)
 
--- | FN-5: Long string across interpolation parts > 120 (KNOWN GAP -- interpolation parts not concatenated)
+{- | FN-5: Long string across interpolation parts > 120 (KNOWN GAP --
+interpolation parts not concatenated)
+-}
 prop_adv_fn_long_interp :: Bool
 prop_adv_fn_long_interp =
   let long =
@@ -2872,7 +2992,10 @@ prop_adv_fn_long_interp =
    in case parseNixTextLoc long of
         Left _ -> False
         Right expr ->
-          not $ any (\v -> case nvType v of VLongInlineString _ -> True; _ -> False) (findNixViolations expr)
+          not $
+            any
+              (\v -> case nvType v of VLongInlineString _ -> True; _ -> False)
+              (findNixViolations expr)
 
 -- | FN-6: writeShellScriptBin triggers VWriteShellScript
 prop_adv_fn_wssbin :: Bool
@@ -2934,7 +3057,8 @@ prop_adv_crash_big_attrset =
 prop_adv_crash_deep_nest :: Bool
 prop_adv_crash_deep_nest =
   let deepLet (0 :: Int) = "1"
-      deepLet n = "let v" <> T.pack (show n) <> " = " <> deepLet (n - 1) <> "; in v" <> T.pack (show n)
+      deepLet n =
+        "let v" <> T.pack (show n) <> " = " <> deepLet (n - 1) <> "; in v" <> T.pack (show n)
       src = deepLet 400
    in case parseNixTextLoc src of
         Right expr -> PatternLint.findPatternViolations expr `seq` True
@@ -3018,7 +3142,12 @@ prop_adv_format_nix_nonempty =
   not $
     T.null $
       formatNixViolations
-        [NixViolation{nvType = VWith, nvSpan = Span (Loc 1 0) (Loc 1 0) Nothing, nvContext = "with lib;"}]
+        [ NixViolation
+            { nvType = VWith
+            , nvSpan = Span (Loc 1 0) (Loc 1 0) Nothing
+            , nvContext = "with lib;"
+            }
+        ]
 
 -- | FMT-2: formatDerivViolations non-empty for non-empty list
 prop_adv_format_deriv_nonempty :: Bool
@@ -3184,7 +3313,8 @@ prop_e2e_config_template =
         Left _ -> False
         Right s ->
           case Map.lookup ["combo"] (schemaConfig (scriptSchema s)) of
-            Just ConfigSpec{cfgTemplate = Just [ConfigVar "A", ConfigText "-", ConfigVar "B"]} -> True
+            Just ConfigSpec{cfgTemplate = Just [ConfigVar "A", ConfigText "-", ConfigVar "B"]} ->
+              True
             _ -> False
 
 -- | Prefix/suffix config templates are represented as templates
@@ -3199,7 +3329,11 @@ prop_e2e_config_template_prefix_suffix =
         Left _ -> False
         Right s ->
           case Map.lookup ["path"] (schemaConfig (scriptSchema s)) of
-            Just ConfigSpec{cfgTemplate = Just [ConfigText "prefix-", ConfigVar "A", ConfigText "-suffix"]} -> True
+            Just
+              ConfigSpec
+                { cfgTemplate = Just [ConfigText "prefix-", ConfigVar "A", ConfigText "-suffix"]
+                } ->
+                True
             _ -> False
 
 -- | Braced defaults inside config templates remain dynamic and use runtime default
@@ -3288,8 +3422,14 @@ prop_emit_json_nested =
         emptySchema
           { schemaConfig =
               Map.fromList
-                [ (["server", "port"], ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing sp)
-                , (["server", "host"], ConfigSpec TString (Just "HOST") (Just Quoted) Nothing Nothing sp)
+                [
+                  ( ["server", "port"]
+                  , ConfigSpec TInt (Just "PORT") (Just Unquoted) Nothing Nothing sp
+                  )
+                ,
+                  ( ["server", "host"]
+                  , ConfigSpec TString (Just "HOST") (Just Quoted) Nothing Nothing sp
+                  )
                 ]
           }
       output = emitConfigJson schema
@@ -3475,7 +3615,9 @@ prop_scope_merge_collision =
 prop_scope_merge_many :: Bool
 prop_scope_merge_many =
   let srcs =
-        ["let x" <> T.pack (show (i :: Int)) <> " = 1; in x" <> T.pack (show (i :: Int)) | i <- [0 .. 99]]
+        [ "let x" <> T.pack (show (i :: Int)) <> " = 1; in x" <> T.pack (show (i :: Int))
+        | i <- [0 .. 99]
+        ]
       parsed = map parseNixTextLoc srcs
       rights = [e | Right e <- parsed]
    in if length rights < 100
@@ -3530,7 +3672,11 @@ prop_scope_duplicate_decls =
       declB = genScopeDecl "x" scopeId
       scope = Scope.Scope scopeId [declB, declA] [genScopeRef "x" scopeId] [] Scope.FileScope
       sg =
-        genScope0{Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
+        genScope0
+          { Scope.sgScopes = Map.singleton scopeId scope
+          , Scope.sgNextId = 1
+          , Scope.sgRoot = scopeId
+          }
       ref = genScopeRef "x" scopeId
    in case Scope.resolve sg ref of
         Left (Scope.Ambiguous _ ds) -> length ds == 2
@@ -3576,7 +3722,11 @@ prop_scope_dhall_special_chars =
       decls = [genScopeDecl n scopeId | n <- names]
       scope = Scope.Scope scopeId decls [] [] Scope.FileScope
       sg =
-        genScope0{Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
+        genScope0
+          { Scope.sgScopes = Map.singleton scopeId scope
+          , Scope.sgNextId = 1
+          , Scope.sgRoot = scopeId
+          }
       dhall = Scope.toDhall sg
    in all (`T.isInfixOf` dhall) names
 
@@ -3612,7 +3762,9 @@ prop_config_wrong_types :: Property
 prop_config_wrong_types = QCM.monadicIO $ do
   let path = "/tmp/nix-compile-test-wrongtype-z7x9w2v5.dhall"
       content =
-        "{ profile = 42, extra-ignores = [] : List Text, overrides = [] : List { id : Text, severity : < Error | Warning | Info | Off >, reason : Optional Text } }" ::
+        ( "{ profile = 42, extra-ignores = [] : List Text, overrides = [] : List { id : Text, "
+            <> "severity : < Error | Warning | Info | Off >, reason : Optional Text } }"
+        ) ::
           Text
   _ <- QCM.run $ TIO.writeFile path content
   result <- QCM.run $ loadConfig path
@@ -3844,7 +3996,9 @@ prop_severity_duplicate_override =
   let cfg =
         defaultConfig
           { configOverrides =
-              [RuleOverride "the-rule" Cfg.SevError Nothing, RuleOverride "the-rule" Cfg.SevOff Nothing]
+              [ RuleOverride "the-rule" Cfg.SevError Nothing
+              , RuleOverride "the-rule" Cfg.SevOff Nothing
+              ]
           }
    in effectiveSeverity cfg "the-rule" == Just Cfg.SevError
 
@@ -4562,7 +4716,10 @@ nixAdversarialTests =
   , ("nixadv_nix_functor_wrong_arity", qcRun NixAdversarial.prop_nix_functor_wrong_arity)
   , ("nixadv_nix_functor_chain", qcRun NixAdversarial.prop_nix_functor_chain)
   , ("nixadv_nix_functor_identity", qcRun NixAdversarial.prop_nix_functor_identity)
-  , ("nixadv_nix_row_closed_vs_open_common", qcRun NixAdversarial.prop_nix_row_closed_vs_open_common)
+  ,
+    ( "nixadv_nix_row_closed_vs_open_common"
+    , qcRun NixAdversarial.prop_nix_row_closed_vs_open_common
+    )
   , ("nixadv_nix_row_closed_extra_ok", qcRun NixAdversarial.prop_nix_row_closed_extra_ok)
   , ("nixadv_nix_infer_state_integrity", qcRun NixAdversarial.prop_nix_infer_state_integrity)
   , ("nixadv_nix_infer_deterministic", qcRun NixAdversarial.prop_nix_infer_deterministic)

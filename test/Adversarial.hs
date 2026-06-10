@@ -584,7 +584,8 @@ prop_store_path_no_traversal = forAll genTraversalPath $ \path ->
 
 prop_emit_escaped :: Property
 prop_emit_escaped = forAll genLiteral $ \lit ->
-  let spec = ConfigSpec TString Nothing Nothing (Just lit) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec TString Nothing Nothing (Just lit) Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["test"] spec}
       output = emitConfigFunction schema
    in case lit of

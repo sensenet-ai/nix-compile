@@ -355,7 +355,9 @@ runOracle = do
     mapM_ (putStrLn . ("  " ++)) drift
   if null failures && null drift
     then putStrLn "oracle: OK (no soundness mismatches)" >> exitSuccess
-    else putStrLn "oracle: FAILED (soundness mismatch, checker hang, or golden drift)" >> exitFailure
+    else
+      putStrLn "oracle: FAILED (soundness mismatch, checker hang, or golden drift)"
+        >> exitFailure
  where
   pad n s = take n (s ++ repeat ' ')
   -- a present-but-Nothing golden entry means "did not evaluate"; flatten the

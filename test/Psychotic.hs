@@ -271,7 +271,8 @@ prop_c6_remote_import_rejected = QCM.monadicIO $ do
         , "in { profile = \"standard\""
         , "   , layout = \"straylight\""
         , "   , extra-ignores = [] : List Text"
-        , "   , overrides = [] : List { id : Text, severity : < Off | Info | Warning | Error >, reason : Optional Text }"
+        , "   , overrides = [] : List { id : Text, severity : < Off | Info | Warning | Error >"
+            <> ", reason : Optional Text }"
         , "   }"
         ]
     Cfg.loadConfig confPath
@@ -288,7 +289,8 @@ prop_c6_local_config_still_works = QCM.monadicIO $ do
         [ "{ profile = \"standard\""
         , ", layout = \"straylight\""
         , ", extra-ignores = [] : List Text"
-        , ", overrides = [] : List { id : Text, severity : < Off | Info | Warning | Error >, reason : Optional Text }"
+        , ", overrides = [] : List { id : Text, severity : < Off | Info | Warning | Error >"
+            <> ", reason : Optional Text }"
         , "}"
         ]
     Cfg.loadConfig confPath
@@ -299,18 +301,20 @@ prop_c6_local_config_still_works = QCM.monadicIO $ do
 -- ============================================================================
 
 prop_s2_closed_missing_key_fails :: Bool
-prop_s2_closed_missing_key_fails = case parseNixExpr "let xs = { a = 1; b = 2; }; in xs.nonexistent" of
-  Left _ -> False
-  Right e -> case inferExprWithEnv builtinEnv e of
-    Left _ -> True
-    Right _ -> False
+prop_s2_closed_missing_key_fails =
+  case parseNixExpr "let xs = { a = 1; b = 2; }; in xs.nonexistent" of
+    Left _ -> False
+    Right e -> case inferExprWithEnv builtinEnv e of
+      Left _ -> True
+      Right _ -> False
 
 prop_s2_closed_missing_with_default_ok :: Bool
-prop_s2_closed_missing_with_default_ok = case parseNixExpr "let xs = { a = 1; }; in xs.nonexistent or 42" of
-  Left _ -> False
-  Right e -> case inferExprWithEnv builtinEnv e of
+prop_s2_closed_missing_with_default_ok =
+  case parseNixExpr "let xs = { a = 1; }; in xs.nonexistent or 42" of
     Left _ -> False
-    Right _ -> True
+    Right e -> case inferExprWithEnv builtinEnv e of
+      Left _ -> False
+      Right _ -> True
 
 prop_s2_closed_present_key_ok :: Bool
 prop_s2_closed_present_key_ok = case parseNixExpr "let xs = { a = 1; b = 2; }; in xs.a" of
@@ -424,7 +428,8 @@ prop_safety_renders :: Bool
 prop_safety_renders =
   not (T.null (Safety.renderSafetyError Safety.SafetyStackOverflow))
     && not (T.null (Safety.renderSafetyError (Safety.SafetyParseFailed "x")))
-    && not (T.null (Safety.renderSafetyError (Safety.SafetyDepthExceeded (Safety.DepthError 999 "x"))))
+    && not
+      (T.null (Safety.renderSafetyError (Safety.SafetyDepthExceeded (Safety.DepthError 999 "x"))))
 
 prop_safety_io_catches_exceptions :: Property
 prop_safety_io_catches_exceptions = QCM.monadicIO $ do
