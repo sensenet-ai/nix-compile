@@ -13,7 +13,26 @@
 --                                                                                      — Count Zero
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                                                 // type // system
+--   The vocabulary of the type system — the data every module in this subtree
+--   manipulates. Four pieces, in the Hindley–Milner tradition:
+--
+--     * 'NixType' — the language of types a Nix expression can have: base scalars
+--       (Int / Float / Bool / String / Path / Null / Derivation), lists, functions,
+--       records, unions, the type variable 'TVar', and the dynamic escape 'TAny'.
+--     * 'Scheme' — a type closed over quantified variables (@Forall vars t@, a ∀).
+--       This is what makes `let`-bound names polymorphic: the scheme is
+--       INSTANTIATED afresh at each use site (see "NixCompile.Inference.Nix.Scheme").
+--     * 'Subst' — a finite map from type variable to type. Unification's whole job
+--       is to BUILD one of these; 'applySubst' then rewrites a type under it,
+--       chasing variables transitively to a normal form.
+--     * 'Constraint' — an equality goal @t1 :~: t2@ the solver must make hold.
+--
+--   Records are where we leave textbook HM: each carries a ROW ('RowTail') that is
+--   either 'RClosed' (exactly these fields) or @'ROpen' r@ (these fields AND whatever
+--   the row variable @r@ later resolves to). Row polymorphism (Wand / Rémy / Leijen)
+--   is what lets a partially-known attrset GAIN fields as it flows through the
+--   program — essential for Nix, where attrsets are passed half-built and completed
+--   by overlays and `//`.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Inference.Nix.Type (
@@ -65,10 +84,20 @@ import GHC.Generics (Generic)
 -- types
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | A type variable — a placeholder for a not-yet-known type, identified by a
+unique id from the inference fresh-var supply. Unification's job is to
+discover what each one stands for.
+-}
 newtype TypeVar = TypeVar {unTypeVar :: Int}
   deriving stock (Eq, Ord, Show, Generic)
   deriving newtype (FromJSON, ToJSON)
 
+{- | A monomorphic Nix type — inference assigns one of these to every
+expression. 'TVar' is an unknown to be solved for; 'TAny' is a deliberate
+dynamic (it unifies with anything — our top); the rest are ordinary structure
+(scalars, lists, functions, records, unions). Polymorphism is NOT here — it
+lives one level up, in 'Scheme'.
+-}
 data NixType
   = TVar !TypeVar
   | TInt
@@ -138,6 +167,12 @@ pattern TAttrsOpen fields <- TRec fields (ROpen _)
   , TAny
   #-}
 
+{- | A polymorphic type scheme: a type closed over a list of quantified
+variables — @Forall vars t@ reads as @∀ vars. t@. This is the seat of
+let-polymorphism: a @let@-bound name is generalised to a scheme, and each use
+site instantiates it with fresh variables. @Forall []@ is an ordinary
+monotype. (Generalise / instantiate live in "NixCompile.Inference.Nix.Scheme".)
+-}
 data Scheme = Forall ![TypeVar] !NixType
   deriving stock (Eq, Show, Generic)
 
@@ -149,6 +184,10 @@ instance ToJSON Scheme
 -- constraints
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | An equality constraint: @t1 :~: t2@ is a goal asserting the two types must
+be made equal. The engine can either collect these and solve them in a batch,
+or (as we do) unify eagerly; either way @:~:@ is the unit of work.
+-}
 data Constraint
   = NixType :~: NixType
   deriving stock (Eq, Show, Generic)
@@ -159,14 +198,26 @@ infix 4 :~:
 -- substitution
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | A substitution: what each solved type variable has been resolved to.
+Unification's entire output is one of these; 'applySubst' uses it to turn a
+type-with-unknowns into its current best-known form.
+-}
 type Subst = Map TypeVar NixType
 
+-- | The identity substitution — resolves nothing.
 emptySubst :: Subst
 emptySubst = Map.empty
 
+-- | The substitution binding exactly one variable.
 singleSubst :: TypeVar -> NixType -> Subst
 singleSubst = Map.singleton
 
+{- | Compose two substitutions. @composeSubst s1 s2@ first rewrites the range of
+@s2@ through @s1@, then unions (with @s1@ winning on conflict) — so it means
+\"apply @s2@, then @s1@\". n.b. the inference engine deliberately avoids this
+(it keeps a triangular substitution and chases on read instead — O(n) not
+O(n²); see 'NixCompile.Inference.Nix.Constraint.addSubst').
+-}
 composeSubst :: Subst -> Subst -> Subst
 composeSubst substitution1 substitution2 =
   Map.map (applySubst substitution1) substitution2 `Map.union` substitution1
@@ -185,6 +236,9 @@ supply (which counts up from 0).
 anonRowVar :: TypeVar
 anonRowVar = TypeVar (-1)
 
+{- | Is this the anonymous sentinel row variable? Unification consults this and
+refuses to bind it, so anonymous-open records never accumulate fields.
+-}
 isAnonRowVar :: TypeVar -> Bool
 isAnonRowVar v = v == anonRowVar
 
@@ -194,6 +248,12 @@ flake/module types; the inference engine uses fresh row vars instead)
 tRecOpenAnon :: Map Text (NixType, Bool) -> NixType
 tRecOpenAnon m = TRec m (ROpen anonRowVar)
 
+{- | Apply a substitution to a type: replace every bound variable by what it
+resolved to, recursively, so the result is normalised w.r.t. the
+substitution. The variable case chases transitively (a var bound to a var
+bound to a type follows the whole chain), which is what lets the engine keep
+a cheap triangular substitution and still read fully-resolved types.
+-}
 applySubst :: Subst -> NixType -> NixType
 applySubst s = go
  where
@@ -224,6 +284,11 @@ applySubst s = go
   resolveRow m' _ (Just (TRec m2 tail2)) = go (TRec (Map.union m' m2) tail2)
   resolveRow m' r (Just _) = TRec m' (ROpen r) -- defensive: non-row binding
 
+{- | Apply a substitution to a scheme — but NOT to its quantified variables.
+Those are bound by the @forall@; substituting them would be variable capture
+(the textbook hazard of substituting under a binder), so we drop them from
+the substitution first.
+-}
 applySubstScheme :: Subst -> Scheme -> Scheme
 applySubstScheme s (Forall vars t) =
   Forall vars (applySubst (foldr Map.delete s vars) t)
@@ -232,6 +297,10 @@ applySubstScheme s (Forall vars t) =
 -- free type variables
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | The type variables occurring free in a type — including row-tail variables.
+Generalisation quantifies over exactly the ones the environment does not also
+mention.
+-}
 freeTypeVars :: NixType -> Set TypeVar
 freeTypeVars (TVar v) = Set.singleton v
 freeTypeVars (TList t) = freeTypeVars t
@@ -241,6 +310,9 @@ freeTypeVars (TFun a b) = freeTypeVars a `Set.union` freeTypeVars b
 freeTypeVars (TUnion ts) = Set.unions (map freeTypeVars ts)
 freeTypeVars _ = Set.empty
 
+{- | The free type variables of a scheme: free in the body but NOT quantified by
+the @forall@. (Those are the ones still tied to the surrounding context.)
+-}
 freeTypeVarsScheme :: Scheme -> Set TypeVar
 freeTypeVarsScheme (Forall vars t) =
   freeTypeVars t `Set.difference` Set.fromList vars
@@ -249,6 +321,9 @@ freeTypeVarsScheme (Forall vars t) =
 -- pretty printing
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | Render a type for display, numbering its free variables @a@, @b@, … in
+order of appearance (so the same type always prints the same way).
+-}
 prettyType :: NixType -> Text
 prettyType t = prettyTypeWith mapping t
  where
@@ -256,6 +331,9 @@ prettyType t = prettyTypeWith mapping t
   names = map T.singleton ['a' .. 'z'] ++ ["t" <> T.pack (show i) | i <- [1 ..] :: [Int]]
   mapping = Map.fromList $ zip vars names
 
+{- | Render a scheme as @forall a b. …@, or just the type when it is monomorphic
+(no quantified variables).
+-}
 prettyScheme :: Scheme -> Text
 prettyScheme (Forall [] t) = prettyType t
 prettyScheme (Forall vars t) =
