@@ -85,7 +85,6 @@ library
         NixCompile.LSP.Server
         NixCompile.Inference.Nix
         NixCompile.Syntax.Effect
-        NixCompile.Flake
         NixCompile.Inference.Nix.Annotate
         NixCompile.Inference.Nix.Builtins
         NixCompile.Inference.Nix.Constraint
