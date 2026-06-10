@@ -22,16 +22,19 @@
         # drift from a parallel manual invocation. It runs the real binary
         # against the committed good/perturbed flake-parts fixture projects and
         # asserts the clean one is layout-clean and the perturbed one fails.
-        "nix-compile:layout-e2e" = pkgs.runCommandLocal "nix-compile-layout-e2e" {
-          nativeBuildInputs = [
-            pkgs.bash
-            pkgs.gnugrep
-            pkgs.coreutils
-          ];
-        } ''
-          bash ${self}/tools/layoutcheck/check.sh ${nix-compile}/bin/nix-compile
-          touch $out
-        '';
+        "nix-compile:layout-e2e" =
+          pkgs.runCommandLocal "nix-compile-layout-e2e"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.gnugrep
+                pkgs.coreutils
+              ];
+            }
+            ''
+              bash ${self}/tools/layoutcheck/check.sh ${nix-compile}/bin/nix-compile
+              touch $out
+            '';
         # nix-compile dogfoods itself: type-check, lint, and layout-check the
         # whole source tree. Uses the repo's own .nix-compile.dhall (layout =
         # flake-parts, ignores), so it must be run with --config pointing at it
@@ -51,16 +54,19 @@
         # the stdout/stderr contract — the rough edges dogfooding surfaced
         # (crashes, mislabeled errors, hangs). Same single-runner discipline as
         # layout-e2e: invoked ONLY here so it cannot drift from a manual run.
-        "nix-compile:cli" = pkgs.runCommandLocal "nix-compile-cli" {
-          nativeBuildInputs = [
-            pkgs.bash
-            pkgs.gnugrep
-            pkgs.coreutils
-          ];
-        } ''
-          bash ${self}/tools/clicheck/check.sh ${nix-compile}/bin/nix-compile
-          touch $out
-        '';
+        "nix-compile:cli" =
+          pkgs.runCommandLocal "nix-compile-cli"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.gnugrep
+                pkgs.coreutils
+              ];
+            }
+            ''
+              bash ${self}/tools/clicheck/check.sh ${nix-compile}/bin/nix-compile
+              touch $out
+            '';
         # straylint case-ban gate. Enforces zero `case` / `\case` across the
         # ENTIRE first-party Haskell tree (lib/, app/, straylint/): if a `case`
         # can be written as function-clause equations, guards, or an eliminator
@@ -78,9 +84,7 @@
             );
           in
           pkgs.runCommandLocal "nix-compile-case-ban" { } ''
-            ${nix-compile}/bin/straylint --strict ${
-              lib.concatMapStringsSep " " toString haskellSources
-            }
+            ${nix-compile}/bin/straylint --strict ${lib.concatMapStringsSep " " toString haskellSources}
             touch $out
           '';
       };
@@ -93,12 +97,13 @@
             "-euc"
             ''
                 ${pkgs.coreutils}/bin/install -Dm755 /dev/stdin $out/bin/nix-compile-fmt << 'ENDOFSCRIPT'
+              #!${pkgs.bash}/bin/bash
               set -e
               files=()
               for arg in "$@"; do
                 if [ -d "$arg" ]; then
                   while IFS= read -r -d "" f; do
-                    case "$f" in */adversarial_output/*|*/test/fixtures/*) continue ;; esac
+                    case "$f" in */adversarial_output/*|*/test/fixtures/*|*/fmtparity/corpus/*) continue ;; esac
                     files+=("$f")
                   done < <(${pkgs.findutils}/bin/find "$arg" -name '*.nix' -not -path '*/adversarial_output/*' -print0 2>/dev/null || true)
                 elif [ -f "$arg" ]; then
