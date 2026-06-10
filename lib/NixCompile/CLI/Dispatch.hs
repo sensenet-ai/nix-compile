@@ -18,6 +18,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (encode)
 import Data.ByteString.Lazy.Char8 qualified as BL
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -116,7 +117,7 @@ failSafety err = do
 printScopeGraph :: Scope.ScopeGraph -> IO ()
 printScopeGraph scopeGraph = do
   putStrLn "=== Scope Graph ==="
-  putStrLn $ "File: " ++ maybe "(none)" id (Scope.sgFile scopeGraph)
+  putStrLn $ "File: " ++ fromMaybe "(none)" (Scope.sgFile scopeGraph)
   putStrLn $ "Scopes: " ++ show (Map.size (Scope.sgScopes scopeGraph))
   putStrLn ""
 
@@ -135,7 +136,7 @@ printScopeGraph scopeGraph = do
         TIO.putStrLn $
           "    "
             <> Scope.declName declaration
-            <> maybe "" (\typeLabel -> " : " <> typeLabel) (Scope.declType declaration)
+            <> maybe "" (" : " <>) (Scope.declType declaration)
 
     let refs = Scope.scopeReferences scope
     unless (null refs) $ do

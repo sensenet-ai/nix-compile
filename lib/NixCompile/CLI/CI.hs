@@ -263,7 +263,7 @@ collectFiles config path = do
   isDirectory <- doesDirectoryExist path
   if isDirectory
     then collectNixFilesRecursive config path
-    else pure $ if Config.isIgnored config path then [] else [path]
+    else pure [path | not (Config.isIgnored config path)]
 
 collectNixFilesRecursive :: Config.Config -> FilePath -> IO [FilePath]
 collectNixFilesRecursive config root = do
@@ -293,7 +293,7 @@ walkDirectory canonicalRoot ignoredDirs accumulatedFiles visited (directory : wo
         (subDirectories ++ worklist)
 
 classifyEntries :: FilePath -> Set.Set FilePath -> [FilePath] -> IO ([FilePath], [FilePath])
-classifyEntries basePath ignoredDirs entries =
+classifyEntries basePath ignoredDirs =
   foldM
     ( \(nixFiles, subDirectories) entry -> do
         let fullPath = basePath </> entry
@@ -307,7 +307,6 @@ classifyEntries basePath ignoredDirs entries =
               else pure (if takeExtension fullPath == ".nix" then fullPath : nixFiles else nixFiles, subDirectories)
     )
     ([], [])
-    entries
 
 wrapCheckFile :: Config.Config -> (LogEnv, LogContexts, Namespace) -> FilePath -> IO TCResult
 wrapCheckFile config (loggingEnv, loggingContext, loggingNamespace) file =

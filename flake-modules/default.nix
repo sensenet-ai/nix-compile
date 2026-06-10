@@ -1,5 +1,4 @@
 {
-  config,
   lib,
   self,
   ...
@@ -7,9 +6,7 @@
 {
   perSystem =
     {
-      config,
       self',
-      inputs',
       pkgs,
       system,
       ...
@@ -47,6 +44,21 @@
         "nix-compile:lint-flake" = pkgs.runCommandLocal "nix-compile-lint-flake" { } ''
           echo "linting flake.nix and embedded bash"
           ${nix-compile}/bin/nix-compile --config ${self}/.nix-compile.dhall check ${self}/flake.nix
+          touch $out
+        '';
+        # CLI smoke / jank guard. Runs the real binary across a good/bad/empty/
+        # missing/dir input matrix and asserts exit codes, error categories, and
+        # the stdout/stderr contract — the rough edges dogfooding surfaced
+        # (crashes, mislabeled errors, hangs). Same single-runner discipline as
+        # layout-e2e: invoked ONLY here so it cannot drift from a manual run.
+        "nix-compile:cli" = pkgs.runCommandLocal "nix-compile-cli" {
+          nativeBuildInputs = [
+            pkgs.bash
+            pkgs.gnugrep
+            pkgs.coreutils
+          ];
+        } ''
+          bash ${self}/tools/clicheck/check.sh ${nix-compile}/bin/nix-compile
           touch $out
         '';
         # straylint case-ban gate. Enforces zero `case` / `\case` across the

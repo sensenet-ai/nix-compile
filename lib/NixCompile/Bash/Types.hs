@@ -73,6 +73,7 @@ where
 
 import GHC.Generics (Generic)
 
+import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -249,7 +250,7 @@ mergeEnvSpec envSpec1 envSpec2 =
     { envType = envType envSpec1
     , envRequired = envRequired envSpec1 || envRequired envSpec2
     , -- keep envSpec1's default if it has one, else fall back to envSpec2's
-      envDefault = maybe (envDefault envSpec2) Just (envDefault envSpec1)
+      envDefault = envDefault envSpec1 <|> envDefault envSpec2
     , envSpan = envSpan envSpec1
     }
 

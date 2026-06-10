@@ -336,4 +336,4 @@ computeOrder root modules = reverse $ snd $ dfs Set.empty [] root
           (visited'', order') = foldl go (visited', order) (map impPath (modImports m))
        in (visited'', path : order')
 
-  go (v, o) p = dfs v o p
+  go (v, o) = dfs v o
