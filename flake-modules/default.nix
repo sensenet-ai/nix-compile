@@ -87,6 +87,40 @@
             ${nix-compile}/bin/straylint --strict ${lib.concatMapStringsSep " " toString haskellSources}
             touch $out
           '';
+        # 100-column gate. doc/TYPOGRAPHY.md makes 100 the canonical width and
+        # HOUSE_STYLE enforces it on code; fourmolu (column-limit: 100) wraps
+        # what it can, but leaves operator chains / long application RHS that it
+        # won't reflow, so this backstops the rest. Counts DISPLAY columns (box-
+        # drawing glyphs are one column each), not bytes, so banners pinned at
+        # 100 pass. Covers the WHOLE first-party tree incl. test/ + bench/.
+        "nix-compile:col100" =
+          let
+            haskellSources = builtins.filter (path: lib.hasSuffix ".hs" (toString path)) (
+              lib.filesystem.listFilesRecursive (self + "/lib")
+              ++ lib.filesystem.listFilesRecursive (self + "/app")
+              ++ lib.filesystem.listFilesRecursive (self + "/straylint")
+              ++ lib.filesystem.listFilesRecursive (self + "/test")
+              ++ lib.filesystem.listFilesRecursive (self + "/bench")
+            );
+          in
+          pkgs.runCommandLocal "nix-compile-col100" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 - ${lib.concatMapStringsSep " " toString haskellSources} <<'PY'
+            import sys
+            bad = 0
+            for path in sys.argv[1:]:
+                with open(path, encoding="utf-8") as handle:
+                    for lineNo, line in enumerate(handle, 1):
+                        width = len(line.rstrip("\n"))
+                        if width > 100:
+                            print(f"{path}:{lineNo}: {width} columns")
+                            bad += 1
+            if bad:
+                print(f"\n{bad} line(s) exceed 100 columns")
+                sys.exit(1)
+            print("col100: all first-party .hs <= 100 columns")
+            PY
+            touch $out
+          '';
       };
       formatter = lib.mkIf (nix-compile != null) (
         builtins.derivation {
