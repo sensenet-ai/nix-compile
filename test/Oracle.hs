@@ -23,20 +23,28 @@
 --                (conservative checker; these are the RC1/RC2 gaps)
 --   (skipped)   no concrete claim (TVar/TAny/TUnion) or parse fail
 --
--- The suite SKIPS cleanly (exit 0) when `nix-instantiate` is absent — e.g. the
--- sandboxed flake check, where recursive nix is unavailable. It does real work
--- in the dev shell / any CI step that has nix on PATH.
+-- Ground truth comes from a FROZEN GOLDEN ('goldenTable') — each corpus entry's
+-- runtime kind, captured once from `nix-instantiate`. So the suite does real
+-- soundness work even with no nix on PATH (e.g. the sandboxed flake check): it
+-- still flags the checker claiming a kind the runtime disagrees with. When nix
+-- IS present it additionally re-runs the live differential and fails on any
+-- drift between the golden and real nix, so the table cannot silently rot.
+-- Refresh the golden after editing 'corpus': `… nix-compile-oracle -- --dump-golden`.
 module Main (main) where
 
 import Control.Exception (SomeException, evaluate, try)
-import Control.Monad (forM)
+import Control.Monad (forM, unless)
 import Data.Char (isSpace)
+import Data.List (intercalate)
+import Data.Maybe (catMaybes, fromMaybe, isNothing)
 import Data.Text qualified as T
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Inference.Nix (inferExpr)
 import NixCompile.Inference.Nix.Type (NixType (..))
 import System.Directory (findExecutable)
+import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitFailure, exitSuccess)
+import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
 
@@ -206,46 +214,159 @@ renderVerdict = \case
   Incomplete k -> "INCOMPLETE (checker rejected; runtime=" ++ k ++ ")"
   Skipped why -> "skipped (" ++ why ++ ")"
 
+{- | Frozen ground truth: each corpus entry paired with the runtime kind
+'nix-instantiate' reports for it ('Just' a @builtins.typeOf@ string, or 'Nothing'
+when it does not evaluate to a value — e.g. @head []@ or a runtime type error).
+
+These kinds are STABLE (@builtins.typeOf 42@ is always @"int"@), so freezing them
+lets the soundness check run hermetically — no nix in the loop — and still catch
+the one thing that matters: the checker claiming a kind the runtime disagrees
+with (MISMATCH). The live differential ('nixTypeOf') runs whenever nix IS present
+and re-verifies this table, so it cannot silently rot.
+
+Refresh after changing 'corpus' (needs nix on PATH):
+
+    cabal run -v0 nix-compile-oracle -- --dump-golden
+-}
+goldenTable :: [(String, Maybe String)]
+goldenTable =
+  [ ("42", Just "int")
+  , ("-7", Just "int")
+  , ("3.14", Just "float")
+  , ("true", Just "bool")
+  , ("null", Just "null")
+  , ("\"hello\"", Just "string")
+  , ("./some/path", Just "path")
+  , ("1 + 1", Just "int")
+  , ("1 + 1.5", Just "float")
+  , ("2 * 3 - 4", Just "int")
+  , ("7 / 2", Just "int")
+  , ("1.0 + 2", Just "float")
+  , ("\"a\" + \"b\"", Just "string")
+  , ("./x + \"y\"", Just "path")
+  , ("1 == null", Just "bool")
+  , ("1 == 2", Just "bool")
+  , ("\"a\" == \"b\"", Just "bool")
+  , ("1 < 2", Just "bool")
+  , ("true && false", Just "bool")
+  , ("true || false", Just "bool")
+  , ("[ 1 2 3 ]", Just "list")
+  , ("{ a = 1; b = true; }", Just "set")
+  , ("[ ]", Just "list")
+  , ("{ a = 1; }.a", Just "int")
+  , ("let x = { a = { b = { c = 1; }; }; }; in x.a.b.c", Just "int")
+  , ("{ a = 1; }.z or 99", Just "int")
+  , ("(x: x) 5", Just "int")
+  , ("(x: x + 1) 41", Just "int")
+  , ("let f = x: y: x + y; in f 2 3", Just "int")
+  , ("x: x", Just "lambda")
+  , ("map (x: x + 1) [ 1 2 3 ]", Just "list")
+  , ("builtins.head [ 10 20 ]", Just "int")
+  , ("builtins.length [ 1 2 ]", Just "int")
+  , ("builtins.elemAt [ 10 20 ] 1", Just "int")
+  , ("builtins.filter (x: x) [ true false ]", Just "list")
+  , ("builtins.foldl' (a: b: a + b) 0 [ 1 2 3 ]", Just "int")
+  , ("builtins.attrNames { a = 1; b = 2; }", Just "list")
+  , ("builtins.attrValues { a = 1; }", Just "list")
+  , ("builtins.hasAttr \"a\" { a = 1; }", Just "bool")
+  , ("head [ 1 2 ]", Nothing)
+  , ("toString 5", Just "string")
+  , ("builtins.stringLength \"abc\"", Just "int")
+  , ("if true then 1 else 2", Just "int")
+  , ("1 + \"a\"", Nothing)
+  , ("1 + true", Nothing)
+  ]
+
+-- | Ground truth for an entry from the frozen table, if present.
+goldenFor :: String -> Maybe (Maybe String)
+goldenFor e = lookup e goldenTable
+
 main :: IO ()
 main = do
-  putStrLn "nix-compile differential oracle (checker vs nix-instantiate)"
-  putStrLn "============================================================"
+  args <- getArgs
+  if "--dump-golden" `elem` args then dumpGolden else runOracle
+
+{- | Regenerate 'goldenTable' from the live oracle and print it as Haskell source
+to paste back in. Requires nix-instantiate on PATH (it is the source of truth).
+-}
+dumpGolden :: IO ()
+dumpGolden = do
   mNix <- findExecutable "nix-instantiate"
   case mNix of
-    Nothing -> do
-      putStrLn "nix-instantiate not found on PATH — skipping (vacuous pass)."
-      exitSuccess
+    Nothing -> hPutStrLn stderr "--dump-golden requires nix-instantiate on PATH" >> exitFailure
     Just _ -> do
-      verdicts <- forM corpus $ \e -> do
-        cr <- runChecker e
-        oracle <- nixTypeOf e
-        let v = verdict cr oracle
-        putStrLn $ "  " ++ pad 52 e ++ renderVerdict v
-        pure v
-      let failures = filter isFailure verdicts
-          nAgree = length [() | Agree _ <- verdicts]
-          nReject = length [() | AgreeReject <- verdicts]
-          nIncomplete = length [() | Incomplete _ <- verdicts]
-          nNoEval = length [() | TypedNoEval _ <- verdicts]
-      putStrLn ""
-      putStrLn $
-        "agree="
-          ++ show nAgree
-          ++ " agree-reject="
-          ++ show nReject
-          ++ " incomplete="
-          ++ show nIncomplete
-          ++ " typed-noeval="
-          ++ show nNoEval
-          ++ " FAILURES="
-          ++ show (length failures)
-      putStrLn "note: 'incomplete' = conservative rejection (RC1/RC2 gap), not a failure."
-      if null failures
-        then do
-          putStrLn "oracle: OK (no soundness mismatches)"
-          exitSuccess
-        else do
-          putStrLn "oracle: FAILED (soundness mismatch or checker hang)"
-          exitFailure
+      rows <- forM corpus $ \e -> do k <- nixTypeOf e; pure (e, k)
+      putStrLn "goldenTable :: [(String, Maybe String)]"
+      putStrLn ("goldenTable =\n  [ " ++ intercalate "\n  , " (map show rows) ++ "\n  ]")
+
+runOracle :: IO ()
+runOracle = do
+  putStrLn "nix-compile differential oracle (checker vs nix-instantiate)"
+  putStrLn "============================================================"
+  -- Every corpus entry must have a frozen ground truth; a missing one means the
+  -- corpus grew without a `--dump-golden` refresh, which we fail on loudly.
+  let missing = [e | e <- corpus, isNothing (goldenFor e)]
+  unless (null missing) $ do
+    putStrLn "oracle: FAILED — corpus entries missing from goldenTable (run -- --dump-golden):"
+    mapM_ (\e -> putStrLn ("  " ++ e)) missing
+    exitFailure
+
+  -- Hermetic verdicts: the (pure) checker vs the frozen ground truth.
+  verdicts <- forM corpus $ \e -> do
+    cr <- runChecker e
+    let v = verdict cr (concatGolden (goldenFor e))
+    putStrLn $ "  " ++ pad 52 e ++ renderVerdict v
+    pure v
+
+  -- When nix IS present, re-verify the frozen table against the live oracle so
+  -- it cannot silently drift from real nix semantics.
+  mNix <- findExecutable "nix-instantiate"
+  drift <- maybe (pure []) (const driftReport) mNix
+
+  let failures = filter isFailure verdicts
+      nAgree = length [() | Agree _ <- verdicts]
+      nReject = length [() | AgreeReject <- verdicts]
+      nIncomplete = length [() | Incomplete _ <- verdicts]
+      nNoEval = length [() | TypedNoEval _ <- verdicts]
+  putStrLn ""
+  putStrLn (maybe "ground truth: frozen golden (no nix on PATH)" (const "ground truth: frozen golden + live nix drift-check") mNix)
+  putStrLn $
+    "agree="
+      ++ show nAgree
+      ++ " agree-reject="
+      ++ show nReject
+      ++ " incomplete="
+      ++ show nIncomplete
+      ++ " typed-noeval="
+      ++ show nNoEval
+      ++ " FAILURES="
+      ++ show (length failures)
+      ++ " drift="
+      ++ show (length drift)
+  putStrLn "note: 'incomplete' = conservative rejection (RC1/RC2 gap), not a failure."
+  unless (null drift) $ do
+    putStrLn "oracle: golden DRIFT — frozen kinds disagree with live nix (refresh with -- --dump-golden):"
+    mapM_ (putStrLn . ("  " ++)) drift
+  if null failures && null drift
+    then putStrLn "oracle: OK (no soundness mismatches)" >> exitSuccess
+    else putStrLn "oracle: FAILED (soundness mismatch, checker hang, or golden drift)" >> exitFailure
  where
   pad n s = take n (s ++ repeat ' ')
+  -- a present-but-Nothing golden entry means "did not evaluate"; flatten the
+  -- Maybe (Maybe String) lookup (absence already failed loudly above).
+  concatGolden Nothing = Nothing
+  concatGolden (Just g) = g
+
+{- | Compare every frozen golden kind against a fresh live nix-instantiate run;
+return a human-readable line for each entry where they disagree.
+-}
+driftReport :: IO [String]
+driftReport = fmap catMaybes $ forM corpus $ \e -> do
+  live <- nixTypeOf e
+  pure $ case goldenFor e of
+    Just g | g == live -> Nothing
+    Just g -> Just (pad 52 e ++ "golden=" ++ showKind g ++ " live=" ++ showKind live)
+    Nothing -> Nothing
+ where
+  pad n s = take n (s ++ repeat ' ')
+  showKind = fromMaybe "<noeval>"
