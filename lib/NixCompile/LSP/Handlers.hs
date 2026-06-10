@@ -25,10 +25,10 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar
 import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.List (find, nub, sort)
+import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Language.LSP.Protocol.Message
@@ -36,7 +36,7 @@ import Language.LSP.Protocol.Types
 import Language.LSP.Server
 import Language.LSP.VFS (virtualFileText)
 import Nix.Atoms (NAtom (..))
-import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..), Params (..))
+import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Safety qualified as Safety
@@ -44,6 +44,13 @@ import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Inference.Nix qualified as Infer
 import NixCompile.Inference.Nix.Type qualified as NT
+import NixCompile.LSP.Handlers.Cursor (
+  childExprs,
+  exprName,
+  findExprAt,
+  inferExprAt,
+  inferExprAtWithEnv,
+ )
 import NixCompile.LSP.Handlers.Diagnostics (
   NixViolation (..),
   ViolationType (..),
@@ -744,88 +751,6 @@ voidProjectDiags uri = do
 
 lintFile :: Text -> [Diagnostic]
 lintFile = fullLint
-
--- ═══════════════════════ expression traversal ═══════════════════════
-
-findExprAt :: Int -> Int -> NExprLoc -> Maybe NExprLoc
-findExprAt l c = go
- where
-  targetLine = l + 1
-  targetCol = c + 1
-  spContains (Span (Loc sl sc) (Loc el ec) _) =
-    (sl < targetLine || (sl == targetLine && sc <= targetCol))
-      && (el > targetLine || (el == targetLine && ec >= targetCol))
-  getSpan (LayerAnn sp _) = srcSpanToSpan sp
-  go e
-    | not (spContains (getSpan e)) = Nothing
-    | otherwise = Just (fromMaybe e (listToMaybe (mapMaybe go (childExprs' e))))
-  childExprs' (Layer (NConstant _)) = []
-  childExprs' (Layer (NStr _)) = []
-  childExprs' (Layer (NLiteralPath _)) = []
-  childExprs' (Layer (NEnvPath _)) = []
-  childExprs' (Layer (NSym _)) = []
-  childExprs' (Layer (NList es)) = es
-  childExprs' (Layer (NSet _ bs)) = concatMap bindingExprs bs
-  childExprs' (Layer (NLet bs b)) = concatMap bindingExprs bs ++ [b]
-  childExprs' (Layer (NIf cond t f')) = [cond, t, f']
-  childExprs' (Layer (NWith s b)) = [s, b]
-  childExprs' (Layer (NAssert cond body)) = [cond, body]
-  childExprs' (Layer (NAbs (Param _) b)) = [b]
-  childExprs' (Layer (NAbs (ParamSet _ _ formals) b)) = [d | (_, Just d) <- formals] ++ [b]
-  childExprs' (Layer (NApp f' a)) = [f', a]
-  childExprs' (Layer (NSelect mDef obj _path)) = maybeToList mDef ++ [obj]
-  childExprs' (Layer (NHasAttr e1 _)) = [e1]
-  childExprs' (Layer (NUnary _ e1)) = [e1]
-  childExprs' (Layer (NBinary _ e1 e2)) = [e1, e2]
-  childExprs' (Layer (NSynHole _)) = []
-  bindingExprs (NamedVar _ e _) = [e]
-  bindingExprs (Inherit mScope _ _) = maybeToList mScope
-
-childExprs :: NExprF NExprLoc -> [NExprLoc]
-childExprs (NConstant _) = []
-childExprs (NStr _) = []
-childExprs (NLiteralPath _) = []
-childExprs (NEnvPath _) = []
-childExprs (NSym _) = []
-childExprs (NList es) = es
-childExprs (NSet _ bs) = concatMap bindExprs bs
-childExprs (NLet bs b) = concatMap bindExprs bs ++ [b]
-childExprs (NIf cond t f') = [cond, t, f']
-childExprs (NWith s b) = [s, b]
-childExprs (NAssert cond body) = [cond, body]
-childExprs (NAbs _ b) = [b]
-childExprs (NApp f' a) = [f', a]
-childExprs (NSelect _ b _) = [b]
-childExprs (NHasAttr b _) = [b]
-childExprs (NUnary _ e1) = [e1]
-childExprs (NBinary _ e1 e2) = [e1, e2]
-childExprs (NSynHole _) = []
-
-bindExprs :: Binding NExprLoc -> [NExprLoc]
-bindExprs (NamedVar _ e _) = [e]
-bindExprs (Inherit mScope _ _) = maybeToList mScope
-
-inferExprAt :: NExprLoc -> Int -> Int -> Maybe Text
-inferExprAt = inferExprAtWithEnv builtinEnv
-
-inferExprAtWithEnv :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe Text
-inferExprAtWithEnv env expr l c = do
-  target <- findExprAt l c expr
-  either (const (inferTarget' target)) (fromBindings target) (inferExprWithEnv env expr)
- where
-  fromBindings target (_, bindings) =
-    maybe (inferTarget' target) (fromName target bindings) (exprName target)
-  fromName target bindings name =
-    maybe (inferTarget' target) namedType (find (\(Infer.Binding n _ _) -> n == name) bindings)
-   where
-    namedType (Infer.Binding _ t _sp) = Just (NT.prettyType t)
-  inferTarget' te =
-    either (const (Just "TYPE_ERROR")) (\(t, _) -> Just (NT.prettyType t)) (inferExprWithEnv builtinEnv te)
-
-exprName :: NExprLoc -> Maybe Text
-exprName (Layer (NSym name)) = Just $ varNameText name
-exprName (Layer (NSelect _ _ (StaticKey k :| _))) = Just $ varNameText k
-exprName _ = Nothing
 
 -- ═══════════════════════ cross-module helpers ═══════════════════════
 

@@ -73,6 +73,7 @@ library
         NixCompile.Lint.Forbidden
         NixCompile.Core.Log
         NixCompile.LSP.Handlers
+        NixCompile.LSP.Handlers.Cursor
         NixCompile.LSP.Handlers.Diagnostics
         NixCompile.LSP.ProjectCache
         NixCompile.LSP.Server
