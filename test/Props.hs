@@ -37,6 +37,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import LSPFeatureSpec qualified
 import Language.LSP.Protocol.Types (
   Diagnostic (..),
   DiagnosticSeverity (..),
@@ -5209,7 +5210,20 @@ main = do
       ]
 
   putStrLn ""
-  let allResults = results ++ psychoticResults ++ pcResults ++ advResults ++ nixAdvResults
+  putStrLn "  -- lsp features (contract guards + known-broken tripwires) --"
+  lspResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- LSPFeatureSpec.lspFeatureTests
+      ]
+
+  putStrLn ""
+  let allResults =
+        results ++ psychoticResults ++ pcResults ++ advResults ++ nixAdvResults ++ lspResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
