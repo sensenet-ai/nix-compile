@@ -23,19 +23,20 @@ module NixCompile.Bash.Facts (
 )
 where
 
-import Control.Monad.Reader (Reader, ask, runReader)
+import Control.Monad.Reader (Reader, runReader)
 import Data.Foldable (toList)
 import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
 import Data.Maybe (maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as T
+import NixCompile.Bash.Facts.Token (extractLiteral, extractParamExpansion, isQuotedToken, mkSpan, tokenToText)
+import NixCompile.Bash.Facts.Value (configValueFact, extractVarRef, parseConfigTemplate, parseConfigValueDynamic, selectValueParser)
 import NixCompile.Bash.Parse (BashAST (..))
 import NixCompile.Bash.Patterns
 import NixCompile.Bash.Types
-import NixCompile.Core.Span (Loc (..), Span (..))
+import NixCompile.Core.Span (Span)
 import ShellCheck.AST qualified as SA
-import ShellCheck.Interface (Position (..))
+import ShellCheck.Interface (Position)
 
 -- ── entry point: walk entire AST collecting facts ─────────────────
 
@@ -97,8 +98,7 @@ factFromAssignment sourceSpan variableName valueToken =
 
 -- | facts from a simple command (pre-command assigns are ignored)
 factFromCommand :: Span -> [SA.Token] -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
-factFromCommand sourceSpan _assigns commandWords =
-  commandFacts sourceSpan commandWords
+factFromCommand sourceSpan _assigns = commandFacts sourceSpan
 
 -- | placeholder: pipeline facts (children are traversed separately)
 factFromPipeline :: Span -> Reader (Map SA.Id (Position, Position)) [Fact]
@@ -159,7 +159,7 @@ resolveCommandName path
 handles both --flag=$VAR (same token) and --flag $VAR (adjacent tokens)
 -}
 extractArgFacts :: Text -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
-extractArgFacts command tokens = loop tokens
+extractArgFacts command = loop
  where
   loop [] = pure []
   loop (token : remainingTokens) =
@@ -228,14 +228,6 @@ configArrayFacts sourceSpan configPath valueToken =
         maybe litFact (\parts -> [ConfigTemplate configPath parts quoted sourceSpan]) (parseConfigTemplate valueText)
     | otherwise = litFact
 
--- ── quoting detection ────────────────────────────────────────────
-
--- | determine if a token is quoted or unquoted (for config value semantics)
-isQuotedToken :: SA.Token -> Quoted
-isQuotedToken (SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)) = Quoted
-isQuotedToken (SA.OuterToken _ (SA.Inner_T_NormalWord [SA.OuterToken _ (SA.Inner_T_DoubleQuoted _)])) = Quoted
-isQuotedToken _ = Unquoted
-
 -- ── env var facts: ${var:-default}, ${var:=default}, ${var:?err} ──
 
 -- | extract facts from a regular (non-config) shell variable assignment
@@ -297,36 +289,6 @@ configFactsFromParts sourceSpan tokenParts = maybe [] fromPrefix matchedPrefix
     (valueTokens, quoted) = findValueTokens tokenParts
     parsed = selectValueParser valueTokens (T.drop 1 rightHandSide) quoted
 
--- ── value parser selection ───────────────────────────────────────
-
-{- | choose the appropriate value parser based on token structure
-empty token list → text fallback; non-empty → try template / var / dynamic
--}
-selectValueParser :: [SA.Token] -> Text -> Quoted -> Maybe ConfigValueDynamic
-selectValueParser [] rhsText quoted =
-  parseConfigValueDynamic rhsText quoted
-selectValueParser tokens _ quoted = classify (parseConfigTemplateTokens tokens)
- where
-  classify (Just [ConfigVar variable]) = Just (CVDVar variable)
-  classify (Just templateParts) = Just (CVDTemplate templateParts)
-  classify Nothing = parseConfigValueDynamic (T.concat (map tokenToText tokens)) quoted
-
--- ── config value dynamic representation ──────────────────────────
-
-data ConfigValueDynamic
-  = -- | single variable reference
-    CVDVar Text
-  | -- | plain literal
-    CVDLit Literal
-  | -- | template with mixed text/vars
-    CVDTemplate [ConfigPart]
-
--- | convert a dynamic value to the corresponding Fact constructor
-configValueFact :: ConfigPath -> Quoted -> Span -> ConfigValueDynamic -> Fact
-configValueFact configPath quoted sourceSpan (CVDVar variable) = ConfigAssign configPath variable quoted sourceSpan
-configValueFact configPath _quoted sourceSpan (CVDLit literal) = ConfigLit configPath literal sourceSpan
-configValueFact configPath quoted sourceSpan (CVDTemplate templateParts) = ConfigTemplate configPath templateParts quoted sourceSpan
-
 -- ── value token extraction ───────────────────────────────────────
 
 {- | scan token parts for the portion after = and determine quoting
@@ -344,179 +306,6 @@ findValueTokens parts = loop parts False
     | SA.Inner_T_DoubleQuoted _ <- innerToken, seenEquals = ([token], Quoted)
     | seenEquals = ([token], Unquoted)
     | otherwise = loop remainingTokens seenEquals
-
--- ── dynamic text-level parser ────────────────────────────────────
-
--- | parse a config value from raw text (fallback when token parser fails)
-parseConfigValueDynamic :: Text -> Quoted -> Maybe ConfigValueDynamic
-parseConfigValueDynamic rawText _quoted
-  | T.null strippedText = Nothing
-  | otherwise = classify (parseConfigTemplate strippedText)
- where
-  classify (Just [ConfigVar variable]) = Just (CVDVar variable)
-  classify (Just templateParts) = Just (CVDTemplate templateParts)
-  classify Nothing = Just (CVDLit (parseLiteral strippedText))
-  strippedText
-    | "\"" `T.isPrefixOf` rawText && "\"" `T.isSuffixOf` rawText = T.dropEnd 1 (T.drop 1 rawText)
-    | otherwise = rawText
-
--- ═════════════════════════════════════════════════════════════════════════════
--- token → config template
--- ═════════════════════════════════════════════════════════════════════════════
-
--- -- token sequence → config parts -- --
--- ShellCheck tokenizes `"$A-$B"` as a sequence of literal+var tokens.
--- We reconstruct the template structure from that token stream.
-
-parseConfigTemplateTokens :: [SA.Token] -> Maybe [ConfigPart]
-parseConfigTemplateTokens tokens =
-  let parts = mergeTextParts (concatMap tokenParts tokens)
-   in if any isVarPart parts then Just parts else Nothing
- where
-  -- ── classify: if any part is a variable, it's a template ──
-  isVarPart (ConfigText _) = False
-  isVarPart _ = True
-
-  -- ── token → [ConfigPart] ──
-  tokenParts (SA.OuterToken _ innerToken) = innerParts innerToken
-
-  -- ── inner token → flat part list ──
-  -- n.b. Literal, SingleQuoted, Glob all become ConfigText
-  -- DollarBraced tries expansionPart first
-  innerParts (SA.Inner_T_Literal content) = [ConfigText (T.pack content)]
-  innerParts (SA.Inner_T_SingleQuoted content) = [ConfigText (T.pack content)]
-  innerParts (SA.Inner_T_Glob content) = [ConfigText (T.pack content)]
-  innerParts (SA.Inner_T_NormalWord subParts) = concatMap tokenParts subParts
-  innerParts (SA.Inner_T_DoubleQuoted subParts) = concatMap tokenParts subParts
-  innerParts (SA.Inner_T_DollarBraced _ body) = expansionPart ("${" <> tokenToText body <> "}")
-  innerParts _ = []
-
-  -- ── ${...} → ConfigVar / ConfigVarDefault / ConfigVarRequired ──
-  expansionPart text = classify (parseParamExpansion text)
-   where
-    classify (Just (SimpleRef variable)) = [ConfigVar variable]
-    classify (Just (DefaultValue variable defaultValue)) = [ConfigVarDefault variable (maybe "" id defaultValue)]
-    classify (Just (AssignDefault variable defaultValue)) = [ConfigVarDefault variable (maybe "" id defaultValue)]
-    classify (Just (ErrorIfUnset variable _)) = [ConfigVarRequired variable]
-    classify (Just (UseAlternate variable alternate)) = [ConfigVarAlternate variable (maybe "" id alternate)]
-    classify Nothing = [ConfigText text]
-
-  -- ── merge adjacent ConfigText parts ──
-  mergeTextParts = foldr step []
-   where
-    step (ConfigText a) (ConfigText b : xs) = ConfigText (a <> b) : xs
-    step part xs = part : xs
-
--- -- text → config parts -- --
--- Parses raw text like "$A-${B:-default}" into [ConfigVar "A", ConfigText "-", ConfigVarDefault "B" "default"]
--- n.b. this is the text-level fallback when token-level parsing didn't apply
-
-parseConfigTemplate :: Text -> Maybe [ConfigPart]
-parseConfigTemplate sourceText =
-  let parts = parseParts sourceText
-   in if any isVarPart parts then Just (mergeTextParts parts) else Nothing
- where
-  -- any part that carries a variable counts — not just bare $VAR. Without the
-  -- default/required/alternate cases, a template built entirely of
-  -- `${VAR:-default}` parts was misclassified as a plain literal. (REVIEW-3 #24)
-  isVarPart (ConfigVar _) = True
-  isVarPart (ConfigVarDefault _ _) = True
-  isVarPart (ConfigVarRequired _) = True
-  isVarPart (ConfigVarAlternate _ _) = True
-  isVarPart (ConfigText _) = False
-
-  -- ── main parser: dispatch on first character ──
-  parseParts remainingText
-    | T.null remainingText = []
-    | "${" `T.isPrefixOf` remainingText =
-        -- \${...} expansion: extract name, try param expansion, fallback to text
-        parseDollarBrace remainingText
-    | "$" `T.isPrefixOf` remainingText =
-        -- \$VAR simple variable: grab identifier chars
-        parseDollarVar remainingText
-    | otherwise =
-        -- plain text: scan forward to the next $
-        splitText remainingText
-
-  -- ── ${...} handler ──
-  -- extract the name between ${ and }, then try each expansion form
-  parseDollarBrace text =
-    let textAfterDollarBrace = T.drop 2 text
-        (name, textAfterName) = T.breakOn "}" textAfterDollarBrace
-        rest = parseParts (T.drop 1 textAfterName)
-        classify (Just (SimpleRef variable)) = ConfigVar variable : rest
-        classify (Just (DefaultValue variable defaultValue)) = ConfigVarDefault variable (maybe "" id defaultValue) : rest
-        classify (Just (AssignDefault variable defaultValue)) = ConfigVarDefault variable (maybe "" id defaultValue) : rest
-        classify (Just (ErrorIfUnset variable _)) = ConfigVarRequired variable : rest
-        classify (Just (UseAlternate variable alternate)) = ConfigVarAlternate variable (maybe "" id alternate) : rest
-        classify Nothing = splitText text
-     in if "}" `T.isPrefixOf` textAfterName
-          then classify (parseParamExpansion ("${" <> name <> "}"))
-          else splitText text
-
-  -- ── $VAR handler ──
-  parseDollarVar text =
-    let textAfterDollar = T.drop 1 text
-        (name, textAfterName) = T.span isVarChar textAfterDollar
-     in if isVarName name
-          then ConfigVar name : parseParts textAfterName
-          else splitText text
-
-  -- ── text chunk: find the next $, emit as ConfigText ──
-  splitText text =
-    let (textBefore, textAfter) = T.breakOn "$" text
-     in if T.null textBefore
-          then ConfigText (T.take 1 textAfter) : parseParts (T.drop 1 textAfter)
-          else ConfigText textBefore : parseParts textAfter
-
-  -- ── identifier validation ──
-  isVarName name =
-    not (T.null name)
-      && not (isNumericLiteral name)
-      && not (isBoolLiteral name)
-      && T.all isVarChar name
-
-  isVarChar character = character == '_' || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
-
-  -- ── merge adjacent ConfigText parts (post-processing) ──
-  mergeTextParts = foldr step []
-   where
-    step (ConfigText a) (ConfigText b : xs) = ConfigText (a <> b) : xs
-    step part xs = part : xs
-
--- ── variable reference extraction ────────────────────────────────
-
-{- | extract a plain variable name from ${VAR}, $VAR, or just VAR
-n.b. rejects $(...) command substitutions and empty strings
--}
-extractSimpleVar :: Text -> Maybe Text
-extractSimpleVar text
-  | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
-      let name = T.dropEnd 1 (T.drop 2 text)
-       in if isValidName name then Just name else Nothing
-  | "$" `T.isPrefixOf` text
-      && not ("$(" `T.isPrefixOf` text)
-      && not ("${" `T.isPrefixOf` text) =
-      let name = T.drop 1 text
-       in if isValidName name then Just name else Nothing
-  | isValidName text =
-      Just text
-  | otherwise =
-      Nothing
- where
-  isValidName name =
-    not (T.null name)
-      && T.all isVarChar name
-      && not (isNumericLiteral name)
-      && not (isBoolLiteral name)
-  isVarChar character = character == '_' || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
-
--- | extract a variable reference that starts with $ (either $VAR or ${VAR})
-extractVarRef :: Text -> Maybe Text
-extractVarRef text
-  | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text = extractSimpleVar text
-  | "$" `T.isPrefixOf` text = extractSimpleVar text
-  | otherwise = Nothing
 
 -- ── config.* text fallback parser ────────────────────────────────
 
@@ -623,55 +412,3 @@ shellBuiltins =
   , "history"
   , "fc"
   ]
-
--- ── token → parameter expansion / literal ────────────────────────
-
--- | try to parse a token's text as a parameter expansion expression
-extractParamExpansion :: SA.Token -> Maybe ParamExpansion
-extractParamExpansion token =
-  parseParamExpansion (tokenToText token)
-
--- | try to extract a literal value from a token
-extractLiteral :: SA.Token -> Maybe Literal
-extractLiteral token =
-  let text = tokenToText token
-   in if T.null text then Nothing else Just (parseLiteral text)
-
--- ── token → text conversion ──────────────────────────────────────
-
--- | convert a ShellCheck token to its text representation
-tokenToText :: SA.Token -> Text
-tokenToText (SA.OuterToken _ inner) = innerToText inner
-
--- | convert a ShellCheck inner token to text, recursing into child tokens
-innerToText :: SA.InnerToken SA.Token -> Text
-innerToText (SA.Inner_T_Literal content) = T.pack content
-innerToText (SA.Inner_T_SingleQuoted content) = T.pack content
-innerToText (SA.Inner_T_Glob content) = T.pack content
-innerToText (SA.Inner_T_NormalWord parts) = T.concat (map tokenToText parts)
-innerToText (SA.Inner_T_DoubleQuoted parts) = T.concat (map tokenToText parts)
-innerToText (SA.Inner_T_DollarBraced _ token) = "${" <> tokenToText token <> "}"
-innerToText (SA.Inner_T_DollarSingleQuoted content) = T.pack content
-innerToText (SA.Inner_T_BraceExpansion parts) = T.concat (map tokenToText parts)
--- arithmetic-context tokens — used for array subscripts like `config[server]`
--- (the key parses as a TA_Variable inside a TA_Sequence). (REVIEW-3 #24)
-innerToText (SA.Inner_TA_Variable name _) = T.pack name
-innerToText (SA.Inner_TA_Sequence parts) = T.concat (map tokenToText parts)
-innerToText _ = ""
-
--- ── span construction ────────────────────────────────────────────
-
--- | look up a ShellCheck node's position in the position map and produce a Span
-mkSpan :: SA.Id -> Reader (Map SA.Id (Position, Position)) Span
-mkSpan shellCheckId = do
-  posMap <- ask
-  pure $ maybe noSpan toSpan (Map.lookup shellCheckId posMap)
- where
-  noSpan = Span (Loc 0 0) (Loc 0 0) Nothing
-  -- n.b. ShellCheck positions are 1-based (per the Interface module);
-  -- this matches megaparsec's positions so no adjustment is needed.
-  toSpan (start, end) =
-    Span
-      (Loc (fromIntegral $ posLine start) (fromIntegral $ posColumn start))
-      (Loc (fromIntegral $ posLine end) (fromIntegral $ posColumn end))
-      (Just (posFile start))

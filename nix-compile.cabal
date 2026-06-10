@@ -62,6 +62,8 @@ library
         NixCompile.Core.Config
         NixCompile.Core.Diagnostic
         NixCompile.Bash.Facts
+        NixCompile.Bash.Facts.Token
+        NixCompile.Bash.Facts.Value
         NixCompile.Bash.Parse
         NixCompile.Bash.Patterns
         NixCompile.Docs.Extract
