@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -50,10 +48,11 @@ cmdCheck config path = do
     else do
       exists <- liftIO $ doesFileExist path
       if not exists
-        then do $(logTM) ErrorS $ logStr $ T.pack path <> ": no such file or directory"; liftIO exitFailure
-        else case takeExtension path of
-          ".nix" -> checkNixFile config path
-          _ -> checkBashFile config path
+        then failSafety (T.pack path <> ": no such file or directory")
+        else
+          if takeExtension path == ".nix"
+            then checkNixFile config path
+            else checkBashFile config path
 
 {- | Run an analysis pass after enforcing the depth guard.
 n.b. every command except `check` flowed through 'inferExpr'/'buildExpr' with no
@@ -62,33 +61,28 @@ depth guard; this helper funnels them all through 'Safety.analyzeDepth' first.
 withSafeNix :: FilePath -> (NExprLoc -> AppM ()) -> AppM ()
 withSafeNix file act = do
   parseResult <- liftIO $ Nix.parseNixFile file
-  case parseResult of
-    Left err -> failSafety err
-    Right expr -> case Safety.analyzeDepth expr of
-      Left de -> failSafety (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
-      Right () -> act expr
+  either failSafety guardDepth parseResult
+ where
+  guardDepth expr = either depthFailed (const (act expr)) (Safety.analyzeDepth expr)
+  depthFailed de = failSafety (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
 
 cmdFmt :: FilePath -> AppM ()
 cmdFmt file = withSafeNix file $ \expr -> do
   srcResult <- liftIO $ safeReadFile file
-  case srcResult of
-    Left err -> do $(logTM) ErrorS $ logStr $ "I/O error: " <> err; liftIO exitFailure
-    Right src -> liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr
+  either
+    (\err -> failSafety ("I/O error: " <> err))
+    (\src -> liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr)
+    srcResult
 
 cmdInfer :: FilePath -> AppM ()
 cmdInfer file = withSafeNix file $ \_expr -> do
   result <- liftIO $ Annotate.annotateFile file
-  case result of
-    Left err -> do $(logTM) ErrorS $ logStr err; liftIO exitFailure
-    Right formatted -> liftIO $ TIO.putStr formatted
+  either failSafety (liftIO . TIO.putStr) result
 
 cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do
   result <- liftIO $ parseScriptFile file
-  case result of
-    Left err -> do $(logTM) ErrorS $ logStr err; liftIO exitFailure
-    Right script -> do
-      liftIO $ TIO.putStr $ emitConfigFunction (scriptSchema script)
+  either failSafety (liftIO . TIO.putStr . emitConfigFunction . scriptSchema) result
 
 cmdLSP :: AppM ()
 cmdLSP = liftIO LSP.run >> liftIO exitSuccess
@@ -108,14 +102,16 @@ cmdScopeDhall file = withSafeNix file $ \expr -> do
   let scopeGraph = Scope.fromNixFile file expr
   liftIO $ TIO.putStrLn $ Scope.toDhall scopeGraph
 
-{- | Report a failure from the safe-parse/depth gate and exit. The message is
-already categorized by 'Safety.renderSafetyError' (e.g. "parse error: …",
-"I/O error: …", "depth limit exceeded …"), so we emit it as-is — prefixing it
-with "Parse error:" mislabeled I/O and depth failures and double-printed
-"parse error:" for real parse failures.
+{- | The uniform CLI failure path: log a message at 'ErrorS' and exit non-zero.
+Messages are emitted as-is — callers pass already-categorized text (e.g.
+'Safety.renderSafetyError' yields "parse error: …" / "I/O error: …" / "depth
+limit exceeded …"), so no prefix is added here (a blanket "Parse error:" would
+mislabel I/O and depth failures and double-print for real parse failures).
 -}
 failSafety :: Text -> AppM a
-failSafety err = do $(logTM) ErrorS $ logStr err; liftIO exitFailure
+failSafety err = do
+  $(logTM) ErrorS $ logStr err
+  liftIO exitFailure
 
 printScopeGraph :: Scope.ScopeGraph -> IO ()
 printScopeGraph scopeGraph = do
@@ -160,11 +156,12 @@ printScopeGraph scopeGraph = do
 
     putStrLn ""
 
-  case Scope.resolveAll scopeGraph of
-    Left errors -> do
-      putStrLn $ "=== Unresolved References (" ++ show (length errors) ++ ") ==="
-      forM_ errors $ \case
-        Scope.Unresolved ref -> TIO.putStrLn $ "  " <> Scope.refName ref
-        Scope.Ambiguous ref _ -> TIO.putStrLn $ "  " <> Scope.refName ref <> " (ambiguous)"
-    Right resolved -> do
-      putStrLn $ "=== All " ++ show (length resolved) ++ " references resolved ==="
+  either reportUnresolved reportResolved (Scope.resolveAll scopeGraph)
+ where
+  reportUnresolved errors = do
+    putStrLn $ "=== Unresolved References (" ++ show (length errors) ++ ") ==="
+    forM_ errors printUnresolved
+  reportResolved resolved =
+    putStrLn $ "=== All " ++ show (length resolved) ++ " references resolved ==="
+  printUnresolved (Scope.Unresolved ref) = TIO.putStrLn $ "  " <> Scope.refName ref
+  printUnresolved (Scope.Ambiguous ref _) = TIO.putStrLn $ "  " <> Scope.refName ref <> " (ambiguous)"

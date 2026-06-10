@@ -128,35 +128,37 @@ runGraphPhase config flakePath = do
   $(logTM) DebugS $ logStr $ "  building module graph from " <> T.pack flakePath
   graphResult <- liftIO $ Mod.buildModuleGraphFromFlake conv (takeDirectory flakePath)
   $(logTM) DebugS $ logStr "  graph build complete"
-  case graphResult of
-    Left err -> do
-      $(logTM) ErrorS $ logStr $ "Graph error: " <> err
-      pure $ emptyCICounts{ciGraphFailures = 1}
-    Right graph ->
-      -- n.b. layout is enforced by runLayoutPhase (a tree walk rooted at the
-      -- project dir, so relative paths and orphan files are handled correctly);
-      -- the graph phase covers only the import-reachable lint findings.
-      let lintCount = sum (map (length . Mod.lfViolations) (Mod.mgLintFailures graph))
-       in if lintCount > 0 || not (null (Mod.mgFailures graph))
-            then do
-              -- n.b. the per-file type-check phase already prints the
-              -- detailed lint violations for every on-disk file, so the
-              -- graph phase only emits the aggregate count line here —
-              -- re-dumping each violation double-printed everything the
-              -- flake graph shares with the type-check walk.
-              $(logTM) ErrorS $
-                logStr $
-                  "\nGraph violations: "
-                    <> T.pack (show lintCount)
-                    <> " lint across "
-                    <> T.pack (show (length (Mod.mgLintFailures graph)))
-                    <> " files"
-              pure $
-                emptyCICounts
-                  { ciLintViolations = lintCount
-                  , ciGraphFailures = length (Mod.mgFailures graph)
-                  }
-            else pure emptyCICounts
+  either onGraphError onGraph graphResult
+ where
+  onGraphError err = do
+    $(logTM) ErrorS $ logStr $ "Graph error: " <> err
+    pure $ emptyCICounts{ciGraphFailures = 1}
+
+  -- n.b. layout is enforced by runLayoutPhase (a tree walk rooted at the project
+  -- dir, so relative paths and orphan files are handled correctly); the graph
+  -- phase covers only the import-reachable lint findings.
+  onGraph graph =
+    let lintCount = sum (map (length . Mod.lfViolations) (Mod.mgLintFailures graph))
+     in if lintCount > 0 || not (null (Mod.mgFailures graph))
+          then do
+            -- n.b. the per-file type-check phase already prints the detailed
+            -- lint violations for every on-disk file, so the graph phase only
+            -- emits the aggregate count line here — re-dumping each violation
+            -- double-printed everything the flake graph shares with the
+            -- type-check walk.
+            $(logTM) ErrorS $
+              logStr $
+                "\nGraph violations: "
+                  <> T.pack (show lintCount)
+                  <> " lint across "
+                  <> T.pack (show (length (Mod.mgLintFailures graph)))
+                  <> " files"
+            pure $
+              emptyCICounts
+                { ciLintViolations = lintCount
+                , ciGraphFailures = length (Mod.mgFailures graph)
+                }
+          else pure emptyCICounts
 
 runNixPhase :: Config.Config -> FilePath -> AppM CICounts
 runNixPhase config flakePath = do
@@ -199,14 +201,14 @@ runLayoutPhase config dir = do
 checkFileLayout :: Layout.Convention -> FilePath -> FilePath -> AppM Int
 checkFileLayout conv root path = do
   parsed <- liftIO $ Safety.safeParseNixFile path
-  case parsed of
-    -- parse failures are already surfaced by the type-check phase; don't
-    -- double-report them here.
-    Left _ -> pure 0
-    Right expr -> do
-      let errs = Layout.validateFileFromExpr conv root path expr
-      mapM_ (emitDiagnostic . layoutDiagnostic) errs
-      pure (length errs)
+  -- parse failures are already surfaced by the type-check phase; don't
+  -- double-report them here (Left -> 0).
+  either (const (pure 0)) onParsed parsed
+ where
+  onParsed expr = do
+    let errs = Layout.validateFileFromExpr conv root path expr
+    mapM_ (emitDiagnostic . layoutDiagnostic) errs
+    pure (length errs)
 
 {- | A 'Layout.LayoutError' as a unified clippy 'Diagnostic'. Layout findings are
 file-level (placement/shape), so they carry the file path but no caret span.

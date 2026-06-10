@@ -29,15 +29,19 @@ more list entries, each a pure function over the parsed module.
 -}
 module Main (main) where
 
+import Data.Either (lefts, rights)
 import Data.Generics (listify)
 import Data.List (intercalate, isInfixOf, sortOn)
+import Data.Maybe (listToMaybe)
+import GHC.Data.Bag (bagToList)
 import GHC.Driver.Session (DynFlags, Language (GHC2021), defaultDynFlags, languageExtensions, xopt_set)
 import GHC.Hs (GhcPs, HsModule)
 import GHC.Hs.Expr (HsExpr (HsCase, HsLam), HsLamVariant (LamSingle), LHsExpr)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import GHC.LanguageExtensions (Extension (..))
 import GHC.Parser.Annotation (getLocA)
-import GHC.Parser.Lexer (ParseResult (PFailed, POk))
+import GHC.Parser.Lexer (PState, ParseResult (PFailed, POk), getPsErrorMessages)
+import GHC.Types.Error (errMsgSpan, getMessages)
 import GHC.Types.SrcLoc (
   Located,
   SrcSpan (RealSrcSpan),
@@ -126,7 +130,16 @@ parseModuleText :: FilePath -> String -> Either String (Located (HsModule GhcPs)
 parseModuleText path source = result (parseFile path baseDynFlags source)
  where
   result (POk _ modul) = Right modul
-  result (PFailed _) = Left "parse failed"
+  result (PFailed pst) = Left ("parse failed at " <> renderParseErrorLoc pst)
+
+-- | the location of the first parse error in a failed 'PState', as @line:col@.
+renderParseErrorLoc :: PState -> String
+renderParseErrorLoc pst =
+  maybe "unknown location" renderSpan (firstErrorSpan (getPsErrorMessages pst))
+ where
+  firstErrorSpan msgs = fmap errMsgSpan (listToMaybe (bagToList (getMessages msgs)))
+  renderSpan (RealSrcSpan s _) = show (srcSpanStartLine s) <> ":" <> show (srcSpanStartCol s)
+  renderSpan _ = "unknown location"
 
 baseDynFlags :: DynFlags
 baseDynFlags = foldl' xopt_set (defaultDynFlags fakeSettings) enabledExtensions
@@ -167,27 +180,49 @@ main = do
   args <- getArgs
   let strict = "--strict" `elem` args
       files = filter (not . isFlag) args
-  findings <- concat <$> traverse (lintFile rules) files
+  results <- traverse (lintFile rules) files
+  let unparsed = lefts results
+      findings = concat (rights results)
   mapM_ (putStrLn . renderFinding) (sortOn findingKey findings)
-  reportSummary (length files) findings
-  finish strict findings
+  reportSummary (length files) unparsed findings
+  finish strict unparsed findings
  where
   isFlag argument = take 2 argument == "--"
 
-{- | Lint one file: parse it, run every rule, collect findings. A parse failure
-is reported to stderr and the file skipped (it cannot regress the gate, but we
-never want a silent miss).
+{- | Lint one file: parse it, run every rule, collect findings, or report it as
+unparsed. A parse failure is NOT a silent skip: under @--strict@ it fails the
+gate ('finish'), because a file straylint cannot read is a file the case-ban is
+not enforced on. The source is splice-neutralised first ('neutralizeSplices') so
+TH does not trip the parser.
 -}
-lintFile :: [Rule] -> FilePath -> IO [Finding]
+lintFile :: [Rule] -> FilePath -> IO (Either FilePath [Finding])
 lintFile activeRules path = do
   source <- readFile path
-  runRules (parseModuleText path source) source
+  either (onUnparsed source) (onParsed source) (parseModuleText path (neutralizeSplices source))
  where
-  runRules (Left err) _ = do
-    hPutStrLn stderr ("straylint: " <> path <> ": " <> err <> " (skipped)")
-    pure []
-  runRules (Right modul) source =
-    pure (concatMap (\rule -> ruleCheck rule path (lines source) modul) activeRules)
+  onUnparsed _ err = do
+    hPutStrLn stderr ("straylint: " <> path <> ": " <> err)
+    pure (Left path)
+  onParsed source modul =
+    pure (Right (concatMap (\rule -> ruleCheck rule path (lines source) modul) activeRules))
+
+{- | Neutralise Template Haskell expression splices so the parser never trips on
+them. straylint is a purely syntactic case/lambda check; it neither runs nor
+typechecks splices, so rewriting @$(e)@ to @ (e)@ (dollar → space) is
+information-preserving for our rules. We rewrite @$(@ to @( @ — open-paren in the
+@$@'s column, space in the @(@'s — which is both COLUMN-preserving (one char for
+one, so a reported line:col still indexes the original source) and, crucially,
+LAYOUT-preserving: a splice that begins a do-statement keeps a non-space token in
+its original column, so it is not re-read as a continuation of the previous line.
+@$(e)@ becomes @( e)@, an ordinary parenthesised expression. This sidesteps a
+ghc-lib-parser 9.12 lexer gap on @$ $(…)@ that the real compiler (GHC 9.10)
+accepts. Safe because the tree has no top-level declaration splices or
+quasi-quotes; were that to change this would need revisiting.
+-}
+neutralizeSplices :: String -> String
+neutralizeSplices [] = []
+neutralizeSplices ('$' : '(' : rest) = '(' : ' ' : neutralizeSplices rest
+neutralizeSplices (c : rest) = c : neutralizeSplices rest
 
 renderFinding :: Finding -> String
 renderFinding finding =
@@ -204,26 +239,29 @@ renderFinding finding =
 findingKey :: Finding -> (FilePath, Int, Int)
 findingKey finding = (findingPath finding, findingLine finding, findingCol finding)
 
-reportSummary :: Int -> [Finding] -> IO ()
-reportSummary fileCount findings =
+reportSummary :: Int -> [FilePath] -> [Finding] -> IO ()
+reportSummary fileCount unparsed findings =
   hPutStrLn
     stderr
     ( "straylint: "
         <> show (length findings)
-        <> " finding(s) across "
+        <> " finding(s), "
+        <> show (length unparsed)
+        <> " unparsed, across "
         <> show fileCount
         <> " file(s)  [rules: "
         <> intercalate ", " (map ruleName rules)
         <> "]"
     )
 
-{- | Exit. Clean tree always succeeds; with @--strict@ any finding fails the run;
-otherwise straylint is informational and exits 0.
+{- | Exit. Without @--strict@ straylint is informational and always exits 0. With
+@--strict@ (the gate) it fails on any finding OR any unparsed file — an unparsed
+file is a hole in the case-ban, not a free pass, so it must turn the gate red.
 -}
-finish :: Bool -> [Finding] -> IO ()
-finish _ [] = exitSuccess
-finish True _ = exitFailure
-finish False _ = exitSuccess
+finish :: Bool -> [FilePath] -> [Finding] -> IO ()
+finish False _ _ = exitSuccess
+finish True [] [] = exitSuccess
+finish True _ _ = exitFailure
 
 -- | Safe list indexing (no partial @!!@).
 at :: [a] -> Int -> Maybe a
