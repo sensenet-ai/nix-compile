@@ -25,7 +25,15 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Docs.Types
-import NixCompile.Layout.Scope (Declaration (..), Scope (..), ScopeGraph (..), ScopeId, ScopeKind (..), SourcePos (..), SourceSpan (..))
+import NixCompile.Layout.Scope (
+  Declaration (..),
+  Scope (..),
+  ScopeGraph (..),
+  ScopeId,
+  ScopeKind (..),
+  SourcePos (..),
+  SourceSpan (..),
+ )
 import NixCompile.Layout.Scope qualified as Scope
 
 extractDocs :: ScopeGraph -> Text -> [DocItem]

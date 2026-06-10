@@ -43,10 +43,16 @@ Reject these prefix conflicts instead of silently dropping one side.
 -}
 validateConfigPaths :: [Fact] -> Either Text ()
 validateConfigPaths facts =
-  maybe (Right ()) conflict (listToMaybe [(a, b) | (a : rest) <- tails paths, b <- rest, conflicts a b])
+  maybe
+    (Right ())
+    conflict
+    (listToMaybe [(a, b) | (a : rest) <- tails paths, b <- rest, conflicts a b])
  where
   conflict (a, b) = Left $ "conflicting config paths: " <> pathText a <> " and " <> pathText b
-  paths = [p | ConfigAssign p _ _ _ <- facts] ++ [p | ConfigLit p _ _ <- facts] ++ [p | ConfigTemplate p _ _ _ <- facts]
+  paths =
+    [p | ConfigAssign p _ _ _ <- facts]
+      ++ [p | ConfigLit p _ _ <- facts]
+      ++ [p | ConfigTemplate p _ _ _ <- facts]
 
   conflicts a b = a /= b && (a `isPrefixOfPath` b || b `isPrefixOfPath` a)
 
@@ -109,7 +115,11 @@ buildConfigSchema :: [Fact] -> Subst -> Map ConfigPath ConfigSpec
 buildConfigSchema facts subst = Map.fromListWith mergeConfigSpec (concatMap factToConfigSpec facts)
  where
   factToConfigSpec (ConfigAssign path variable quoted sourceSpan) =
-    [(path, ConfigSpec (resolveType subst variable) (Just variable) (Just quoted) Nothing Nothing sourceSpan)]
+    [
+      ( path
+      , ConfigSpec (resolveType subst variable) (Just variable) (Just quoted) Nothing Nothing sourceSpan
+      )
+    ]
   factToConfigSpec (ConfigLit path literal sourceSpan) =
     [(path, ConfigSpec (literalType literal) Nothing Nothing (Just literal) Nothing sourceSpan)]
   factToConfigSpec (ConfigTemplate path parts quoted sourceSpan) =

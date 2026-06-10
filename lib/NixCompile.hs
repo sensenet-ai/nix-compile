@@ -81,7 +81,10 @@ When parsing from a file, we propagate the file path into 'Span's
 parseScriptFile :: FilePath -> IO (Either Text Script)
 parseScriptFile path = do
   result <- try (TIO.readFile path)
-  either (\(e :: IOException) -> return $ Left $ T.pack $ show e) (return . parseScriptWithFile (Just path)) result
+  either
+    (\(e :: IOException) -> return $ Left $ T.pack $ show e)
+    (return . parseScriptWithFile (Just path))
+    result
 
 -- | Internal worker that allows attaching a file path to spans.
 parseScriptWithFile :: Maybe FilePath -> Text -> Either Text Script

@@ -231,7 +231,9 @@ inlayHintsForExpr env expr range = either (const []) withBindings (inferExprWith
         Nothing
     | Infer.Binding name bindType sp <- bindings
     , not (T.null name)
-    , cursorInRange (Position (fromIntegral (locLine (spanEnd sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1))) range
+    , cursorInRange
+        (Position (fromIntegral (locLine (spanEnd sp) - 1)) (fromIntegral (locCol (spanEnd sp) + 1)))
+        range
     ]
 
 cursorInRange :: Position -> Range -> Bool

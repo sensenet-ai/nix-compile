@@ -329,7 +329,12 @@ runOracle = do
       nIncomplete = length [() | Incomplete _ <- verdicts]
       nNoEval = length [() | TypedNoEval _ <- verdicts]
   putStrLn ""
-  putStrLn (maybe "ground truth: frozen golden (no nix on PATH)" (const "ground truth: frozen golden + live nix drift-check") mNix)
+  putStrLn
+    ( maybe
+        "ground truth: frozen golden (no nix on PATH)"
+        (const "ground truth: frozen golden + live nix drift-check")
+        mNix
+    )
   putStrLn $
     "agree="
       ++ show nAgree
@@ -345,7 +350,8 @@ runOracle = do
       ++ show (length drift)
   putStrLn "note: 'incomplete' = conservative rejection (RC1/RC2 gap), not a failure."
   unless (null drift) $ do
-    putStrLn "oracle: golden DRIFT — frozen kinds disagree with live nix (refresh with -- --dump-golden):"
+    putStrLn
+      "oracle: golden DRIFT — frozen kinds disagree with live nix (refresh with -- --dump-golden):"
     mapM_ (putStrLn . ("  " ++)) drift
   if null failures && null drift
     then putStrLn "oracle: OK (no soundness mismatches)" >> exitSuccess

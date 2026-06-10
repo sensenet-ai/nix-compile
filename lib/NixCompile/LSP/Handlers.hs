@@ -196,7 +196,8 @@ hoverHandler req responder = do
   withVf uri pos vf = maybe (hover parseErr) (withExpr uri pos) (lspSafeParse (virtualFileText vf))
   withExpr uri (Position l c) expr = do
     env <- liftIO $ buildCrossEnv uri
-    hover (maybe noExpr (contents env expr l c) (inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c)))
+    hover
+      (maybe noExpr (contents env expr l c) (inferExprAtWithEnv env expr (fromIntegral l) (fromIntegral c)))
   noExpr = MarkupContent MarkupKind_Markdown "`no expression at cursor`"
   contents env expr l c t =
     MarkupContent MarkupKind_Markdown ("`: " <> t <> "`" <> optInfo)
@@ -343,7 +344,10 @@ signatureHelpHandler req responder = do
   nullResp = responder $ Right $ InR Null
   withExpr uri (Position l c) expr = do
     env <- liftIO $ buildCrossEnv uri
-    maybe nullResp (responder . Right . InL) (signatureAtCursor env expr (fromIntegral l) (fromIntegral c))
+    maybe
+      nullResp
+      (responder . Right . InL)
+      (signatureAtCursor env expr (fromIntegral l) (fromIntegral c))
 
 -- ═══════════════════════ code actions ═══════════════════════
 

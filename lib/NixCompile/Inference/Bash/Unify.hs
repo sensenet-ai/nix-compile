@@ -89,7 +89,8 @@ solve constraints = do
   tvarsOf _ = []
 
   -- union-find over variables linked by var~var constraints
-  uf = foldl' link (Map.fromList [(v, v) | v <- allTypeVars]) [(a, b) | (TVar a :~: TVar b) <- constraints]
+  uf =
+    foldl' link (Map.fromList [(v, v) | v <- allTypeVars]) [(a, b) | (TVar a :~: TVar b) <- constraints]
   link m (a, b) =
     let ra = findIn m a
         rb = findIn m b
@@ -108,7 +109,10 @@ solve constraints = do
   addConcrete groupRep t acc = maybe (Right (Map.insert groupRep t acc)) joinExisting (Map.lookup groupRep acc)
    where
     joinExisting current =
-      maybe (Left (Mismatch current t emptySpan)) (\joined -> Right (Map.insert groupRep joined acc)) (joinTypes current t)
+      maybe
+        (Left (Mismatch current t emptySpan))
+        (\joined -> Right (Map.insert groupRep joined acc))
+        (joinTypes current t)
 
   -- least upper bound in the numeric lattice (Nothing if incompatible)
   joinTypes a b

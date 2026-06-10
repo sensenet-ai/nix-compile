@@ -81,7 +81,8 @@ genMutualSCC n =
 -- | Occurs check: TVar 0 ~ TFun (TVar 0) (TVar 0) must be rejected.
 prop_nix_occurs_check :: Bool
 prop_nix_occurs_check =
-  case Infer.runInfer (Infer.unify (NT.TVar (NT.TypeVar 0)) (NT.TFun (NT.TVar (NT.TypeVar 0)) (NT.TVar (NT.TypeVar 0)))) of
+  case Infer.runInfer
+    (Infer.unify (NT.TVar (NT.TypeVar 0)) (NT.TFun (NT.TVar (NT.TypeVar 0)) (NT.TVar (NT.TypeVar 0)))) of
     Left err -> "infinite type" `T.isInfixOf` err
     Right _ -> False
 
@@ -136,7 +137,10 @@ prop_nix_many_fresh_vars =
       run $
         try @SomeException $
           evaluate $
-            let manyVars = T.intercalate "\n" ["a" <> T.pack (show i) <> " = " <> T.pack (show i) <> ";" | i <- [1 .. 300 :: Int]]
+            let manyVars =
+                  T.intercalate
+                    "\n"
+                    ["a" <> T.pack (show i) <> " = " <> T.pack (show i) <> ";" | i <- [1 .. 300 :: Int]]
                 expr = "{ " <> manyVars <> " }"
              in case parseNixTextLoc expr of
                   Left _ -> ()
@@ -410,8 +414,12 @@ prop_nix_tvar_supply_monotonic :: Bool
 prop_nix_tvar_supply_monotonic =
   let src1 = "x: y: z: x"
       src2 = "a: b: c: d: e: a"
-      r1 = case parseNixTextLoc src1 of Left _ -> Nothing; Right e -> case Infer.inferExpr e of Left _ -> Nothing; Right (t, _) -> Just t
-      r2 = case parseNixTextLoc src2 of Left _ -> Nothing; Right e -> case Infer.inferExpr e of Left _ -> Nothing; Right (t, _) -> Just t
+      r1 = case parseNixTextLoc src1 of
+        Left _ -> Nothing
+        Right e -> case Infer.inferExpr e of Left _ -> Nothing; Right (t, _) -> Just t
+      r2 = case parseNixTextLoc src2 of
+        Left _ -> Nothing
+        Right e -> case Infer.inferExpr e of Left _ -> Nothing; Right (t, _) -> Just t
    in isJust r1 && isJust r2
 
 -- ============================================================================

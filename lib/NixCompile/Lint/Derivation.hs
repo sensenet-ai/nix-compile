@@ -75,7 +75,9 @@ findDerivViolations = traverseDerivExpr
 
 traverseDerivExpr :: FilePath -> NExprLoc -> [DerivViolation]
 traverseDerivExpr filePath (LayerAnn srcSpan (NApp func arg)) =
-  checkDerivCall filePath srcSpan func arg ++ traverseDerivExpr filePath func ++ traverseDerivExpr filePath arg
+  checkDerivCall filePath srcSpan func arg
+    ++ traverseDerivExpr filePath func
+    ++ traverseDerivExpr filePath arg
 traverseDerivExpr filePath (Layer (NSet _ bindings)) = concatMap (traverseDerivBinding filePath) bindings
 traverseDerivExpr filePath (Layer (NLet bindings body)) = concatMap (traverseDerivBinding filePath) bindings ++ traverseDerivExpr filePath body
 traverseDerivExpr filePath (Layer (NList xs)) = concatMap (traverseDerivExpr filePath) xs

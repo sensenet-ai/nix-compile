@@ -195,7 +195,12 @@ validConfigPath parts =
   not (null parts) && all (\part -> not (T.null part) && T.all isSafeConfigChar part) parts
 
 isSafeConfigChar :: Char -> Bool
-isSafeConfigChar character = character == '_' || character == '-' || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
+isSafeConfigChar character =
+  character == '_'
+    || character == '-'
+    || (character >= 'A' && character <= 'Z')
+    || (character >= 'a' && character <= 'z')
+    || (character >= '0' && character <= '9')
 
 -- ── value side parser ────────────────────────────────────────────
 
@@ -293,7 +298,8 @@ isNumericLiteral text =
  where
   isDigitOrSign character = isDigit character || character == '-'
   validMinus sourceText
-    | Just ('-', remaining) <- T.uncons sourceText = not (T.null remaining) && not (T.any (== '-') remaining)
+    | Just ('-', remaining) <- T.uncons sourceText =
+        not (T.null remaining) && not (T.any (== '-') remaining)
     | otherwise = not (T.any (== '-') sourceText)
   validLength sourceText = T.length (T.dropWhile (== '-') sourceText) <= 19
   fitsInt64 sourceText =

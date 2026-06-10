@@ -97,32 +97,44 @@ partitionViolations config = foldr go ([], [])
     | Config.isSuppressed config (Config.bashRuleId (vType v)) = (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
-partitionNixViolations :: Config.Config -> [Lint.NixViolation] -> ([Lint.NixViolation], [Lint.NixViolation])
+partitionNixViolations ::
+  Config.Config -> [Lint.NixViolation] -> ([Lint.NixViolation], [Lint.NixViolation])
 partitionNixViolations config = foldr go ([], [])
  where
   go v (suppressed, active)
     | Config.isSuppressed config (Config.nixRuleId (Lint.nvType v)) = (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
-partitionDerivViolations :: Config.Config -> [Derivation.DerivViolation] -> ([Derivation.DerivViolation], [Derivation.DerivViolation])
+partitionDerivViolations ::
+  Config.Config ->
+  [Derivation.DerivViolation] ->
+  ([Derivation.DerivViolation], [Derivation.DerivViolation])
 partitionDerivViolations config = foldr go ([], [])
  where
   go v (suppressed, active)
     | Config.isSuppressed config (Config.derivRuleId (Derivation.dvType v)) = (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
-partitionPackageViolations :: Config.Config -> [LintPackages.PackageViolation] -> ([LintPackages.PackageViolation], [LintPackages.PackageViolation])
+partitionPackageViolations ::
+  Config.Config ->
+  [LintPackages.PackageViolation] ->
+  ([LintPackages.PackageViolation], [LintPackages.PackageViolation])
 partitionPackageViolations config = foldr go ([], [])
  where
   go v (suppressed, active)
-    | Config.isSuppressed config (Config.packageRuleId (LintPackages.pvCode v)) = (v : suppressed, active)
+    | Config.isSuppressed config (Config.packageRuleId (LintPackages.pvCode v)) =
+        (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
-partitionPatternViolations :: Config.Config -> [LintPatterns.PatternViolation] -> ([LintPatterns.PatternViolation], [LintPatterns.PatternViolation])
+partitionPatternViolations ::
+  Config.Config ->
+  [LintPatterns.PatternViolation] ->
+  ([LintPatterns.PatternViolation], [LintPatterns.PatternViolation])
 partitionPatternViolations config = foldr go ([], [])
  where
   go v (suppressed, active)
-    | Config.isSuppressed config (Config.patternRuleId (LintPatterns.pvType v)) = (v : suppressed, active)
+    | Config.isSuppressed config (Config.patternRuleId (LintPatterns.pvType v)) =
+        (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
 formatBareCommand :: Text -> (Text, Span) -> Text

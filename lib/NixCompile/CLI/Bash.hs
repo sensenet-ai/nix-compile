@@ -91,7 +91,10 @@ parseNixFiles file = do
   either (const (pure [])) onScripts result
  where
   onScripts scripts = do
-    $(logTM) DebugS $ logStr $ T.pack $ "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
+    $(logTM) DebugS $
+      logStr $
+        T.pack $
+          "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
     pure scripts
 
 analyzeNixScripts :: Config.Config -> FilePath -> [Nix.BashScript] -> AppM Int
@@ -133,9 +136,11 @@ checkScript configuration _file bs = do
             <> T.concat ["    ${" <> Nix.intExpr i <> "}\n" | i <- badInterps]
 
     let facts = extractFacts ast :: [Fact]
-    configErrors <- either (countedError "  Config error: ") (const (pure 0)) (validateConfigPaths facts)
+    configErrors <-
+      either (countedError "  Config error: ") (const (pure 0)) (validateConfigPaths facts)
     let constraints = factsToConstraints facts
-    typeErrors <- either (countedError "  Type error: " . T.pack . show) (const (pure 0)) (solve constraints)
+    typeErrors <-
+      either (countedError "  Type error: " . T.pack . show) (const (pure 0)) (solve constraints)
 
     let bareFacts = [(cmd, sourceSpan) | BareCommand cmd sourceSpan <- facts]
     let dynFacts = [(var, sourceSpan) | DynamicCommand var sourceSpan <- facts]

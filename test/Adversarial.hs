@@ -50,7 +50,12 @@ import NixCompile.Inference.Bash.Unify (solve, unify)
 import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.Lint.Derivation qualified as DerivLint
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
-import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations, formatNixViolations)
+import NixCompile.Lint.Nix (
+  NixViolation (..),
+  ViolationType (..),
+  findNixViolations,
+  formatNixViolations,
+ )
 import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
 import System.Timeout (timeout)

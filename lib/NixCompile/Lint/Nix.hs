@@ -136,8 +136,10 @@ checkBannedAppCall srcSpan f = maybe [] banned (leafSym f)
     | name == "substituteAll" = [nixViolation VSubstituteAll srcSpan "substituteAll ..."]
     | name == "mkDerivation" = [nixViolation VRawMkDerivation srcSpan "mkDerivation { ... }"]
     | name == "runCommand" = [nixViolation VRawRunCommand srcSpan "runCommand ..."]
-    | name == "writeShellApplication" = [nixViolation VRawWriteShellApplication srcSpan "writeShellApplication { ... }"]
-    | name == "writeShellScript" || name == "writeShellScriptBin" = [nixViolation VWriteShellScript srcSpan (name <> " ...")]
+    | name == "writeShellApplication" =
+        [nixViolation VRawWriteShellApplication srcSpan "writeShellApplication { ... }"]
+    | name == "writeShellScript" || name == "writeShellScriptBin" =
+        [nixViolation VWriteShellScript srcSpan (name <> " ...")]
     | otherwise = []
 
 -- ── inline string length ───────────────────────────────────────────

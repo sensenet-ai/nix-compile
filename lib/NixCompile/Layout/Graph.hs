@@ -178,9 +178,13 @@ n.b. fixed from review-2:
   * still produces a partial graph on depth-overflow (records as ParseFailure) so
     subsequent files still get processed.
 -}
-processParsedFile :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
+processParsedFile ::
+  Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
 processParsedFile conv path visited state expr =
-  either onDepthExceeded (const (processParsedFile' conv path visited state expr)) (Safety.analyzeDepth expr)
+  either
+    onDepthExceeded
+    (const (processParsedFile' conv path visited state expr))
+    (Safety.analyzeDepth expr)
  where
   onDepthExceeded de =
     pure $
@@ -189,7 +193,8 @@ processParsedFile conv path visited state expr =
             ParseFailure path (Safety.renderSafetyError (Safety.SafetyDepthExceeded de)) : bsFailures state
         }
 
-processParsedFile' :: Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
+processParsedFile' ::
+  Convention -> FilePath -> Set FilePath -> BuildState -> NExprLoc -> IO BuildState
 processParsedFile' conv path visited state expr = do
   let rootDir = takeDirectory path
   let imports = findImports rootDir expr
@@ -294,7 +299,10 @@ inferModuleTypes mg = do
           (mgModules mg)
   pure mg{mgModuleTypes = finalTypes, mgModules = updatedModules}
  where
-  inferOneModule :: (Map FilePath NixType, Map FilePath [FilePath]) -> FilePath -> IO (Map FilePath NixType, Map FilePath [FilePath])
+  inferOneModule ::
+    (Map FilePath NixType, Map FilePath [FilePath]) ->
+    FilePath ->
+    IO (Map FilePath NixType, Map FilePath [FilePath])
   inferOneModule (types, pendingDeps) path = do
     let imports = maybe [] modImports (Map.lookup path (mgModules mg))
     -- insert types for both raw import paths (as written in the code) and resolved paths

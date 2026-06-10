@@ -96,7 +96,8 @@ findProjectRoot uri = maybe (pure Nothing) fromPath (uriToFilePath uri)
     hasConfig <- doesFileExist configPath
     if hasFlake || hasConfig
       then pure (Just dir)
-      else let parent = takeDirectory dir in if parent == dir then pure Nothing else findRoot parent (n - 1)
+      else
+        let parent = takeDirectory dir in if parent == dir then pure Nothing else findRoot parent (n - 1)
 
 {- | Build a TypeEnv enriched with cross-module type information.
 
@@ -208,7 +209,10 @@ startBuild root = do
       -- Catch every exception: hnix parser stack overflow, IO errors,
       -- whatever buildModuleGraph might throw beyond its Either return.
       outcome <- try (Mod.buildModuleGraph straylight flakePath)
-      either (const (pure Nothing)) (either (const (pure Nothing)) cacheIt) (outcome :: Either SomeException (Either Text Mod.ModuleGraph))
+      either
+        (const (pure Nothing))
+        (either (const (pure Nothing)) cacheIt)
+        (outcome :: Either SomeException (Either Text Mod.ModuleGraph))
  where
   cacheIt mg = do
     modifyMVar moduleGraphCache (\m -> pure (Map.insert root mg m, ()))

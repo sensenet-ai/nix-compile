@@ -111,7 +111,10 @@ inferExprAtWithEnv env expr l c = do
    where
     namedType (Infer.Binding _ t _sp) = Just (NT.prettyType t)
   inferTarget' te =
-    either (const (Just "TYPE_ERROR")) (\(t, _) -> Just (NT.prettyType t)) (inferExprWithEnv builtinEnv te)
+    either
+      (const (Just "TYPE_ERROR"))
+      (\(t, _) -> Just (NT.prettyType t))
+      (inferExprWithEnv builtinEnv te)
 
 exprName :: NExprLoc -> Maybe Text
 exprName (Layer (NSym name)) = Just $ varNameText name

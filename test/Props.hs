@@ -37,7 +37,12 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
-import Language.LSP.Protocol.Types (Diagnostic (..), DiagnosticSeverity (..), Position (..), Range (..))
+import Language.LSP.Protocol.Types (
+  Diagnostic (..),
+  DiagnosticSeverity (..),
+  Position (..),
+  Range (..),
+ )
 import Nix.Expr.Types qualified as NixE
 import Nix.Expr.Types.Annotated (SrcSpan (..), nullSpan, stripAnnotation)
 import Nix.Parser (parseNixTextLoc)
@@ -49,13 +54,33 @@ import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Bash.Patterns
 import NixCompile.CLI.Bash (safeReadFile)
 import NixCompile.CLI.Check (checkWithViolations, detectUnsupportedConstruct, formatTypeError)
-import NixCompile.CLI.Report (formatBareCommand, formatDynamicCommand, formatPackageViolations, indentBlock, partitionViolations)
-import NixCompile.CLI.Types (CICounts (..), TCResult (..), crossMarker, emptyCICounts, okMarker, unsupMarker)
+import NixCompile.CLI.Report (
+  formatBareCommand,
+  formatDynamicCommand,
+  formatPackageViolations,
+  indentBlock,
+  partitionViolations,
+ )
+import NixCompile.CLI.Types (
+  CICounts (..),
+  TCResult (..),
+  crossMarker,
+  emptyCICounts,
+  okMarker,
+  unsupMarker,
+ )
 import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Core.Diagnostic qualified as Diag
 import NixCompile.Core.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Core.Safety qualified as Safety
-import NixCompile.Emit.Config (ConfigTree (..), buildConfigTree, emitConfigFunction, emitConfigJson, emitConfigToml, emitConfigYaml)
+import NixCompile.Emit.Config (
+  ConfigTree (..),
+  buildConfigTree,
+  emitConfigFunction,
+  emitConfigJson,
+  emitConfigToml,
+  emitConfigYaml,
+ )
 import NixCompile.Inference.Bash.Constraint (factToConstraints, factsToConstraints)
 import NixCompile.Inference.Bash.Schema (buildSchema)
 import NixCompile.Inference.Bash.Unify (solve, unify)
@@ -441,7 +466,11 @@ genMinimalFileGraph :: Text -> Int -> Scope.ScopeGraph
 genMinimalFileGraph name offset =
   let root = Scope.ScopeId offset
       scope = Scope.Scope root [genScopeDecl name root] [] [] Scope.FileScope
-   in genScope0{Scope.sgScopes = Map.singleton root scope, Scope.sgNextId = offset + 1, Scope.sgRoot = root}
+   in genScope0
+        { Scope.sgScopes = Map.singleton root scope
+        , Scope.sgNextId = offset + 1
+        , Scope.sgRoot = root
+        }
 
 -- ============================================================================
 -- Properties: Unification
@@ -1385,7 +1414,11 @@ reformatPreservesMeaning src = case parseNixTextLoc src of
               (property False)
           Right ast1 ->
             counterexample
-              ("AST changed under reformat.\n--- in ---\n" <> T.unpack src <> "\n--- out ---\n" <> T.unpack formatted)
+              ( "AST changed under reformat.\n--- in ---\n"
+                  <> T.unpack src
+                  <> "\n--- out ---\n"
+                  <> T.unpack formatted
+              )
               (zeroExprPos (stripAnnotation ast0) === zeroExprPos (stripAnnotation ast1))
 
 -- #16: the reformatter (`Nix.Formatter.formatNixFile`, now a nixfmt-RFC parity
@@ -1575,7 +1608,8 @@ prop_lib_mkmerge_polymorphic =
 -- "infinite type". This is the exact shape of our own flake.nix outputs.
 prop_module_flake_selfref_ok :: Bool
 prop_module_flake_selfref_ok =
-  isRight (parseAndInferModule "{ flake-parts, ... }@inputs: flake-parts.lib.mkFlake { inherit inputs; } { }")
+  isRight
+    (parseAndInferModule "{ flake-parts, ... }@inputs: flake-parts.lib.mkFlake { inherit inputs; } { }")
 
 -- Module mode only relaxes WELL-KNOWN external params; a self-reference through
 -- a non-external @-name is genuine infinite data and still errors.
@@ -1851,7 +1885,8 @@ prop_naming_roundtrip_snake =
 -- | straylight convention validates _class = "flake" in modules/flake/
 prop_layout_straylight_valid :: Bool
 prop_layout_straylight_valid =
-  let violations = LC.validateLayout LC.straylight "/" [("nix/modules/flake/broker.nix", Detection FlakeModule 100 [])]
+  let violations =
+        LC.validateLayout LC.straylight "/" [("nix/modules/flake/broker.nix", Detection FlakeModule 100 [])]
    in null violations
 
 -- | straylight convention rejects _class = "flake" in modules/nixos/
@@ -1869,7 +1904,11 @@ prop_layout_flakeparts_valid =
 -- | nixpkgsByName convention validates packages in pkgs/by-name/
 prop_layout_nixpkgs_package_valid :: Bool
 prop_layout_nixpkgs_package_valid =
-  let violations = LC.validateLayout LC.nixpkgsByName "/" [("pkgs/by-name/fo/foo/default.nix", Detection Package 100 [])]
+  let violations =
+        LC.validateLayout
+          LC.nixpkgsByName
+          "/"
+          [("pkgs/by-name/fo/foo/default.nix", Detection Package 100 [])]
    in null violations
 
 -- | nixpkgsByName silently accepts unmatched module kinds (no rule)
@@ -1994,9 +2033,19 @@ prop_naming_drop_nix =
 -- | File name validation (E003) for straylight kebab-case
 prop_layout_filename_kebab :: Bool
 prop_layout_filename_kebab =
-  let violations = LC.validateLayout LC.straylight "/" [("nix/modules/flake/gpu-broker.nix", Detection FlakeModule 100 [])]
+  let violations =
+        LC.validateLayout
+          LC.straylight
+          "/"
+          [("nix/modules/flake/gpu-broker.nix", Detection FlakeModule 100 [])]
    in null violations
-        && not (null $ LC.validateLayout LC.straylight "/" [("nix/modules/flake/snake_name.nix", Detection FlakeModule 100 [])])
+        && not
+          ( null $
+              LC.validateLayout
+                LC.straylight
+                "/"
+                [("nix/modules/flake/snake_name.nix", Detection FlakeModule 100 [])]
+          )
 
 {- | validateFlakeModReq with convRequireFlakeMod = True: flake modules and
 package leaves are permitted; any other recognized kind is rejected (E006).
@@ -2240,7 +2289,8 @@ prop_emit_numeric_preflight_guard =
 -- | emit-config validates unquoted bool values before output
 prop_emit_bool_preflight_guard :: Bool
 prop_emit_bool_preflight_guard =
-  let spec = ConfigSpec TBool (Just "DEBUG") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
+  let spec =
+        ConfigSpec TBool (Just "DEBUG") (Just Unquoted) Nothing Nothing (Span (Loc 1 0) (Loc 1 0) Nothing)
       schema = emptySchema{schemaConfig = Map.singleton ["debug"] spec}
       output = emitConfigFunction schema
    in "must be true or false" `T.isInfixOf` output
@@ -2736,7 +2786,10 @@ prop_adv_fp_mkderiv_with_meta =
   case parseNixTextLoc "mkDerivation { name = \"foo\"; meta = { }; }" of
     Left _ -> False
     Right expr ->
-      not $ any (\v -> DerivLint.dvType v == DerivLint.VMissingMeta) (DerivLint.findDerivViolations "test.nix" expr)
+      not $
+        any
+          (\v -> DerivLint.dvType v == DerivLint.VMissingMeta)
+          (DerivLint.findDerivViolations "test.nix" expr)
 
 -- | FP-8: mkDerivation with meta.description does NOT trigger VMissingDescription
 prop_adv_fp_meta_with_desc :: Bool
@@ -2744,7 +2797,10 @@ prop_adv_fp_meta_with_desc =
   case parseNixTextLoc "mkDerivation { name = \"foo\"; meta = { description = \"bar\"; }; }" of
     Left _ -> False
     Right expr ->
-      not $ any (\v -> DerivLint.dvType v == DerivLint.VMissingDescription) (DerivLint.findDerivViolations "test.nix" expr)
+      not $
+        any
+          (\v -> DerivLint.dvType v == DerivLint.VMissingDescription)
+          (DerivLint.findDerivViolations "test.nix" expr)
 
 -- | FP-9: x.y without or null does NOT trigger VOrNullFallback
 prop_adv_fp_select_no_null :: Bool
@@ -2752,7 +2808,10 @@ prop_adv_fp_select_no_null =
   case parseNixTextLoc "x.y" of
     Left _ -> False
     Right expr ->
-      not $ any (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback) (PatternLint.findPatternViolations expr)
+      not $
+        any
+          (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback)
+          (PatternLint.findPatternViolations expr)
 
 -- | FP-10: null as regular value does NOT trigger VOrNullFallback
 prop_adv_fp_null_as_value :: Bool
@@ -2760,7 +2819,10 @@ prop_adv_fp_null_as_value =
   case parseNixTextLoc "let x = null; in x" of
     Left _ -> False
     Right expr ->
-      not $ any (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback) (PatternLint.findPatternViolations expr)
+      not $
+        any
+          (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback)
+          (PatternLint.findPatternViolations expr)
 
 -- ============================================================================
 -- Properties: Adversarial Lint -- False Negative Attacks
@@ -2801,7 +2863,12 @@ prop_adv_fn_wsa_path =
 -- | FN-5: Long string across interpolation parts > 120 (KNOWN GAP -- interpolation parts not concatenated)
 prop_adv_fn_long_interp :: Bool
 prop_adv_fn_long_interp =
-  let long = "\"${builtins.concatStringsSep \"\" [\"" <> T.replicate 100 "x" <> "\" \"" <> T.replicate 60 "y" <> "\"]}\""
+  let long =
+        "\"${builtins.concatStringsSep \"\" [\""
+          <> T.replicate 100 "x"
+          <> "\" \""
+          <> T.replicate 60 "y"
+          <> "\"]}\""
    in case parseNixTextLoc long of
         Left _ -> False
         Right expr ->
@@ -2821,7 +2888,9 @@ prop_adv_fn_stdenv_no_meta =
   case parseNixTextLoc "stdenv.mkDerivation { name = \"foo\"; src = ./.; }" of
     Left _ -> False
     Right expr ->
-      any (\v -> DerivLint.dvType v == DerivLint.VMissingMeta) (DerivLint.findDerivViolations "test.nix" expr)
+      any
+        (\v -> DerivLint.dvType v == DerivLint.VMissingMeta)
+        (DerivLint.findDerivViolations "test.nix" expr)
 
 -- | FN-8: mapAttrsToList triggers VAttrTranslation
 prop_adv_fn_map_attrs :: Bool
@@ -2829,7 +2898,9 @@ prop_adv_fn_map_attrs =
   case parseNixTextLoc "mapAttrsToList (name: value: value) attrs" of
     Left _ -> False
     Right expr ->
-      any (\v -> PatternLint.pvType v == PatternLint.VAttrTranslation) (PatternLint.findPatternViolations expr)
+      any
+        (\v -> PatternLint.pvType v == PatternLint.VAttrTranslation)
+        (PatternLint.findPatternViolations expr)
 
 -- ============================================================================
 -- Properties: Adversarial Lint -- Crash Attacks
@@ -2955,7 +3026,12 @@ prop_adv_format_deriv_nonempty =
   not $
     T.null $
       DerivLint.formatDerivViolations
-        [DerivLint.DerivViolation{DerivLint.dvType = DerivLint.VMissingMeta, DerivLint.dvPath = "test.nix", DerivLint.dvSpan = Span (Loc 1 0) (Loc 1 0) Nothing}]
+        [ DerivLint.DerivViolation
+            { DerivLint.dvType = DerivLint.VMissingMeta
+            , DerivLint.dvPath = "test.nix"
+            , DerivLint.dvSpan = Span (Loc 1 0) (Loc 1 0) Nothing
+            }
+        ]
 
 -- | FMT-3: formatPatternViolations non-empty for non-empty list
 prop_adv_format_pattern_nonempty :: Bool
@@ -2963,7 +3039,12 @@ prop_adv_format_pattern_nonempty =
   not $
     T.null $
       PatternLint.formatPatternViolations
-        [PatternLint.PatternViolation{PatternLint.pvType = PatternLint.VOrNullFallback, PatternLint.pvSpan = Span (Loc 1 0) (Loc 1 0) Nothing, PatternLint.pvContext = "x.y or null"}]
+        [ PatternLint.PatternViolation
+            { PatternLint.pvType = PatternLint.VOrNullFallback
+            , PatternLint.pvSpan = Span (Loc 1 0) (Loc 1 0) Nothing
+            , PatternLint.pvContext = "x.y or null"
+            }
+        ]
 
 -- | FMT-4: No duplicate error codes across all lint modules
 prop_adv_no_dup_codes :: Bool
@@ -3370,7 +3451,8 @@ prop_scope_with_shadow =
           Scope.FileScope
       sg =
         genScope0
-          { Scope.sgScopes = Map.fromList [(refScope, centerScope), (parentId, parentScope), (withId, withScope)]
+          { Scope.sgScopes =
+              Map.fromList [(refScope, centerScope), (parentId, parentScope), (withId, withScope)]
           , Scope.sgNextId = 3
           , Scope.sgRoot = refScope
           }
@@ -3392,7 +3474,8 @@ prop_scope_merge_collision =
 -- | SCOPE-4b: Merge 100 file graphs simultaneously via fromModuleGraph
 prop_scope_merge_many :: Bool
 prop_scope_merge_many =
-  let srcs = ["let x" <> T.pack (show (i :: Int)) <> " = 1; in x" <> T.pack (show (i :: Int)) | i <- [0 .. 99]]
+  let srcs =
+        ["let x" <> T.pack (show (i :: Int)) <> " = 1; in x" <> T.pack (show (i :: Int)) | i <- [0 .. 99]]
       parsed = map parseNixTextLoc srcs
       rights = [e | Right e <- parsed]
    in if length rights < 100
@@ -3446,7 +3529,8 @@ prop_scope_duplicate_decls =
       declA = genScopeDecl "x" scopeId
       declB = genScopeDecl "x" scopeId
       scope = Scope.Scope scopeId [declB, declA] [genScopeRef "x" scopeId] [] Scope.FileScope
-      sg = genScope0{Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
+      sg =
+        genScope0{Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
       ref = genScopeRef "x" scopeId
    in case Scope.resolve sg ref of
         Left (Scope.Ambiguous _ ds) -> length ds == 2
@@ -3491,7 +3575,8 @@ prop_scope_dhall_special_chars =
       names = ["funny-name", "has.dot", "snake_case", "UPPER"]
       decls = [genScopeDecl n scopeId | n <- names]
       scope = Scope.Scope scopeId decls [] [] Scope.FileScope
-      sg = genScope0{Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
+      sg =
+        genScope0{Scope.sgScopes = Map.singleton scopeId scope, Scope.sgNextId = 1, Scope.sgRoot = scopeId}
       dhall = Scope.toDhall sg
    in all (`T.isInfixOf` dhall) names
 
@@ -3526,7 +3611,9 @@ prop_config_malformed_dhall = QCM.monadicIO $ do
 prop_config_wrong_types :: Property
 prop_config_wrong_types = QCM.monadicIO $ do
   let path = "/tmp/nix-compile-test-wrongtype-z7x9w2v5.dhall"
-      content = "{ profile = 42, extra-ignores = [] : List Text, overrides = [] : List { id : Text, severity : < Error | Warning | Info | Off >, reason : Optional Text } }" :: Text
+      content =
+        "{ profile = 42, extra-ignores = [] : List Text, overrides = [] : List { id : Text, severity : < Error | Warning | Info | Off >, reason : Optional Text } }" ::
+          Text
   _ <- QCM.run $ TIO.writeFile path content
   result <- QCM.run $ loadConfig path
   _ <- QCM.run $ removeFile path `catch` (\(_ :: IOException) -> pure ())
@@ -4454,7 +4541,10 @@ nixAdversarialTests =
   [ ("nixadv_nix_occurs_check", qcRun NixAdversarial.prop_nix_occurs_check)
   , ("nixadv_nix_union_mismatch", qcRun NixAdversarial.prop_nix_union_mismatch)
   , ("nixadv_nix_attrs_required_missing", qcRun NixAdversarial.prop_nix_attrs_required_missing)
-  , ("nixadv_nix_row_closed_missing_open_req", qcRun NixAdversarial.prop_nix_row_closed_missing_open_req)
+  ,
+    ( "nixadv_nix_row_closed_missing_open_req"
+    , qcRun NixAdversarial.prop_nix_row_closed_missing_open_req
+    )
   , -- DROPPED nixadv_nix_row_empty_open_any: asserts `unify (TAttrsOpen {}) TInt`
     -- should SUCCEED — that's unsound (a record is not an Int). Code correctly rejects.
     -- BUG#25: union membership doesn't flatten nested unions.
@@ -4692,12 +4782,16 @@ main = do
       , run "review_select_missing_fails" (property prop_review_select_missing_fails)
       , run "review_optional_open_field_ok" (property prop_review_optional_open_field_ok)
       , run "review_builtins_attrnames_ok" (property prop_review_builtins_attrnames_ok)
-      , run "review_builtins_attrnames_nonrecord_fails" (property prop_review_builtins_attrnames_nonrecord_fails)
+      , run
+          "review_builtins_attrnames_nonrecord_fails"
+          (property prop_review_builtins_attrnames_nonrecord_fails)
       , run "review_builtins_hasattr_ok" (property prop_review_builtins_hasattr_ok)
       , run "lib_mkif_polymorphic" (property prop_lib_mkif_polymorphic)
       , run "lib_mkmerge_polymorphic" (property prop_lib_mkmerge_polymorphic)
       , run "module_flake_selfref_ok" (property prop_module_flake_selfref_ok)
-      , run "module_selfref_nonexternal_still_errors" (property prop_module_selfref_nonexternal_still_errors)
+      , run
+          "module_selfref_nonexternal_still_errors"
+          (property prop_module_selfref_nonexternal_still_errors)
       , run "module_mode_keeps_strict_occurs" (property prop_module_mode_keeps_strict_occurs)
       , run "review_bash_subtype_resolves" (property prop_review_bash_subtype_resolves)
       , run "review_union_var_constrains" (property prop_review_union_var_constrains)

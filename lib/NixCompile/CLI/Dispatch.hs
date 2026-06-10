@@ -142,7 +142,8 @@ printScopeGraph scopeGraph = do
     unless (null refs) $ do
       putStrLn "  References:"
       forM_ refs $ \reference -> do
-        TIO.putStrLn $ "    " <> Scope.refName reference <> " (" <> T.pack (show (Scope.refKind reference)) <> ")"
+        TIO.putStrLn $
+          "    " <> Scope.refName reference <> " (" <> T.pack (show (Scope.refKind reference)) <> ")"
 
     let edges = Scope.scopeEdges scope
     unless (null edges) $ do

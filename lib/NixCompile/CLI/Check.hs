@@ -59,7 +59,8 @@ checkFile config file = do
 
   -- past parse: enforce the depth guard, then check (unless an unsupported
   -- construct means we skip the type-check phase)
-  afterParse expression = either (onDepthExceeded expression) (const (afterDepth expression)) (Safety.analyzeDepth expression)
+  afterParse expression =
+    either (onDepthExceeded expression) (const (afterDepth expression)) (Safety.analyzeDepth expression)
 
   onDepthExceeded _ de = do
     $(logTM) ErrorS $
@@ -72,10 +73,16 @@ checkFile config file = do
           <> ")"
     return TCFail
 
-  afterDepth expression = maybe (checkWithViolations config file expression False) (skipTypeCheck expression) (detectUnsupportedConstruct expression)
+  afterDepth expression =
+    maybe
+      (checkWithViolations config file expression False)
+      (skipTypeCheck expression)
+      (detectUnsupportedConstruct expression)
 
   skipTypeCheck expression reason = do
-    $(logTM) DebugS $ logStr $ unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
+    $(logTM) DebugS $
+      logStr $
+        unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
     checkWithViolations config file expression True
 
 checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
@@ -98,7 +105,9 @@ checkWithViolations config file expression skipTypeCheck = do
       report TCFail = return TCFail
       report TCOk
         | skipTypeCheck = do
-            $(logTM) DebugS $ logStr $ crossMarker <> " " <> T.pack file <> " (unsupported construct — type check skipped)"
+            $(logTM) DebugS $
+              logStr $
+                crossMarker <> " " <> T.pack file <> " (unsupported construct — type check skipped)"
             return TCFail
         | allClean = do
             $(logTM) DebugS $ logStr $ okMarker <> " " <> T.pack file
@@ -124,7 +133,13 @@ performTypeCheck config file expression skipTypeCheck
       -- n.b. `either` forces `infer_ expression` to WHNF inside the `try`, so an
       -- exception from (pure but partial) inference is caught here; `prettyType`
       -- itself stays a thunk, exactly as the old `case` left it.
-      result <- liftIO $ try $ either (pure . Left) (pure . Right . NixCompile.Inference.Nix.Type.prettyType . fst) (infer_ expression)
+      result <-
+        liftIO $
+          try $
+            either
+              (pure . Left)
+              (pure . Right . NixCompile.Inference.Nix.Type.prettyType . fst)
+              (infer_ expression)
       handleResult result
  where
   handleResult (Left exception) = do
@@ -133,7 +148,8 @@ performTypeCheck config file expression skipTypeCheck
         { Diag.diagSeverity = ErrorS
         , Diag.diagCode = Just "INTERNAL"
         , Diag.diagSpan = Nothing
-        , Diag.diagSummary = "internal error (this is a bug in nix-compile): " <> T.pack (show (exception :: SomeException))
+        , Diag.diagSummary =
+            "internal error (this is a bug in nix-compile): " <> T.pack (show (exception :: SomeException))
         , Diag.diagHelp = []
         , Diag.diagSnippet = Nothing
         }

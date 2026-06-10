@@ -423,7 +423,8 @@ inferLambda environment (ParamSet mName variadic paramList) body = do
   let boundType
         | envModuleParams environment = TAny
         | otherwise = attrsT
-  let environment'' = maybe environment' (\name -> extendEnv (varNameText name) (Forall [] boundType) environment') mName
+  let environment'' =
+        maybe environment' (\name -> extendEnv (varNameText name) (Forall [] boundType) environment') mName
 
   resultT <- infer environment'' body
   pure $ TFun attrsT resultT
@@ -562,7 +563,9 @@ inferRecursiveBindings environment bindings'' = do
   freshTypeVars <- replicateM (length names) freshVar
   let extendedEnv = foldr (\(n, t) e -> extendEnv n (Forall [] t) e) environment (zip names freshTypeVars)
   let varChunks = assignChunks freshTypeVars bindings'
-  inferredBindings <- sequence [inferRecBinding extendedEnv binding typeVars | (binding, typeVars) <- zip bindings' varChunks]
+  inferredBindings <-
+    sequence
+      [inferRecBinding extendedEnv binding typeVars | (binding, typeVars) <- zip bindings' varChunks]
   resolvedVars <- forM freshTypeVars applyCurrentSubst
   when
     (all resolvedToSelf (zip resolvedVars freshTypeVars))
@@ -598,7 +601,8 @@ inferNonRecursiveBinding _ _ = pure []
 inferBindings :: Bool -> TypeEnv -> [Nix.Binding NExprLoc] -> Infer [(Text, NixType)]
 inferBindings recursive environment bindings
   | recursive = inferRecursiveBindings environment bindings
-  | otherwise = concat <$> mapM (inferNonRecursiveBinding environment) (desugarNestedBindings bindings)
+  | otherwise =
+      concat <$> mapM (inferNonRecursiveBinding environment) (desugarNestedBindings bindings)
 
 {- | Desugar nested-path bindings into top-level bindings whose value is a
 synthesised attrset. Closes S5 from review-2: previously @{ a.b = 1; }@ was
@@ -666,7 +670,8 @@ parseBinding (Nix.Inherit mScope keys pos) = map synth keys
 parseBinding _ = []
 
 -- | build a graph edge: the name → [dependency names] for SCC analysis
-buildEdge :: [(Text, NExprLoc, Span)] -> (Text, NExprLoc, Span) -> ((Text, NExprLoc, Span), Text, [Text])
+buildEdge ::
+  [(Text, NExprLoc, Span)] -> (Text, NExprLoc, Span) -> ((Text, NExprLoc, Span), Text, [Text])
 buildEdge allBindings (name, expr, sp) =
   let free = collectFreeVars expr
       deps = [n | (n, _, _) <- allBindings, n `elem` free]

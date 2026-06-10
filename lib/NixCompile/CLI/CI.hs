@@ -268,11 +268,14 @@ collectFiles config path = do
 collectNixFilesRecursive :: Config.Config -> FilePath -> IO [FilePath]
 collectNixFilesRecursive config root = do
   canonicalRoot <- canonicalizePath root
-  let ignoredDirs = Set.fromList [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
+  let ignoredDirs =
+        Set.fromList
+          [".git", ".direnv", "node_modules", ".cache", ".lake", "result", "result-lib", "target"]
   allFiles <- walkDirectory canonicalRoot ignoredDirs [] Set.empty [root]
   pure $ filter (not . Config.isIgnored config . makeRelative canonicalRoot) allFiles
 
-walkDirectory :: FilePath -> Set.Set FilePath -> [FilePath] -> Set.Set FilePath -> [FilePath] -> IO [FilePath]
+walkDirectory ::
+  FilePath -> Set.Set FilePath -> [FilePath] -> Set.Set FilePath -> [FilePath] -> IO [FilePath]
 walkDirectory _canonicalRoot _ignoredDirs accumulatedFiles _visited [] = pure accumulatedFiles
 walkDirectory canonicalRoot ignoredDirs accumulatedFiles visited (directory : worklist) = do
   canonical <- canonicalizePath directory
@@ -304,7 +307,8 @@ classifyEntries basePath ignoredDirs =
             isDirectory <- doesDirectoryExist fullPath
             if isDirectory
               then pure (nixFiles, fullPath : subDirectories)
-              else pure (if takeExtension fullPath == ".nix" then fullPath : nixFiles else nixFiles, subDirectories)
+              else
+                pure (if takeExtension fullPath == ".nix" then fullPath : nixFiles else nixFiles, subDirectories)
     )
     ([], [])
 

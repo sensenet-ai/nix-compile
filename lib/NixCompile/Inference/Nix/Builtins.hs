@@ -141,7 +141,10 @@ builtinEnv =
         , ("hasAttr", TFun TString (TFun TAny TBool))
         , ("getAttr", TFun TString (TFun TAny TAny))
         , ("removeAttrs", TFun TAny (TFun (TList TString) TAny))
-        , ("listToAttrs", TFun (TList (TAttrs (Map.fromList [("name", (TString, False)), ("value", (TAny, False))]))) TAny)
+        ,
+          ( "listToAttrs"
+          , TFun (TList (TAttrs (Map.fromList [("name", (TString, False)), ("value", (TAny, False))]))) TAny
+          )
         , -- ── type predicates ──
           ("isNull", TFun TAny TBool)
         , ("isInt", TFun TAny TBool)
@@ -169,5 +172,8 @@ builtinEnv =
         , ("trace", TFun TString (TFun TAny TAny))
         , ("seq", TFun TAny (TFun TAny TAny))
         , ("deepSeq", TFun TAny (TFun TAny TAny))
-        , ("tryEval", TFun TAny (TAttrs (Map.fromList [("success", (TBool, False)), ("value", (TAny, False))])))
+        ,
+          ( "tryEval"
+          , TFun TAny (TAttrs (Map.fromList [("success", (TBool, False)), ("value", (TAny, False))]))
+          )
         ]

@@ -39,5 +39,8 @@ factToConstraints (AssignFrom variable otherVariable _) =
 factToConstraints (AssignLit variable literal _) =
   [TVar (TypeVar variable) :~: literalType literal]
 factToConstraints (CmdArg command argumentName variableName _) =
-  maybe [] (\resolvedType -> [TVar (TypeVar variableName) :~: resolvedType]) (lookupArgType command argumentName)
+  maybe
+    []
+    (\resolvedType -> [TVar (TypeVar variableName) :~: resolvedType])
+    (lookupArgType command argumentName)
 factToConstraints _ = []

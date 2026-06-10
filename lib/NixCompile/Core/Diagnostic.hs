@@ -96,7 +96,11 @@ renderDiagnostic color d =
   header = sev (severityWord (diagSeverity d) <> codePart) <> bold (": " <> diagSummary d)
   codePart = maybe "" (\c -> "[" <> c <> "]") (diagCode d)
 
-  gutterW = maybe (maybe 1 (T.length . tshow . locLine . spanStart) (diagSpan d)) (T.length . tshow . snLine) (diagSnippet d)
+  gutterW =
+    maybe
+      (maybe 1 (T.length . tshow . locLine . spanStart) (diagSpan d))
+      (T.length . tshow . snLine)
+      (diagSnippet d)
   pad n = T.replicate (max 0 n) " "
   bar = blue (pad gutterW <> " |")
 

@@ -29,8 +29,20 @@ import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as T
-import NixCompile.Bash.Facts.Token (extractLiteral, extractParamExpansion, isQuotedToken, mkSpan, tokenToText)
-import NixCompile.Bash.Facts.Value (configValueFact, extractVarRef, parseConfigTemplate, parseConfigValueDynamic, selectValueParser)
+import NixCompile.Bash.Facts.Token (
+  extractLiteral,
+  extractParamExpansion,
+  isQuotedToken,
+  mkSpan,
+  tokenToText,
+ )
+import NixCompile.Bash.Facts.Value (
+  configValueFact,
+  extractVarRef,
+  parseConfigTemplate,
+  parseConfigValueDynamic,
+  selectValueParser,
+ )
 import NixCompile.Bash.Parse (BashAST (..))
 import NixCompile.Bash.Patterns
 import NixCompile.Bash.Types
@@ -54,7 +66,8 @@ traverseTokens (SA.OuterToken shellCheckId innerToken) = do
 -- ── inner-token dispatch ─────────────────────────────────────────
 
 -- | dispatch based on ShellCheck inner token type
-factFromInnerToken :: SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Fact]
+factFromInnerToken ::
+  SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Fact]
 factFromInnerToken shellCheckId innerToken = do
   sourceSpan <- mkSpan shellCheckId
   dispatch sourceSpan innerToken
@@ -97,7 +110,8 @@ factFromAssignment sourceSpan variableName valueToken =
 -- ── command facts ────────────────────────────────────────────────
 
 -- | facts from a simple command (pre-command assigns are ignored)
-factFromCommand :: Span -> [SA.Token] -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
+factFromCommand ::
+  Span -> [SA.Token] -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
 factFromCommand sourceSpan _assigns = commandFacts sourceSpan
 
 -- | placeholder: pipeline facts (children are traversed separately)
@@ -124,7 +138,8 @@ commandFacts sourceSpan (commandToken : arguments) =
         else commandInvocationFacts sourceSpan commandText arguments
 
 -- | collect invocation facts: store path usage + argument flag facts
-commandInvocationFacts :: Span -> Text -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
+commandInvocationFacts ::
+  Span -> Text -> [SA.Token] -> Reader (Map SA.Id (Position, Position)) [Fact]
 commandInvocationFacts sourceSpan command arguments = do
   let pathFact = factFromStorePath sourceSpan command
   let commandName = resolveCommandName command
@@ -173,7 +188,10 @@ extractArgFacts command = loop
       pure (getFact sourceSpan : restFacts)
     afterFlag = pairCase remainingTokens
     pairCase (valueToken : restAfterValue) =
-      maybe (loop remainingTokens) (emitWith restAfterValue) (factFromFlagValuePair command token valueToken)
+      maybe
+        (loop remainingTokens)
+        (emitWith restAfterValue)
+        (factFromFlagValuePair command token valueToken)
     pairCase [] = pure []
 
   tokenId (SA.OuterToken tokenId' _) = tokenId'
@@ -194,7 +212,9 @@ factFromFlagArgument command token =
 -- | detect --flag $VAR across two adjacent tokens
 factFromFlagValuePair :: Text -> SA.Token -> SA.Token -> Maybe (Span -> Fact)
 factFromFlagValuePair command flagToken valueToken
-  | isFlag flagText, Just variableName <- extractVarRef valueText = Just (CmdArg command flagText variableName)
+  | isFlag flagText
+  , Just variableName <- extractVarRef valueText =
+      Just (CmdArg command flagText variableName)
   | otherwise = Nothing
  where
   flagText = tokenToText flagToken
@@ -225,7 +245,10 @@ configArrayFacts sourceSpan configPath valueToken =
   litFact = [ConfigLit configPath (parseLiteral valueText) sourceSpan]
   noVar
     | "${" `T.isInfixOf` valueText =
-        maybe litFact (\parts -> [ConfigTemplate configPath parts quoted sourceSpan]) (parseConfigTemplate valueText)
+        maybe
+          litFact
+          (\parts -> [ConfigTemplate configPath parts quoted sourceSpan])
+          (parseConfigTemplate valueText)
     | otherwise = litFact
 
 -- ── env var facts: ${var:-default}, ${var:=default}, ${var:?err} ──

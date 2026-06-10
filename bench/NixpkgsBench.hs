@@ -94,7 +94,9 @@ main = do
   let candidateOpen =
         [ p
         | p <- files
-        , any (`elem` (words "lib pkgs nixos modules" :: [String])) (words (map (\c -> if c == '/' then ' ' else c) p))
+        , any
+            (`elem` (words "lib pkgs nixos modules" :: [String]))
+            (words (map (\c -> if c == '/' then ' ' else c) p))
         , "default.nix" `endsWith` p
         ]
       target = case (candidateOpen, files) of
@@ -207,7 +209,9 @@ reportParseStats :: ParseStats -> IO ()
 reportParseStats s = do
   printf "  files:        %d (%d ok, %d failed)\n" (psSamples s) (psSuccesses s) (psFailures s)
   printf "  total:        %.2fs\n" (psTotalMicros s / 1_000_000)
-  printf "  throughput:   %.0f files/sec\n" (fromIntegral (psSamples s) / (psTotalMicros s / 1_000_000) :: Double)
+  printf
+    "  throughput:   %.0f files/sec\n"
+    (fromIntegral (psSamples s) / (psTotalMicros s / 1_000_000) :: Double)
   printf
     "  per-file:     min=%.0fμs  p50=%.0fμs  p95=%.0fμs  p99=%.0fμs  max=%.0fμs\n"
     (psMinMicros s)
@@ -453,7 +457,9 @@ reportFillStats fs corpusSize = do
     (PC.pcsFiles s)
     (PC.pcsFresh s)
     (PC.pcsStale s)
-  printf "  coverage:   %.1f%%\n" (100 * fromIntegral (PC.pcsFresh s) / fromIntegral corpusSize :: Double)
+  printf
+    "  coverage:   %.1f%%\n"
+    (100 * fromIntegral (PC.pcsFresh s) / fromIntegral corpusSize :: Double)
   when (fsFillTime fs > 0) $
     printf
       "  throughput: %.0f files/sec (workers=%d)\n"

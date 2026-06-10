@@ -75,7 +75,8 @@ findPatternViolations = traversePatternExpr
 
 traversePatternExpr :: NExprLoc -> [PatternViolation]
 traversePatternExpr (LayerAnn srcSpan expression) =
-  localPatternViolations srcSpan expression ++ concatMap traversePatternExpr (patternSubExprs expression)
+  localPatternViolations srcSpan expression
+    ++ concatMap traversePatternExpr (patternSubExprs expression)
 
 -- ── local node checks ──────────────────────────────────────────────
 -- Two pattern rules fire at a single AST node:

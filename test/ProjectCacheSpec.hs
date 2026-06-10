@@ -139,7 +139,9 @@ testReverseDepCascade =
     let bPath = tmp </> "b.nix"
         aPath = tmp </> "a.nix"
     canonBPath <- canonicalizePath =<< (TIO.writeFile bPath "{ y = 99; }" >> pure bPath)
-    _ <- canonicalizePath =<< (TIO.writeFile aPath ("let x = import " <> T.pack bPath <> "; in x.y") >> pure aPath)
+    _ <-
+      canonicalizePath
+        =<< (TIO.writeFile aPath ("let x = import " <> T.pack bPath <> "; in x.y") >> pure aPath)
 
     pc <- PC.newProjectCache
     PC.startWorkers pc

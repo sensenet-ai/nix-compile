@@ -34,7 +34,13 @@ import Data.Generics (listify)
 import Data.List (intercalate, isInfixOf, sortOn)
 import Data.Maybe (listToMaybe)
 import GHC.Data.Bag (bagToList)
-import GHC.Driver.Session (DynFlags, Language (GHC2021), defaultDynFlags, languageExtensions, xopt_set)
+import GHC.Driver.Session (
+  DynFlags,
+  Language (GHC2021),
+  defaultDynFlags,
+  languageExtensions,
+  xopt_set,
+ )
 import GHC.Hs (GhcPs, HsModule)
 import GHC.Hs.Expr (HsExpr (HsCase, HsLam), HsLamVariant (LamSingle), LHsExpr)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
@@ -91,7 +97,14 @@ caseBan :: Rule
 caseBan = Rule "case-ban" check
  where
   check path sourceLines modul =
-    [ Finding path line col "case-ban" (caseExprKind expr <> " — prefer equations or guards (HOUSE_STYLE.md); mark a justified survivor with CASE-OK")
+    [ Finding
+        path
+        line
+        col
+        "case-ban"
+        ( caseExprKind expr
+            <> " — prefer equations or guards (HOUSE_STYLE.md); mark a justified survivor with CASE-OK"
+        )
     | located <- listify isCaseLike modul
     , let expr = unLoc located
     , Just (line, col) <- [spanStart (getLocA located)]

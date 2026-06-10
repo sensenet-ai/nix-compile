@@ -37,7 +37,16 @@ import NixCompile.Lint.Derivation (
  )
 import NixCompile.Lint.Nix (
   NixViolation (..),
-  ViolationType (VLongInlineString, VRawMkDerivation, VRawRunCommand, VRawWriteShellApplication, VRec, VSubstituteAll, VWith, VWriteShellScript),
+  ViolationType (
+    VLongInlineString,
+    VRawMkDerivation,
+    VRawRunCommand,
+    VRawWriteShellApplication,
+    VRec,
+    VSubstituteAll,
+    VWith,
+    VWriteShellScript
+  ),
  )
 import NixCompile.Lint.Patterns (
   PatternViolation (..),
@@ -132,7 +141,11 @@ maxInlineStringLength = 120
 longString :: SrcSpan -> [Antiquoted Text NExprLoc] -> [NixViolation]
 longString srcSpan parts
   | len > maxInlineStringLength =
-      [NixViolation (VLongInlineString len) (srcSpanToSpan srcSpan) ("inline string of length " <> T.pack (show len))]
+      [ NixViolation
+          (VLongInlineString len)
+          (srcSpanToSpan srcSpan)
+          ("inline string of length " <> T.pack (show len))
+      ]
   | otherwise = []
  where
   len = sum (map partLen parts)
@@ -196,7 +209,10 @@ patternViolations srcSpan = go
         LintBundle [] [] [PatternViolation VOrNullFallback (srcSpanToSpan srcSpan) "or null fallback"]
   go (NApp func _)
     | isTranslateCall func =
-        LintBundle [] [] [PatternViolation VAttrTranslation (srcSpanToSpan srcSpan) "attribute translation call"]
+        LintBundle
+          []
+          []
+          [PatternViolation VAttrTranslation (srcSpanToSpan srcSpan) "attribute translation call"]
   go _ = emptyBundle
 
   isNullExpr (Layer (NConstant NNull)) = True

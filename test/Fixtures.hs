@@ -129,7 +129,8 @@ testQemuCommon = do
       if hasRec && hasWith
         then return True
         else do
-          putStrLn $ "Lint check failed (expected violations): rec=" ++ show hasRec ++ ", with=" ++ show hasWith
+          putStrLn $
+            "Lint check failed (expected violations): rec=" ++ show hasRec ++ ", with=" ++ show hasWith
           return False
 
   if inferOk && lintOk

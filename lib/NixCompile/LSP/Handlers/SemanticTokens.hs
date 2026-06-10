@@ -73,7 +73,8 @@ collectTokens = go
 
   localToken (NSym name) l c len
     | varNameText name `elem` reservedWords = [RawToken l c len SemanticTokenTypes_Keyword []]
-    | Map.member (varNameText name) (envBindings builtinEnv) = [RawToken l c len SemanticTokenTypes_Function [SemanticTokenModifiers_DefaultLibrary]]
+    | Map.member (varNameText name) (envBindings builtinEnv) =
+        [RawToken l c len SemanticTokenTypes_Function [SemanticTokenModifiers_DefaultLibrary]]
     | otherwise = [RawToken l c len SemanticTokenTypes_Variable []]
   localToken (NStr _) l c len = [RawToken l c len SemanticTokenTypes_String []]
   localToken (NConstant (NInt _)) l c len = [RawToken l c len SemanticTokenTypes_Number []]

@@ -32,7 +32,13 @@ import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Core.Span (Loc (..), Span (..))
-import NixCompile.Inference.Nix (Binding (..), InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
+import NixCompile.Inference.Nix (
+  Binding (..),
+  InferResult (..),
+  TypeEnv,
+  builtinEnv,
+  inferExprWithEnv,
+ )
 import NixCompile.Inference.Nix.Type (prettyType)
 import NixCompile.Syntax.Parse (parseNix, parseNixFile)
 

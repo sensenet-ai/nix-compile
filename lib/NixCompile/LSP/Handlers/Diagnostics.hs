@@ -59,7 +59,9 @@ derivVios' path expr = map toDerivDiag (Deriv.findDerivViolations path expr)
 
 toDerivDiag :: Deriv.DerivViolation -> Diagnostic
 toDerivDiag dv =
-  spToDiagnostic (Deriv.derivRuleId (Deriv.dvType dv) <> ": " <> derivMsg (Deriv.dvType dv)) (Deriv.dvSpan dv)
+  spToDiagnostic
+    (Deriv.derivRuleId (Deriv.dvType dv) <> ": " <> derivMsg (Deriv.dvType dv))
+    (Deriv.dvSpan dv)
  where
   derivMsg Deriv.VMissingMeta = "mkDerivation call without meta attribute"
   derivMsg Deriv.VMissingDescription = "meta = { ... } without description key"
@@ -69,7 +71,9 @@ patternVios' expr = map toPatternDiag (Patterns.findPatternViolations expr)
 
 toPatternDiag :: Patterns.PatternViolation -> Diagnostic
 toPatternDiag pv =
-  spToDiagnostic (patternRuleId (Patterns.pvType pv) <> ": " <> Patterns.pvContext pv) (Patterns.pvSpan pv)
+  spToDiagnostic
+    (patternRuleId (Patterns.pvType pv) <> ": " <> Patterns.pvContext pv)
+    (Patterns.pvSpan pv)
  where
   patternRuleId Patterns.VOrNullFallback = "or-null-fallback"
   patternRuleId Patterns.VAttrTranslation = "no-translate-attrs-outside-prelude"
@@ -86,7 +90,13 @@ bashDiagFromCall ssc = maybe [] withContent (NixParse.extractString (NixParse.ss
 toBashDiag :: Text -> Forbidden.Violation -> Diagnostic
 toBashDiag scriptName v =
   spToDiagnostic
-    (bashErrorCode (Forbidden.vType v) <> ": " <> bashLabel (Forbidden.vType v) <> " in embedded script '" <> scriptName <> "'")
+    ( bashErrorCode (Forbidden.vType v)
+        <> ": "
+        <> bashLabel (Forbidden.vType v)
+        <> " in embedded script '"
+        <> scriptName
+        <> "'"
+    )
     (Forbidden.vSpan v)
  where
   bashLabel Forbidden.VHeredoc = "heredoc (<<) not allowed"

@@ -78,10 +78,13 @@ findImports baseDir = walkExpr
 {- | given an application node, determine if it's an import and extract its parts
 handles: import ./path, builtins.import ./path, import ./path (arg)
 -}
-processApplication :: FilePath -> SrcSpan -> NExprLoc -> NExprLoc -> (NExprLoc -> [Import]) -> [Import]
+processApplication ::
+  FilePath -> SrcSpan -> NExprLoc -> NExprLoc -> (NExprLoc -> [Import]) -> [Import]
 processApplication baseDir srcSpan func arg continue
-  | Just (rawPath, Nothing) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue arg
-  | Just (rawPath, Just inner) <- unwrapImportExpression func = makeImport baseDir rawPath (Just arg) srcSpan ++ continue inner ++ continue arg
+  | Just (rawPath, Nothing) <- unwrapImportExpression func =
+      makeImport baseDir rawPath (Just arg) srcSpan ++ continue arg
+  | Just (rawPath, Just inner) <- unwrapImportExpression func =
+      makeImport baseDir rawPath (Just arg) srcSpan ++ continue inner ++ continue arg
   | Just () <- checkImportBuiltin func = makeImport baseDir (extractImportPath arg) Nothing srcSpan
   | otherwise = continue func ++ continue arg
 

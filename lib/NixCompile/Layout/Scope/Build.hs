@@ -224,13 +224,20 @@ remapEntireScope offset scope =
 
 remapDeclaration :: Int -> Declaration -> Declaration
 remapDeclaration offset declaration =
-  declaration{declScope = remapScopeId offset (declScope declaration), declAssocScope = fmap (remapScopeId offset) (declAssocScope declaration)}
+  declaration
+    { declScope = remapScopeId offset (declScope declaration)
+    , declAssocScope = fmap (remapScopeId offset) (declAssocScope declaration)
+    }
 
 remapReference :: Int -> Reference -> Reference
 remapReference offset reference = reference{refScope = remapScopeId offset (refScope reference)}
 
 remapEdge' :: Int -> Edge -> Edge
-remapEdge' offset edge = edge{edgeSource = remapScopeId offset (edgeSource edge), edgeTarget = remapScopeId offset (edgeTarget edge)}
+remapEdge' offset edge =
+  edge
+    { edgeSource = remapScopeId offset (edgeSource edge)
+    , edgeTarget = remapScopeId offset (edgeTarget edge)
+    }
 
 -- | prefer the first file path over the second
 chooseFile :: Maybe FilePath -> Maybe FilePath -> Maybe FilePath

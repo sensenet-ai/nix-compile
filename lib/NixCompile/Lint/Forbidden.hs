@@ -67,7 +67,8 @@ go (SA.OuterToken shellCheckId inner) = do
   nested <- mapM go (toList inner)
   pure (local ++ concat nested)
 
-localViolations :: SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Violation]
+localViolations ::
+  SA.Id -> SA.InnerToken SA.Token -> Reader (Map SA.Id (Position, Position)) [Violation]
 localViolations shellCheckId inner = do
   violationSpan <- mkSpan shellCheckId
   dispatch violationSpan inner

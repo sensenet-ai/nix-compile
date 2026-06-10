@@ -100,7 +100,8 @@ unify' type1 type2 = typeMismatch type1 type2
 bindVar :: TypeVar -> NixType -> Infer ()
 bindVar v t
   | t == TVar v = pure ()
-  | occursCheck v t = throwTypeError $ "infinite type: " <> prettyType (TVar v) <> " occurs in " <> prettyType t
+  | occursCheck v t =
+      throwTypeError $ "infinite type: " <> prettyType (TVar v) <> " occurs in " <> prettyType t
   | otherwise = addSubst v t
 
 -- | occurs check: does v appear free inside t? (prevents infinite types)
@@ -170,7 +171,8 @@ unifyRec m1 tl1 m2 tl2 = dispatch tl1 tl2
 bindRowVar :: TypeVar -> NixType -> Infer ()
 bindRowVar r t
   | isAnonRowVar r = pure ()
-  | occursCheck r t = throwTypeError $ "recursive row type: " <> prettyType (TVar r) <> " occurs in " <> prettyType t
+  | occursCheck r t =
+      throwTypeError $ "recursive row type: " <> prettyType (TVar r) <> " occurs in " <> prettyType t
   | otherwise = addSubst r t
 
 {- | unify a union (sum) type against a concrete type
@@ -190,7 +192,12 @@ unifyUnion ts t = do
   checkUnionMembership t' ts'
     | TVar _ <- t' = pure ()
     | t' `elem` concatMap flatten ts' = pure ()
-    | otherwise = throwTypeError $ "type mismatch: expected one of " <> T.intercalate " | " (map prettyType ts) <> ", got " <> prettyType t'
+    | otherwise =
+        throwTypeError $
+          "type mismatch: expected one of "
+            <> T.intercalate " | " (map prettyType ts)
+            <> ", got "
+            <> prettyType t'
 
 -- ── type merging (for branches / polymorphic result combination) ──
 

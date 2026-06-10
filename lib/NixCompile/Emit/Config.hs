@@ -225,8 +225,22 @@ renderRuntimeGuards schema =
   renderGuards _ = []
 
   presenceGuard var = "  : \"${" <> var <> ":?" <> var <> " is required}\""
-  intGuard var = "  __nix_compile_require_int \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
-  boolGuard var = "  __nix_compile_require_bool \"" <> var <> "\" \"${" <> var <> ":?" <> var <> " is required}\" >/dev/null || return 1"
+  intGuard var =
+    "  __nix_compile_require_int \""
+      <> var
+      <> "\" \"${"
+      <> var
+      <> ":?"
+      <> var
+      <> " is required}\" >/dev/null || return 1"
+  boolGuard var =
+    "  __nix_compile_require_bool \""
+      <> var
+      <> "\" \"${"
+      <> var
+      <> ":?"
+      <> var
+      <> " is required}\" >/dev/null || return 1"
 
   requiredGuard _ var _ (Just Quoted) = [presenceGuard var]
   requiredGuard _ var ty _quoted
@@ -293,7 +307,9 @@ renderJsonTree env indent = go
         nextIndent = T.replicate (indent + 1) "  "
      in concatTemplates $
           [literalTemplate "{\n"]
-            ++ intersperseTemplate (literalTemplate ",\n") (map (appendTemplate (literalTemplate nextIndent)) rendered)
+            ++ intersperseTemplate
+              (literalTemplate ",\n")
+              (map (appendTemplate (literalTemplate nextIndent)) rendered)
             ++ [literalTemplate ("\n" <> indentStr <> "}")]
   go (ConfigLeaf spec) = renderJsonValue env spec
 
@@ -305,7 +321,9 @@ renderJsonValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
  where
   go _ (Just lit) _ = literalTemplate (renderJsonLit lit)
   go _ _ (Just parts) =
-    literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+    literalTemplate "\""
+      `appendTemplate` renderTemplateParts parts
+      `appendTemplate` literalTemplate "\""
   go (Just var) _ _ =
     let required = isRequiredEnv env var
         forceString = cfgQuoted == Just Quoted
@@ -314,7 +332,10 @@ renderJsonValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           | required = "${" <> var <> ":?" <> var <> " is required}"
           | otherwise = "${" <> var <> ":-}"
      in if asString
-          then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+          then
+            literalTemplate "\""
+              `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
+              `appendTemplate` literalTemplate "\""
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
 
@@ -347,7 +368,9 @@ renderYamlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
  where
   go _ (Just lit) _ = literalTemplate (renderYamlLit lit)
   go _ _ (Just parts) =
-    literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+    literalTemplate "\""
+      `appendTemplate` renderTemplateParts parts
+      `appendTemplate` literalTemplate "\""
   go (Just var) _ _ =
     let required = isRequiredEnv env var
         forceString = cfgQuoted == Just Quoted
@@ -356,7 +379,10 @@ renderYamlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           | required = "${" <> var <> ":?" <> var <> " is required}"
           | otherwise = "${" <> var <> ":-}"
      in if asString
-          then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+          then
+            literalTemplate "\""
+              `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
+              `appendTemplate` literalTemplate "\""
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
 
@@ -398,7 +424,9 @@ renderTomlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
  where
   go _ (Just lit) _ = literalTemplate (renderTomlLit lit)
   go _ _ (Just parts) =
-    literalTemplate "\"" `appendTemplate` renderTemplateParts parts `appendTemplate` literalTemplate "\""
+    literalTemplate "\""
+      `appendTemplate` renderTemplateParts parts
+      `appendTemplate` literalTemplate "\""
   go (Just var) _ _ =
     let required = isRequiredEnv env var
         forceString = cfgQuoted == Just Quoted
@@ -407,7 +435,10 @@ renderTomlValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           | required = "${" <> var <> ":?" <> var <> " is required}"
           | otherwise = "${" <> var <> ":-}"
      in if asString
-          then literalTemplate "\"" `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")") `appendTemplate` literalTemplate "\""
+          then
+            literalTemplate "\""
+              `appendTemplate` dynamicTemplate ("$(__nix_compile_escape_json \"" <> guardedVar <> "\")")
+              `appendTemplate` literalTemplate "\""
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "\"\""
 
@@ -420,7 +451,9 @@ renderTemplateParts = concatTemplates . map renderPart
   -- default text from `${VAR:-…}` flows in raw; bash would otherwise evaluate $(…), backticks,
   -- etc. inside the default and execute arbitrary commands.
   renderPart (ConfigVarDefault var def) =
-    dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":-" <> escapeForParamExpansion def <> "}\")")
+    dynamicTemplate
+      ("$(__nix_compile_escape_json \"${" <> var <> ":-" <> escapeForParamExpansion def <> "}\")")
   renderPart (ConfigVarRequired var) = dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":?" <> var <> " is required}\")")
   renderPart (ConfigVarAlternate var alt) =
-    dynamicTemplate ("$(__nix_compile_escape_json \"${" <> var <> ":+" <> escapeForParamExpansion alt <> "}\")")
+    dynamicTemplate
+      ("$(__nix_compile_escape_json \"${" <> var <> ":+" <> escapeForParamExpansion alt <> "}\")")
