@@ -1,20 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                         // layout // convention // naming
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                 // layout // convention // naming
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "He'd given up trying to pronounce the names; the shapes of them were
 --      enough."
 --
---                                                                 — Neuromancer
+--                                                                                     — Neuromancer
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   Naming policy: decide whether a string obeys a 'NamingConvention'
 --   (kebab / snake / camel / Pascal), convert between cases, and turn a
 --   bad attribute or identifier name into a 'LayoutError' carrying the
 --   suggested fix. Pure string work over the convention vocabulary.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Layout.Convention.Naming (
   NamingConvention (..),
@@ -35,9 +35,9 @@ import Data.Text qualified as T
 import NixCompile.Layout.Convention.Types
 import NixCompile.Layout.ModuleKind (ModuleKind (Unknown))
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                           // naming validation
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                              // naming validation
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Check if a name is valid for a convention.
 isValidName :: NamingConvention -> String -> Bool

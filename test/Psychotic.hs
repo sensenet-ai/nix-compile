@@ -3,20 +3,20 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-unused-imports #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                       // tests // psychotic
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                             // tests // psychotic
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "The night opened like a flower and Turner was in there with her,
 --    in a place where the stars opened like flowers."
 --
---                                                                 — Count Zero
+--                                                                                      — Count Zero
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   Adversarial regression suite for review-2 findings (C1..C6, S1..S6, B*, P*).
 --   Each fix gets at least one negative test (input that previously crashed /
 --   accepted bad code) and at least one positive test (input that still works).
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module Psychotic (psychoticTests) where
 
@@ -44,12 +44,12 @@ import System.IO.Temp (withSystemTempDirectory)
 import Test.QuickCheck
 import Test.QuickCheck.Monadic qualified as QCM
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- C1: default-value command injection (the one finding that crosses a trust
 -- boundary). Each payload tries a different bash control character and must
 -- emerge in the generated script with the control character escaped — not
 -- evaluable by bash.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | The canonical adversarial payloads from review-2 C1.
 c1Payloads :: [Text]
@@ -147,11 +147,11 @@ prop_c1_end_to_end_injection_neutralized = QCM.monadicIO $ do
     not ("$(touch" `T.isInfixOf` result)
       && not ("`id`" `T.isInfixOf` result)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- C2/C3: depth-guard bypass. NWith chains, NStr antiquotation chains,
 -- arbitrary deep nesting — every shape must be rejected by analyzeDepth,
 -- and the rejection must be a structured DepthError, not a crash.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 nestedWith :: Int -> Text
 nestedWith n = T.replicate n "with x; " <> "y"
@@ -214,9 +214,9 @@ prop_c3_error_includes_constructor = case parseNixExpr (nestedWith 250) of
     Right () -> False
     Left de -> Safety.deDepth de > 200 && not (T.null (Safety.deContext de))
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- C4: parser stack-overflow caught by Safety.safeParseNixText.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_c4_parens_no_process_crash :: Property
 prop_c4_parens_no_process_crash = QCM.monadicIO $ do
@@ -234,10 +234,10 @@ prop_c4_deeply_nested_lists_survive = QCM.monadicIO $ do
     Left _ -> True
     Right _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- C5: sibling-directory escape via prefix-without-separator. We exercise
 -- the canonicalisation logic via path-string semantics.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_c5_sibling_dir_excluded :: Property
 prop_c5_sibling_dir_excluded = QCM.monadicIO $ do
@@ -257,9 +257,9 @@ prop_c5_sibling_dir_excluded = QCM.monadicIO $ do
     pure (not considered)
   QCM.assert result
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- C6: Dhall remote import refusal.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_c6_remote_import_rejected :: Property
 prop_c6_remote_import_rejected = QCM.monadicIO $ do
@@ -296,9 +296,9 @@ prop_c6_local_config_still_works = QCM.monadicIO $ do
     Cfg.loadConfig confPath
   QCM.assert (isRight result)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- S2: closed-set missing key now errors.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_s2_closed_missing_key_fails :: Bool
 prop_s2_closed_missing_key_fails =
@@ -323,9 +323,9 @@ prop_s2_closed_present_key_ok = case parseNixExpr "let xs = { a = 1; b = 2; }; i
     Left _ -> False
     Right _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- S3: unbound variable rejection.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_s3_unbound_var_fails :: Bool
 prop_s3_unbound_var_fails = case parseNixExpr "nonExistentSym + 1" of
@@ -348,9 +348,9 @@ prop_s3_lenient_env_accepts = case parseNixExpr "nonExistentSym + 1" of
     Left _ -> False
     Right _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- S5: nested-path bindings now type-checked.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_s5_nested_path_binding_typed :: Bool
 prop_s5_nested_path_binding_typed = case parseNixExpr "let xs = { a.b = 1; }; in xs.a.b" of
@@ -359,9 +359,9 @@ prop_s5_nested_path_binding_typed = case parseNixExpr "let xs = { a.b = 1; }; in
     Left _ -> False
     Right _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- S6: NPlus type restriction.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_s6_null_plus_null_fails :: Bool
 prop_s6_null_plus_null_fails = case parseNixExpr "null + null" of
@@ -391,9 +391,9 @@ prop_s6_string_plus_string_ok = case parseNixExpr "\"a\" + \"b\"" of
     Left _ -> False
     Right _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- S1: polymorphic list builtins.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_s1_head_returns_element_type :: Bool
 prop_s1_head_returns_element_type = case parseNixExpr "builtins.head [1 2 3] + 1" of
@@ -402,9 +402,9 @@ prop_s1_head_returns_element_type = case parseNixExpr "builtins.head [1 2 3] + 1
     Left _ -> False
     Right _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- B1: combinedLintSafe distinguishes "no violations" from "depth-exceeded".
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_b1_depth_exceeded_reported :: Bool
 prop_b1_depth_exceeded_reported = case parseNixExpr (nestedWith 300) of
@@ -420,9 +420,9 @@ prop_b1_clean_returns_ok = case parseNixExpr "{ a = 1; b = 2; }" of
     LC.LintOk _ -> True
     LC.LintDepthExceeded _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Safety wrappers.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 prop_safety_renders :: Bool
 prop_safety_renders =
@@ -441,10 +441,10 @@ prop_safety_read_nonexistent_returns_left = QCM.monadicIO $ do
   result <- QCM.run (Safety.safeReadFile "/nonexistent/path/that/does/not/exist.nix")
   QCM.assert (isLeft result)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Test runner — exported list of (name, action) pairs that the main test
 -- runner wires into the existing harness.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 psychoticTests :: [(String, IO Bool)]
 psychoticTests =

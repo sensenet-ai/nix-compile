@@ -4,6 +4,25 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                                // lsp // handlers
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--
+--   "He never saw the whole of it, only the traffic: requests arriving,
+--    answers dispatched, the board never going dark."
+--
+--                                                                                      — Count Zero
+--
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--   The request registry: every LSP notification and request the editor
+--   sends is matched here to its handler — lifecycle, diagnostics, hover,
+--   definition, rename, references, completion, signature help, code
+--   actions, document symbols, semantic tokens, inlay hints — then routed
+--   to the pure compute in the sibling modules. The switchboard, plus the
+--   VFS-read / safe-parse plumbing (lspSafeParse); the deciding lives next
+--   door.
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 module NixCompile.LSP.Handlers (
   handlers,
   lintFile,

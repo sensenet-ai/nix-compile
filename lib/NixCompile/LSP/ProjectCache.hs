@@ -3,17 +3,17 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                  // LSP // project cache
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                           // LSP // project cache
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "Like time, you know. It's like a — there are no words for it. But it's
 --    in the world, and you can have your hand in there and pull things out,
 --    but you can't just see them."
 --
---                                                                 — Count Zero
+--                                                                                      — Count Zero
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   Non-blocking, per-file, content-addressed project cache for the LSP.
 --   Replaces the all-or-nothing ModuleGraph cache:
 --
@@ -29,7 +29,7 @@
 --       eagerly recompute. Subsequent enqueues recompute lazily.
 --
 --   See doc/src/lsp-project-cache.md for the full design write-up.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.LSP.ProjectCache (
   -- * Cache
@@ -89,9 +89,9 @@ import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (normalise, takeDirectory, (</>))
 
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Data
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 {- | Per-file cache entry. Keyed by the file's canonical path; invalidated by
 content hash. Status discriminates "we have a fresh result" from "we know
@@ -155,9 +155,9 @@ newProjectCache = atomically $ do
       , pcRoot = root
       }
 
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Worker pool
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 {- | Spawn @n@ worker threads that drain the queue. Idempotent — calling twice
 without 'stopWorkers' in between just gives you @2n@ workers (don't).
@@ -269,9 +269,9 @@ envFromImports pc imports = do
         | otherwise = acc
   pure (foldr addImport builtinEnv imports)
 
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Public API
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 {- | Non-blocking lookup. Returns 'Just' iff the entry is 'Fresh'. Stale or
 absent entries return 'Nothing' (and don't trigger anything — that's the
@@ -363,9 +363,9 @@ invalidateFile pc fp = do
   markStale pc fp
   enqueueFile pc fp
 
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Stats (for debugging / logging)
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 data ProjectCacheStats = ProjectCacheStats
   { pcsFiles :: !Int
@@ -393,9 +393,9 @@ statsOf pc = atomically $ do
       , pcsWorkers = length threads
       }
 
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Internal: import discovery (lightweight version of Module.findImports)
--- ─────────────────────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 -- We re-export this rather than importing Module.findImports to avoid a
 -- circular dependency (Module imports things that don't need this cache).

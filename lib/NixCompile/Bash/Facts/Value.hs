@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                              // bash // facts // value
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                         // bash // facts // value
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "Some articulated structure shifting to accommodate her course through
 --    the city."
 --
---                                                                 — Count Zero
+--                                                                                      — Count Zero
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   The config-value sublanguage: pull a plain variable name out of a
 --   reference, and parse the right-hand side of a @config.*@ assignment —
 --   from either a ShellCheck token stream or raw text — into a literal, a
 --   single variable, or a mixed template ('ConfigValueDynamic'), then project
 --   that to the corresponding 'Fact'. Pure; sits above
 --   "NixCompile.Bash.Facts.Token".
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Bash.Facts.Value (
   extractVarRef,
@@ -124,9 +124,9 @@ parseConfigValueDynamic rawText _quoted
     | "\"" `T.isPrefixOf` rawText && "\"" `T.isSuffixOf` rawText = T.dropEnd 1 (T.drop 1 rawText)
     | otherwise = rawText
 
--- ═════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- token → config template
--- ═════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- -- token sequence → config parts -- --
 -- ShellCheck tokenizes `"$A-$B"` as a sequence of literal+var tokens.

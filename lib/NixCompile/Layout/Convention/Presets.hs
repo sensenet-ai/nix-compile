@@ -1,21 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                        // layout // convention // presets
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                // layout // convention // presets
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "The known nets, the corporate cores, each with its own internal
 --      logic, its own way of arranging the world."
 --
---                                                                 — Neuromancer
+--                                                                                     — Neuromancer
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   The convention catalog: the concrete 'Convention' values the tool ships
 --   with — 'straylight' (kebab-case, uniform module layout), plus the
 --   nixpkgs-by-name, flake-parts, nixos-config, and all-flake-module presets —
 --   and 'layoutFromName' to pick one by name. Pure data over
 --   "NixCompile.Layout.Convention.Types".
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Layout.Convention.Presets (
   straylight,
@@ -31,9 +31,9 @@ import Data.Text (Text)
 import NixCompile.Layout.Convention.Types
 import NixCompile.Layout.ModuleKind
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                      // straylight convention
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                          // straylight convention
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Straylight/aleph convention.
 
@@ -124,9 +124,9 @@ straylight =
     , convRequireFlakeMod = False
     }
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                     // other conventions
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                              // other conventions
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 nixpkgsByName :: Convention
 nixpkgsByName =

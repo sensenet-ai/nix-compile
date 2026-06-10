@@ -4,9 +4,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                      // tests // props
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                                 // tests // props
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --   "Heavy icebreakers are kind of funny to deal in, even for the big boys.
 --    You know why? Because ice, all the really hard stuff, the walls around
@@ -16,11 +16,11 @@
 --    icebreaker shows up on the black market, there are already a couple of
 --    very dicey factors in play."
 --
---                                                                 — Count Zero
+--                                                                                      — Count Zero
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                    // property // tests
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                              // property // tests
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module Main (main) where
 
@@ -107,9 +107,9 @@ import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
 import Test.QuickCheck.Monadic qualified as QCM
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Generators
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Generate valid bash variable names
 genVarName :: Gen Text
@@ -315,9 +315,9 @@ genComment = do
   text <- genStringLiteral
   return $ "# " <> text
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Arbitrary instances
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 instance Arbitrary Text where
   arbitrary = genStringLiteral
@@ -426,9 +426,9 @@ instance Arbitrary Effect where
 instance Arbitrary OverlaySignature where
   arbitrary = OverlaySignature <$> arbitrary <*> arbitrary
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Generators: Scope Graphs (adversarial)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 genScopeSpan :: Scope.SourceSpan
 genScopeSpan = Scope.SourceSpan (Scope.SourcePos 1 1) (Scope.SourcePos 1 1) Nothing
@@ -480,9 +480,9 @@ genMinimalFileGraph name offset =
         , Scope.sgRoot = root
         }
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Unification
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Unification is reflexive: t ~ t always succeeds
 prop_unify_reflexive :: Type -> Bool
@@ -559,9 +559,9 @@ prop_subst_single :: TypeVar -> Type -> Bool
 prop_subst_single v t =
   applySubst (singleSubst v t) (TVar v) == t
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Constraint solving
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Solving empty constraints succeeds with empty substitution
 prop_solve_empty :: Bool
@@ -639,9 +639,9 @@ prop_solve_deterministic :: [Constraint] -> Bool
 prop_solve_deterministic constraints =
   isRight (solve constraints) == isRight (solve (reverse constraints))
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Fact -> Constraint
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | DefaultIs generates exactly one constraint
 prop_default_is_constraint :: Text -> Literal -> Span -> Bool
@@ -658,9 +658,9 @@ prop_config_no_constraint :: ConfigPath -> Text -> Quoted -> Span -> Bool
 prop_config_no_constraint path var quoted sp =
   null (factToConstraints (ConfigAssign path var quoted sp))
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Schema building
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | All env vars in facts appear in schema
 prop_schema_env_complete :: [Fact] -> Property
@@ -719,9 +719,9 @@ prop_schema_required_marked facts =
       Nothing -> False
   requiredMarked _ _ = True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Parser
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Parser succeeds on well-formed generated bash
 prop_parser_no_crash :: Property
@@ -740,9 +740,9 @@ prop_parser_comments :: Property
 prop_parser_comments = forAll genComment $ \comment ->
   isRight (parseBash comment)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Pattern matching
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | parseParamExpansion recognizes ${VAR:-default}
 prop_pattern_default :: Text -> Text -> Bool
@@ -775,9 +775,9 @@ prop_numeric_rejects_alpha = forAll genStringLiteral $ \s ->
   not (T.all (\c -> c >= '0' && c <= '9' || c == '-') s) ==>
     not (isNumericLiteral s)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Builtins
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | All builtin commands have schemas
 prop_builtins_nonempty :: Bool
@@ -808,9 +808,9 @@ prop_builtins_unknown_cmd = forAll genStringLiteral $ \cmd ->
   let weirdCmd = "xyz-" <> cmd <> "-unknown"
    in lookupArgType weirdCmd "--timeout" == Nothing
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Config tree
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Config tree preserves all non-empty paths when no path is a prefix of another.
 The tree can't represent a key as both a leaf and a branch (e.g. ["v"] and ["v","a"]).
@@ -848,9 +848,9 @@ prop_config_tree_complete items =
       | (k, v) <- Map.toList m
       ]
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Scope graph
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Edge priority: Parent edges are resolved before With edges.
 A reference 'x' in a scope with both a Parent edge (to a LetScope with 'x')
@@ -903,9 +903,9 @@ prop_scope_parent_before_with =
         Right decl -> Scope.declScope decl == Scope.ScopeId 1
         Left _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Literal parsing
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Integer literals roundtrip
 prop_literal_int_roundtrip :: Int -> Bool
@@ -931,9 +931,9 @@ prop_literal_type_consistent lit =
     LitBool _ -> literalType lit == TBool
     LitPath _ -> literalType lit == TPath
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: End-to-end
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Full pipeline on success produces non-trivial schema
 prop_e2e_no_crash :: Property
@@ -958,9 +958,9 @@ prop_e2e_concrete_types = forAll genBashFragment $ \script ->
     TVar _ -> False
     _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Stress tests
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Large scripts produce schemas with env vars
 prop_stress_large_script :: Property
@@ -1113,9 +1113,9 @@ prop_overlay_propagation n1 n2 =
         m = mergeSignatures p c
      in Set.member (RequireUpstream n2 t) (osCoeffects m)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Nix type inference (FIX-11)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | Generate valid Nix expression source text.
 Now includes `with` and `rec` since inference supports them.
@@ -1279,7 +1279,7 @@ parseAndInferModule src = case parseNixTextLoc src of
   Left _err -> Left "parse error"
   Right expr -> inferModuleExpr expr
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- REVIEW-3 regression / bug-demonstration properties
 --
 -- One property per review finding. FIXED findings assert the corrected behavior
@@ -1288,7 +1288,7 @@ parseAndInferModule src = case parseNixTextLoc src of
 -- CORRECT behavior, currently fails, and will flip RED the moment the root cause
 -- is fixed — turning these into "did we actually fix it?" tripwires. See
 -- REVIEW-3.md §"Root causes & the fork".
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- #1 (FIXED): nested selection is no longer truncated, and selecting a field
 -- from a concrete non-attrset (`x.a : Int`, then `.b`) is a type error.
@@ -1809,9 +1809,9 @@ prop_nix_rec_infinite =
     Left _ -> True -- should be rejected
     _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Module kind detection
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Simple attrset with _class flake is detected as FlakeModule
 prop_module_kind_flake :: Bool
@@ -1858,9 +1858,9 @@ prop_module_kind_flake_file =
        in mk == Flake
     _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Naming convention enforcement
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 dummySpanNaming :: Span
 dummySpanNaming = Span (Loc 0 0) (Loc 0 0) Nothing
@@ -1896,9 +1896,9 @@ prop_naming_roundtrip_snake =
   Naming.toSnakeCase "hello_world" == "hello_world"
     && Naming.toSnakeCase "helloworld" == "helloworld"
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Layout convention enforcement
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | straylight convention validates _class = "flake" in modules/flake/
 prop_layout_straylight_valid :: Bool
@@ -2116,9 +2116,9 @@ prop_layout_unknown_kind =
         LC.validateLayout LC.straylight "/" [("anywhere/foo.nix", Detection Unknown 100 [])]
    in null violations
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Merge correctness
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | mergeEnvSpec preserves required from either side
 prop_merge_preserves_required :: Bool
@@ -2162,9 +2162,9 @@ prop_merge_schema_identity facts =
       schema = buildSchema facts subst
    in property $ mergeSchemas emptySchema schema == schema
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Fact extraction vectors
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | \${VAR:-default} produces DefaultIs fact
 prop_fact_default_is :: Bool
@@ -2299,9 +2299,9 @@ prop_fact_config_empty_value =
     Right ast -> null (extractFacts ast)
     Left _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Emit-config output
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | emit-config JSON contains ${VAR:?} guards for variable refs
 prop_emit_json_guarded :: Property
@@ -2465,9 +2465,9 @@ prop_emit_json_string_quoted =
       output = emitConfigJson schema
    in "__nix_compile_escape_json" `T.isInfixOf` output
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Scope graph construction
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Let bindings create declarations in the correct scope
 prop_scope_let_decl :: Bool
@@ -2534,9 +2534,9 @@ prop_scope_merge_files =
        in "a" `elem` names && "b" `elem` names
     _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Go-to-definition via scope graph resolution
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Definition: let x = 42; in x resolves reference to declaration
 prop_defn_let :: Bool
@@ -2608,9 +2608,9 @@ prop_defn_empty =
     , r <- Scope.scopeReferences s
     ]
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Nix lint
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Nix lint detects `with`
 prop_nix_lint_with :: Bool
@@ -2633,9 +2633,9 @@ prop_nix_lint_clean =
     Left _ -> False
     Right expr -> null (findNixViolations expr)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Bash lint
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Bash lint detects heredocs
 prop_bash_lint_heredoc :: Bool
@@ -2658,9 +2658,9 @@ prop_bash_lint_clean =
     Left _ -> False
     Right ast -> null (findViolations ast)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: New Nix lint rules (N005-N012)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Nix lint detects `substituteAll`
 prop_nix_lint_substitute_all :: Bool
@@ -2748,9 +2748,9 @@ prop_nix_lint_short_string_ok =
                 _ -> False
            in not (any hasLongStr violations)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Derivation lint rules
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | mkDerivation without meta triggers VMissingMeta
 prop_deriv_missing_meta :: Bool
@@ -2798,9 +2798,9 @@ prop_deriv_stdenv_path =
           hasMissingMeta v = DerivLint.dvType v == DerivLint.VMissingMeta
        in any hasMissingMeta violations
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Pattern lint rules
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Pattern lint detects `x.y or null`
 prop_pattern_or_null_fallback :: Bool
@@ -2842,9 +2842,9 @@ prop_nix_lint_stdenv_path =
             _ -> False
        in any hasRawMkDeriv violations
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Adversarial Lint -- False Positive Attacks
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | FP-1: String literal "mkDerivation" does NOT trigger VRawMkDerivation
 prop_adv_fp_string_mkderiv :: Bool
@@ -2942,9 +2942,9 @@ prop_adv_fp_null_as_value =
           (\v -> PatternLint.pvType v == PatternLint.VOrNullFallback)
           (PatternLint.findPatternViolations expr)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Adversarial Lint -- False Negative Attacks
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | FN-1: mkDerivation through let binding (KNOWN GAP -- leafSym doesn't follow binds)
 prop_adv_fn_mkderiv_let :: Bool
@@ -3025,9 +3025,9 @@ prop_adv_fn_map_attrs =
         (\v -> PatternLint.pvType v == PatternLint.VAttrTranslation)
         (PatternLint.findPatternViolations expr)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Adversarial Lint -- Crash Attacks
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | CRASH-1: checkPackageDirs on nonexistent dirs
 prop_adv_crash_nonexistent_dir :: Property
@@ -3074,9 +3074,9 @@ prop_adv_crash_deep_ornull =
         Right expr -> PatternLint.findPatternViolations expr `seq` True
         Left _ -> True
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Adversarial Lint -- Config Integration
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | CONF-1: SevOff override makes isSuppressed return True
 prop_adv_is_suppressed_sevoff :: Bool
@@ -3132,9 +3132,9 @@ prop_adv_default_no_suppress =
 prop_adv_is_suppressed_empty :: Bool
 prop_adv_is_suppressed_empty = not (isSuppressed defaultConfig "")
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Adversarial Lint -- Format Consistency
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | FMT-1: formatNixViolations non-empty for non-empty list
 prop_adv_format_nix_nonempty :: Bool
@@ -3202,9 +3202,9 @@ prop_adv_no_dup_codes =
       codes = map (\f -> codeFromLine (case T.lines f of [] -> ""; l : _ -> l)) allFmt
    in length codes == length (nub codes)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Schema defaulted vars (DESIGN-2)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Variables with no type evidence are reported in schemaDefaultedVars
 prop_schema_defaulted_reported :: Bool
@@ -3224,9 +3224,9 @@ prop_schema_resolved_not_defaulted =
       schema = buildSchema facts subst
    in "PORT" `notElem` schemaDefaultedVars schema
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: End-to-end integration
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | parseScript on a config script produces config in schema
 prop_e2e_config_extraction :: Bool
@@ -3347,9 +3347,9 @@ prop_e2e_config_template_default =
             Just ConfigSpec{cfgTemplate = Just [ConfigVarDefault "HOST" "localhost"]} -> True
             _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Edge cases
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Script with only comments produces empty schema
 prop_edge_comments_only :: Bool
@@ -3396,9 +3396,9 @@ prop_edge_all_fact_types =
           Map.size (schemaEnv (scriptSchema s)) >= 4
             && Map.size (schemaConfig (scriptSchema s)) >= 2
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Emit-config structural
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | emit-config JSON has balanced braces
 prop_emit_json_balanced :: Property
@@ -3456,9 +3456,9 @@ genConfigFacts = do
           pure $ ConfigLit path lit sp
       ]
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Format (annotation placement)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | annotateExpr on let-bound function adds type annotation
 prop_format_function :: Bool
@@ -3467,9 +3467,9 @@ prop_format_function =
     Right output -> "# ::" `T.isInfixOf` output
     Left _ -> False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Bash AST edge cases
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Arithmetic expansion doesn't crash fact extraction
 prop_bash_arithmetic :: Bool
@@ -3535,9 +3535,9 @@ prop_bash_span_multi_line =
                 )
                 violations
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Scope graph adversarial attacks
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | SCOPE-1: Scope ID exhaustion -- build 100k scopes, verify counter and resolution
 prop_scope_id_exhaustion :: Bool
@@ -3735,9 +3735,9 @@ prop_scope_dhall_empty :: Bool
 prop_scope_dhall_empty =
   not (T.null (Scope.toDhall Scope.empty))
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Config loading attacks
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | CONFIG-1: Config file doesn't exist -- returns Left
 prop_config_no_file :: Property
@@ -3845,9 +3845,9 @@ prop_config_globstar_matches_all =
   let cfg = defaultConfig{configExtraIgnores = ["**"]}
    in isIgnored cfg "any/file/path.nix" && isIgnored cfg "" && isIgnored cfg "x"
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Glob matching (matchGlob via isIgnored)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | GLOB-1: Exact filename match
 prop_glob_exact :: Bool
@@ -3986,9 +3986,9 @@ prop_glob_leading_star_path =
    in isIgnored cfg "pkg/test/foo.nix"
         && not (isIgnored cfg "test/foo.nix")
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Severity override attacks
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | SEV-1: Override same rule twice (first match wins via filter head)
 prop_severity_duplicate_override :: Bool
@@ -4041,9 +4041,9 @@ prop_severity_ordering :: Bool
 prop_severity_ordering =
   Cfg.SevError > Cfg.SevWarning && Cfg.SevWarning > Cfg.SevInfo && Cfg.SevInfo > Cfg.SevOff
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: LSP adversarial
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | LSP-3: lintFile on empty input returns no diagnostics
 prop_lsp_lint_empty :: Bool
@@ -4100,9 +4100,9 @@ prop_lsp_spandiag_edge =
         && psl == 2
         && psc == 4 -- 1-based to 0-based: line 3-1=2, col 5-1=4
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Rule ID consistency (Haskell ↔ Dhall config)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | RULE-1: All Haskell rule IDs are unique across lint modules (excluding known H/D unions)
 prop_rule_ids_unique :: Bool
@@ -4212,9 +4212,9 @@ prop_rule_massive_overrides =
    in not (isSuppressed cfg (Cfg.bashRuleId VEval))
         && effectiveSeverity cfg (Cfg.bashRuleId VEval <> "1") == Just Cfg.SevInfo
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Hover type inference
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | HOVER-1: Integer literal at cursor -> TInt
 prop_hover_int :: Bool
@@ -4265,9 +4265,9 @@ prop_hover_nonexistent =
     Left _ -> False
     Right expr -> isNothing (inferExprAt expr 100 0)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: References LSP handler (findReferences)
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | REFS-1: let x = 42; in x + x has 2 references to x in the body
 prop_refs_let :: Bool
@@ -4313,9 +4313,9 @@ prop_refs_unresolved =
       let sg = Scope.fromNixExpr Nothing expr
        in null (Scope.findDeclaration sg "nonexistent")
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Rename
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | RENAME-1: let x = 42; in x + x has 2 references to x
 prop_rename_let :: Bool
@@ -4348,9 +4348,9 @@ prop_rename_func =
             [] -> False
             decl : _ -> not (null (Scope.findReferences sg decl))
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: Completion
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 getCompletionLabels :: Text -> [Text]
 getCompletionLabels src =
@@ -4383,9 +4383,9 @@ prop_completion_func =
   let labels = getCompletionLabels "{x, y}: x + y"
    in "x" `elem` labels && "y" `elem` labels
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: CLI Types
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | emptyCICounts has all fields zero
 prop_cli_empty_cicounts_all_zero :: Bool
@@ -4439,9 +4439,9 @@ prop_cli_cicounts_merge =
         && ciGraphFailures c == 24
         && ciLayoutViolations c == 26
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: CLI Report
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 dummySpan :: Span
 dummySpan = Span (Loc 0 0) (Loc 0 0) Nothing
@@ -4529,9 +4529,9 @@ prop_report_package_nonempty =
   let out = formatPackageViolations [dummyPackageViolation]
    in "ALEPH-P001" `T.isInfixOf` out && not (T.null out)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: CLI Check
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | detectUnsupportedConstruct detects rec attrsets
 prop_check_unsupported_rec :: Bool
@@ -4571,9 +4571,9 @@ prop_check_format_type_error_empty =
   let result = formatTypeError ""
    in "TYPE WARNING" `T.isInfixOf` result
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: CLI Bash
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | safeReadFile on existing file returns Right
 prop_bash_safe_read_existing :: Property
@@ -4591,9 +4591,9 @@ prop_bash_safe_read_nonexistent =
       Left _ -> QCM.assert True
       Right _ -> QCM.assert False
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Properties: CLI Check -- exit code regression
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 {- | REGRESSION: checkWithViolations with skipTypeCheck=True and no lint
 violations must return TCFail (not TCOk). When a file has an unsupported
@@ -4638,15 +4638,15 @@ prop_cli_lint_check_fails = QCM.monadicIO $ do
             checkWithViolations defaultConfig "test.nix" expr False
       QCM.assert (result == TCFail)
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Main
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Wired-in adversarial suites (test/Adversarial.hs, test/NixAdversarial.hs were
 -- compiled but never run). Built here so the Arbitrary orphan instances above
 -- are in scope. Run from main alongside the Psychotic suite.
--- ============================================================================
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 qcRun :: (Testable p) => p -> IO Bool
 qcRun p = isSuccess <$> quickCheckWithResult stdArgs{maxSuccess = 100, chatty = False} p

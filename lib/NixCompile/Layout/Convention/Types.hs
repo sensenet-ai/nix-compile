@@ -1,20 +1,20 @@
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                          // layout // convention // types
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                                  // layout // convention // types
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "Wintermute was hive mind, decision maker, effecting change in
 --      the world outside."
 --
---                                                                 — Neuromancer
+--                                                                                     — Neuromancer
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   The convention vocabulary: a 'Convention' is a set of 'ConventionRule's
 --   (module kind → where it may live, via 'PathPattern') plus the naming
 --   policy ('NamingConvention') for files, attributes, and identifiers. A
 --   violation is a 'LayoutError' tagged with an 'ErrorCode'. Dependency-free —
 --   the preset catalog, naming checks, and the validation engine all build on
 --   this.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Layout.Convention.Types (
   -- * Conventions
@@ -32,9 +32,9 @@ where
 import Data.Text (Text)
 import NixCompile.Layout.ModuleKind (ModuleKind)
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                     // types
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                          // types
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | A layout convention defines where things should live and what they're called.
 data Convention = Convention
@@ -85,9 +85,9 @@ data NamingConvention
     NoNaming
   deriving (Eq, Show)
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                   // errors
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                         // errors
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 data ErrorCode
   = -- | File in wrong location for its module kind

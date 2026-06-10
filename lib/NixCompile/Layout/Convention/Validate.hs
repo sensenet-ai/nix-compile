@@ -1,23 +1,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                       // layout // convention // validate
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--                                                               // layout // convention // validate
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
 --     "Wintermute was hive mind, decision maker, effecting change in
 --      the world outside."
 --
---                                                                 — Neuromancer
+--                                                                                     — Neuromancer
 --
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --   The validation engine: given a 'Convention', check a file (by path +
 --   detected kind, or by parsed AST) against its location rules, forbidden
 --   locations, file-name policy, and flake-module requirement, plus the
 --   universal checks that apply to every convention — banned @_index.nix@ /
 --   @_main.nix@ names and the @_class@ attribute that must match the
 --   directory. Produces a list of 'LayoutError'.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Layout.Convention.Validate (
   -- * Validation
@@ -49,9 +49,9 @@ import NixCompile.Layout.ModuleKind
 import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
 import System.FilePath (makeRelative, splitDirectories, takeFileName)
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                     // universal checks
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                               // universal checks
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- Checks that apply regardless of convention: banned file names, _class
 -- attribute validation.
 
@@ -166,9 +166,9 @@ validateFileFromExpr conv root path expr =
   validateFile conv root path (detectKind path expr)
     ++ checkClassAttr path expr
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                // validation
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                     // validation
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- | Validate a single file against a convention.
 validateFile :: Convention -> FilePath -> FilePath -> Detection -> [LayoutError]
@@ -248,9 +248,9 @@ validateFlakeModReq conv relPath kind _detection =
   | convRequireFlakeMod conv && kind `notElem` [Flake, FlakeModule, Package]
   ]
 
--- ══════════════════════════════════════════════════════════════════════════════
---                                                                   // helpers
--- ══════════════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
+--                                                                                        // helpers
+-- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
 findRuleForKind :: [ConventionRule] -> ModuleKind -> Maybe ConventionRule
 findRuleForKind rules kind = find ((== kind) . ruleKind) rules
