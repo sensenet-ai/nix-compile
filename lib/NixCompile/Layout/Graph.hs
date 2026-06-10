@@ -63,6 +63,7 @@ import System.FilePath (pathSeparator, takeDirectory, (</>))
 -- types
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- | one node in the module graph: its path, parsed AST, inferred type, and imports.
 data Module = Module
   { modPath :: !FilePath
   , modExpr :: !NExprLoc
@@ -71,24 +72,30 @@ data Module = Module
   }
   deriving (Show)
 
+-- | a file that failed to parse (or tripped the safety gate), with the error text.
 data ParseFailure = ParseFailure
   { pfPath :: !FilePath
   , pfError :: !Text
   }
   deriving (Show)
 
+-- | a file's lint violations (recorded only when non-empty).
 data LintFailure = LintFailure
   { lfPath :: !FilePath
   , lfViolations :: ![NixViolation]
   }
   deriving (Show)
 
+-- | a file's layout-convention violations (recorded only when non-empty).
 data LayoutFailure = LayoutFailure
   { layPath :: !FilePath
   , layViolations :: ![LayoutError]
   }
   deriving (Show)
 
+{- | the whole module graph: modules by path, the root, the topological order,
+the three failure categories, and the cross-module inferred types.
+-}
 data ModuleGraph = ModuleGraph
   { mgModules :: !(Map FilePath Module)
   , mgRoot :: !FilePath

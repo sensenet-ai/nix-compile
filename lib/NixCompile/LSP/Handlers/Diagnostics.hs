@@ -110,10 +110,12 @@ bashErrorCode Forbidden.VHereString = "ALEPH-B002"
 bashErrorCode Forbidden.VEval = "ALEPH-B003"
 bashErrorCode Forbidden.VBacktick = "ALEPH-B004"
 
+-- | Render one nix-lint 'NixViolation' as an LSP 'Diagnostic' (code + context).
 toNixDiag :: NixViolation -> Diagnostic
 toNixDiag NixViolation{nvType = vt, nvSpan = sp, nvContext = ctx} =
   spToDiagnostic (nixCode vt <> ": " <> ctx) sp
 
+-- | The @ALEPH-N*@ rule code string for a nix-lint 'ViolationType'.
 nixCode :: ViolationType -> Text
 nixCode VWith = "ALEPH-N001"
 nixCode VRec = "ALEPH-N002"
@@ -124,6 +126,9 @@ nixCode VRawWriteShellApplication = "ALEPH-N008"
 nixCode VWriteShellScript = "ALEPH-N011"
 nixCode (VLongInlineString n) = "ALEPH-N012 (" <> T.pack (show n) <> " chars)"
 
+{- | Build an error-severity LSP 'Diagnostic' from a message and a 1-based
+  source 'Span', converting to 0-based LSP positions (clamped at zero).
+-}
 spToDiagnostic :: Text -> Span -> Diagnostic
 spToDiagnostic msg (Span (Loc line col) (Loc endL endC) _) =
   -- n.b. ShellCheck positions are 0-based; megaparsec positions are 1-based.

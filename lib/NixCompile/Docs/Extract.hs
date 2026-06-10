@@ -39,6 +39,10 @@ import NixCompile.Layout.Scope.Types (
   SourceSpan (..),
  )
 
+{- | Extract documentation items from a scope graph and its source text: one
+'DocItem' per declaration (in source order), each carrying its preceding
+@#@-comment block as the description and a kind inferred from its scope.
+-}
 extractDocs :: ScopeGraph -> Text -> [DocItem]
 extractDocs sg src =
   let decls = concatMap scopeDeclarations (Map.elems (sgScopes sg))

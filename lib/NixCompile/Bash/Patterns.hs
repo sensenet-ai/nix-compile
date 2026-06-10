@@ -50,6 +50,7 @@ import Text.Read (readMaybe)
 -- Parameter Expansion
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- | a parsed bash parameter expansion form (@${var:-default}@, @${var:?err}@, plain @$var@, …).
 data ParamExpansion
   = DefaultValue Text (Maybe Text)
   | AssignDefault Text (Maybe Text)
@@ -132,6 +133,7 @@ parseExpansionBody body
 -- Config Assignment
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- | a parsed @config.*@ assignment: the key path, its value (variable or literal), and quoting.
 data ConfigAssignment = ConfigAssignment
   { configPath :: [Text]
   , configValue :: Either Text Literal
@@ -218,6 +220,7 @@ isValidVarName text = maybe False valid (T.uncons text)
   startChar c = isAsciiUpper c || isAsciiLower c || c == '_'
   varChar c = startChar c || isDigit c
 
+-- | parse a config RHS into (variable name or literal, quoting); handles @"${…}"@, @"$VAR"@, plain.
 parseConfigValue :: Text -> Maybe (Either Text Literal, Quoted)
 parseConfigValue text
   | "\"${" `T.isPrefixOf` text && "\"" `T.isSuffixOf` text =

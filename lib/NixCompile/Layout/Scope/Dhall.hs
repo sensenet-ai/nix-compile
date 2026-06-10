@@ -169,5 +169,6 @@ toExport scopeGraph =
       , col = fromIntegral (posCol p)
       }
 
+-- | render a scope graph as pretty-printed Dhall text (the zeitschrift wire shape).
 toDhall :: ScopeGraph -> Text
 toDhall scopeGraph = Dhall.pretty (Dhall.embed Dhall.inject (toExport scopeGraph))

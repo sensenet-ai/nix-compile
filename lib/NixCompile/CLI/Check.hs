@@ -40,6 +40,10 @@ import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Syntax.Annotation (pattern Layer)
 import NixCompile.Syntax.Parse qualified as Nix
 
+{- | Parse, depth-guard, and check one .nix file: emits lint and type
+diagnostics and returns the overall 'TCResult' (a parse/depth failure is
+'TCFail'; unsupported constructs skip the type check).
+-}
 checkFile :: Config.Config -> FilePath -> AppM TCResult
 checkFile config file = do
   parseResult <- liftIO $ Nix.parseNixFile file
@@ -88,6 +92,10 @@ checkFile config file = do
         unsupMarker <> " " <> T.pack file <> " (skipping type check: " <> reason <> ")"
     checkWithViolations config file expression True
 
+{- | Run the combined lint suite and (unless @skipTypeCheck@) the type check on
+an already-parsed expression, emitting diagnostics and folding both into a
+single 'TCResult'.
+-}
 checkWithViolations :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
 checkWithViolations config file expression skipTypeCheck = do
   let bundle = Combined.combinedLint file expression
@@ -123,6 +131,10 @@ checkWithViolations config file expression skipTypeCheck = do
         return TCFail
   report typeCheckResult
 
+{- | Infer the expression's type (module-mode for flakes/modules, strict env
+otherwise), emitting a TYPE diagnostic on error at the rule's configured
+severity. Returns 'TCOk' when @skipTypeCheck@, clean, or the rule is off.
+-}
 performTypeCheck :: Config.Config -> FilePath -> NExprLoc -> Bool -> AppM TCResult
 performTypeCheck config file expression skipTypeCheck
   | skipTypeCheck = return TCOk
@@ -175,6 +187,7 @@ performTypeCheck config file expression skipTypeCheck
     let base = typeDiagnostic sev file typeError
     emitDiagnostic (either (const base) (`attachSnippet` base) srcResult)
 
+-- | Format a multi-line type-error string as an indented @TYPE WARNING:@ block.
 formatTypeError :: T.Text -> T.Text
 formatTypeError errorText = format (T.lines errorText)
  where
@@ -218,6 +231,9 @@ detectUnsupportedConstruct = go
   isDynamicKey (DynamicKey _) = True
   isDynamicKey _ = False
 
+{- | Detect an unsupported construct inside a single let/attrset binding,
+recursing into its value (and into the source of an @inherit (e) …@).
+-}
 detectUnsupportedBinding :: Binding NExprLoc -> Maybe T.Text
 detectUnsupportedBinding (NamedVar _ e _) = detectUnsupportedConstruct e
 detectUnsupportedBinding (Inherit (Just s) _ _) = detectUnsupportedConstruct s

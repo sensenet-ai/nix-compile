@@ -59,6 +59,7 @@ annotateFileWithEnv env path = do
     parseResult <- parseNixFile path
     pure $ either Left (annotateExprWithEnv env src) parseResult
 
+-- | parse and annotate an in-memory expression source string with the default env.
 annotateExpr :: Text -> Either Text Text
 annotateExpr src = either Left (annotateExprWithEnv builtinEnv src) (parseNix "<input>" src)
 
@@ -70,6 +71,9 @@ annotateExprWithEnv env src expr =
   inferred = either Left fromBindings (inferExprWithEnv env expr)
   fromBindings (_, bindings) = Right $ annotateSource src (InferResult bindings [])
 
+{- | inject @# :: \<type\>@ comment lines into source text from an inference result,
+applying annotations bottom-up so earlier line offsets stay valid.
+-}
 annotateSource :: Text -> InferResult -> Text
 annotateSource src InferResult{..} =
   let

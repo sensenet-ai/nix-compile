@@ -54,6 +54,9 @@ import NixCompile.Lint.Patterns (
  )
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 
+{- | the three violation categories collected in a single AST walk: Nix-idiom,
+derivation-quality, and pattern violations.
+-}
 data LintBundle = LintBundle
   { lbNix :: ![NixViolation]
   , lbDeriv :: ![DerivViolation]
@@ -61,6 +64,7 @@ data LintBundle = LintBundle
   }
   deriving (Eq, Show)
 
+-- | a bundle with no violations in any category.
 emptyBundle :: LintBundle
 emptyBundle = LintBundle [] [] []
 

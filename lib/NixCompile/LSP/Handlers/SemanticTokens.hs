@@ -34,6 +34,9 @@ import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv)
 import NixCompile.LSP.Handlers.Cursor (childExprs)
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern LayerAnn)
 
+{- | The token-type and modifier legend the encoded tokens index into; declared
+  to the client at registration so it can map indices back to names.
+-}
 semanticLegend :: SemanticTokensLegend
 semanticLegend =
   SemanticTokensLegend
@@ -52,6 +55,9 @@ data RawToken = RawToken
 instance Ord RawToken where
   compare a b = compare (rtLine a, rtCol a) (rtLine b, rtCol b)
 
+{- | Pure: classify every AST leaf and delta-encode the tokens into the LSP
+  wire format, ordered by position. Token types per 'semanticLegend'.
+-}
 semanticTokens :: NExprLoc -> SemanticTokens
 semanticTokens expr =
   let raw = collectTokens expr

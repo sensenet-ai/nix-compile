@@ -86,6 +86,9 @@ isNamespaceVar :: Text -> NExprLoc -> Bool
 isNamespaceVar name (Layer (NSym n)) = varNameText n == name
 isNamespaceVar _ _ = False
 
+{- | the starting typing environment: @builtins@ as an attrset, the polymorphic
+builtin schemes, and monotype signatures for the bare builtin names.
+-}
 builtinEnv :: TypeEnv
 builtinEnv =
   TypeEnv

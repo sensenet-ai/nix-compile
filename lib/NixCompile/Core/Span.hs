@@ -27,6 +27,7 @@ where
 import Data.Aeson (FromJSON, ToJSON)
 import GHC.Generics (Generic)
 
+-- | a source position: a 1-based (line, column) pair.
 data Loc = Loc
   { locLine :: !Int
   , locCol :: !Int
@@ -36,6 +37,7 @@ data Loc = Loc
 instance FromJSON Loc
 instance ToJSON Loc
 
+-- | a source range: a start and end 'Loc' plus the originating file, if known.
 data Span = Span
   { spanStart :: !Loc
   , spanEnd :: !Loc

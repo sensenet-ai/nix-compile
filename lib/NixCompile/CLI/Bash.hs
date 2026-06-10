@@ -35,6 +35,10 @@ import NixCompile.Inference.Bash.Unify (solve)
 import NixCompile.Lint.Forbidden (findViolations, violationDiagnostic)
 import NixCompile.Syntax.Parse qualified as Nix
 
+{- | Check a standalone bash file: parse it, run forbidden-pattern lint, config
+validation, type inference, and bare/dynamic-command checks; emit diagnostics
+and exit non-zero on any finding.
+-}
 checkBashFile :: Config.Config -> FilePath -> AppM ()
 checkBashFile config file = do
   src <- liftIO $ safeReadFile file
@@ -72,6 +76,9 @@ checkBashFile config file = do
 
   typeErrorMsg err = "Type error: " <> T.pack (show err)
 
+{- | Check a single .nix file: type-check it, then analyze every embedded shell
+script; exits non-zero if the type check failed or any embedded bash erred.
+-}
 checkNixFile :: Config.Config -> FilePath -> AppM ()
 checkNixFile config file = do
   nixResult <- checkFile config file
@@ -82,6 +89,10 @@ checkNixFile config file = do
   tcFailCount TCFail = 1
   tcFailCount _ = 0
 
+{- | Extract the embedded shell scripts from a .nix file. On parse failure
+yields @[]@ (the caller already reported the parse error) rather than
+re-reporting and aborting.
+-}
 parseNixFiles :: FilePath -> AppM [Nix.BashScript]
 parseNixFiles file = do
   result <- liftIO $ Nix.extractBashScripts file
@@ -98,17 +109,28 @@ parseNixFiles file = do
           "Found " ++ show (length scripts) ++ " shell scripts in " ++ file
     pure scripts
 
+{- | Check every embedded shell script via 'checkScript' and sum their error
+counts.
+-}
 analyzeNixScripts :: Config.Config -> FilePath -> [Nix.BashScript] -> AppM Int
 analyzeNixScripts config file scripts =
   sum <$> mapM (checkScript config file) scripts
 
--- A single-file check is silent on success and emits only the diagnostics (plus
--- exit code) on failure — the directory check prints the "checked N files" summary.
+{- | Exit a single-file check based on its total error count: 'exitSuccess' when
+zero, 'exitFailure' otherwise (diagnostics were already emitted).
+
+A single-file check is silent on success and emits only the diagnostics (plus
+exit code) on failure — the directory check prints the "checked N files" summary.
+-}
 reportNixResults :: FilePath -> Int -> AppM ()
 reportNixResults _file totalErrors
   | totalErrors > 0 = liftIO exitFailure
   | otherwise = liftIO exitSuccess
 
+{- | Check one embedded shell script (lint, config validation, type inference,
+store-path interpolation warnings, bare/dynamic-command checks); emit
+diagnostics and return the total number of errors found.
+-}
 checkScript :: Config.Config -> FilePath -> Nix.BashScript -> AppM Int
 checkScript configuration _file bs = do
   $(logTM) DebugS $ logStr $ "\n" <> Draw.framed Draw.Double (Nix.bsName bs)
@@ -153,6 +175,9 @@ checkScript configuration _file bs = do
 
     return (length violations + bareCount + dynCount + typeErrors + configErrors)
 
+{- | Read a file's text, catching any 'IOException' and returning it as a 'Left'
+error message instead of throwing.
+-}
 safeReadFile :: FilePath -> IO (Either Text Text)
 safeReadFile path = do
   result <- try (TIO.readFile path) :: IO (Either IOException Text)

@@ -42,8 +42,10 @@ nixfmtFormat :: FilePath -> Text -> Text
 nixfmtFormat path srcTxt =
   either (const srcTxt) id (Nixfmt.format (layout 100 2 False) path srcTxt)
 
+-- | reformat in-memory Nix source via vendored nixfmt; the parsed AST is ignored.
 formatNix :: Text -> NExprLoc -> Text
 formatNix srcTxt _expr = nixfmtFormat "<nix>" srcTxt
 
+-- | reformat Nix source via vendored nixfmt, using @path@ for error context only.
 formatNixFile :: Text -> FilePath -> NExprLoc -> Text
 formatNixFile srcTxt path _expr = nixfmtFormat path srcTxt

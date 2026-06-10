@@ -30,6 +30,7 @@ import Data.Text ()
 import Language.LSP.Server
 import NixCompile.LSP.Handlers (handlers)
 
+-- | Run the LSP server over stdio, wiring up the 'handlers'; returns the exit code.
 run :: IO Int
 run =
   runServer $

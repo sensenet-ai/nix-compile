@@ -28,11 +28,14 @@ import Data.Text.Lazy.Builder qualified as Builder
 import Katip hiding (logStr)
 import Katip qualified
 
+-- | the application monad: katip structured logging over 'IO'.
 type AppM = KatipContextT IO
 
+-- | build a katip 'Katip.LogStr' from 'Text' (re-exposed since Katip's own is hidden here).
 logStr :: Text -> Katip.LogStr
 logStr = Katip.logStr
 
+-- | run an 'AppM' action, logging items at or above the given severity to stderr.
 runLog :: Severity -> AppM a -> IO a
 runLog minSeverity action = do
   -- No severity text prefix: diagnostics already carry their own

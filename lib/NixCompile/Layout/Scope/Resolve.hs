@@ -42,6 +42,7 @@ import NixCompile.Layout.Scope.Types
 
 -- ── name resolution: find which declaration a reference points to ──
 
+-- | why a reference failed to resolve: no binding found, or more than one.
 data ResolutionError
   = Unresolved Reference
   | Ambiguous Reference [Declaration]

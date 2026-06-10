@@ -80,11 +80,17 @@ cfgTypeIsStringy TPath = True
 cfgTypeIsStringy (TVar _) = True
 cfgTypeIsStringy _ = False
 
+{- | A nested config namespace: an interior 'ConfigBranch' keyed by path segment,
+or a 'ConfigLeaf' holding the spec for a single dotted config path.
+-}
 data ConfigTree
   = ConfigBranch !(Map Text ConfigTree)
   | ConfigLeaf !ConfigSpec
   deriving (Eq, Show)
 
+{- | Fold a flat map of dotted config paths into the nested 'ConfigTree' used by
+the per-format renderers.
+-}
 buildConfigTree :: Map ConfigPath ConfigSpec -> ConfigTree
 buildConfigTree specs = foldr insertPath (ConfigBranch Map.empty) (Map.toList specs)
  where
@@ -102,6 +108,9 @@ buildConfigTree specs = foldr insertPath (ConfigBranch Map.empty) (Map.toList sp
 
 -- ── emit-config bash function ─────────────────────────────────────
 
+{- | Emit the full @emit-config@ bash function for a schema: header, the JSON
+escape and int/bool require helpers, and the runtime guards + format dispatch.
+-}
 emitConfigFunction :: Schema -> Text
 emitConfigFunction schema =
   T.unlines $
@@ -255,6 +264,7 @@ renderRuntimeGuards schema =
     templateVar (ConfigVarRequired var) = [var]
     templateVar _ = []
 
+-- | Emit the bash @printf@ statement that prints the schema's config as JSON.
 emitConfigJSON :: Schema -> Text
 emitConfigJSON schema =
   let env = schemaEnv schema
@@ -340,6 +350,7 @@ renderJSONValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
 
+-- | Emit the bash @printf@ statement that prints the schema's config as YAML.
 emitConfigYAML :: Schema -> Text
 emitConfigYAML schema =
   let env = schemaEnv schema
@@ -389,6 +400,7 @@ renderYAMLValue env ConfigSpec{..} = go cfgFrom cfgLit cfgTemplate
           else dynamicTemplate guardedVar
   go _ _ _ = literalTemplate "null"
 
+-- | Emit the bash @printf@ statement that prints the schema's config as TOML.
 emitConfigTOML :: Schema -> Text
 emitConfigTOML schema =
   let env = schemaEnv schema

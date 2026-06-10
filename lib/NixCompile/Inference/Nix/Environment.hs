@@ -31,6 +31,10 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import NixCompile.Inference.Nix.Type
 
+{- | the typing environment threaded through inference: name → scheme bindings,
+the enclosing @with@ scope, per-file imported-module types, and the lenient /
+module-param mode flags.
+-}
 data TypeEnv = TypeEnv
   { envBindings :: Map Text Scheme
   , envWith :: Maybe NixType
@@ -52,6 +56,7 @@ data TypeEnv = TypeEnv
   }
   deriving (Eq, Show)
 
+-- | the empty environment: no bindings, no @with@, no imports, strict mode.
 emptyEnv :: TypeEnv
 emptyEnv = TypeEnv Map.empty Nothing Map.empty False False
 

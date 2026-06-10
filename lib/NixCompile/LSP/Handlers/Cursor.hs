@@ -72,6 +72,7 @@ findExprAt l c = go
   bindingExprs (NamedVar _ e _) = [e]
   bindingExprs (Inherit mScope _ _) = maybeToList mScope
 
+-- | The immediate sub-expressions of one AST node (one level deep).
 childExprs :: NExprF NExprLoc -> [NExprLoc]
 childExprs (NConstant _) = []
 childExprs (NStr _) = []
@@ -96,9 +97,16 @@ bindExprs :: Binding NExprLoc -> [NExprLoc]
 bindExprs (NamedVar _ e _) = [e]
 bindExprs (Inherit mScope _ _) = maybeToList mScope
 
+{- | Pretty type of the expression at the cursor, inferred against the builtin
+  env only. See 'inferExprAtWithEnv'.
+-}
 inferExprAt :: NExprLoc -> Int -> Int -> Maybe Text
 inferExprAt = inferExprAtWithEnv builtinEnv
 
+{- | Pretty type of the expression at the cursor, inferred against @env@. Prefers
+  the binding type when the cursor names a let/attr binding; falls back to
+  inferring the target sub-expression. Yields @"TYPE_ERROR"@ on inference failure.
+-}
 inferExprAtWithEnv :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe Text
 inferExprAtWithEnv env expr l c = do
   target <- findExprAt l c expr
@@ -116,6 +124,9 @@ inferExprAtWithEnv env expr l c = do
       (\(t, _) -> Just (NT.prettyType t))
       (inferExprWithEnv builtinEnv te)
 
+{- | The identifier an expression refers to: a bare symbol or the final
+  static key of a select. 'Nothing' for anything else.
+-}
 exprName :: NExprLoc -> Maybe Text
 exprName (Layer (NSym name)) = Just $ varNameText name
 exprName (Layer (NSelect _ _ (StaticKey k :| _))) = Just $ varNameText k

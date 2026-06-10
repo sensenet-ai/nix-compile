@@ -58,6 +58,7 @@ import NixCompile.Lint.Patterns qualified as LintPatterns
 -- Types
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+-- | a rule's effective severity, from suppressed ('SevOff') up to 'SevError'.
 data Severity
   = SevOff
   | SevInfo
@@ -70,6 +71,7 @@ instance FromDhall Severity where
     genericAutoWith
       (defaultInterpretOptions{constructorModifier = T.drop 3})
 
+-- | a user override of one rule's severity, with an optional justification.
 data RuleOverride = RuleOverride
   { overrideId :: !Text
   , overrideSeverity :: !Severity
@@ -86,6 +88,7 @@ instance FromDhall RuleOverride where
     renameField "overrideReason" = "reason"
     renameField n = n
 
+-- | the resolved tool configuration: profile, layout convention, ignores, and rule overrides.
 data Config = Config
   { configProfile :: !Text
   , configLayout :: !Text
@@ -108,6 +111,7 @@ instance FromDhall Config where
 -- Defaults
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+-- | the built-in config used when no @.nix-compile.dhall@ is present.
 defaultConfig :: Config
 defaultConfig =
   Config
@@ -121,6 +125,7 @@ defaultConfig =
 -- Queries
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+-- | the layout 'Convention' named by the config's @layout@ field.
 effectiveLayout :: Config -> Convention
 effectiveLayout = layoutFromName . configLayout
 
@@ -179,27 +184,33 @@ findRemoteImport expr = maybe (scanEmbed expr) Just (foldr step Nothing (toList 
 -- Queries
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+-- | the overridden severity for a rule id, or 'Nothing' if the config leaves it at its default.
 effectiveSeverity :: Config -> Text -> Maybe Severity
 effectiveSeverity config ruleId =
   overrideSeverity <$> listToMaybe (filter ((== ruleId) . overrideId) (configOverrides config))
 
+-- | the configured extra ignore globs.
 configIgnores :: Config -> [Text]
 configIgnores = configExtraIgnores
 
+-- | does any configured ignore glob match this (normalised) path?
 isIgnored :: Config -> FilePath -> Bool
 isIgnored config filePath = any (`matchGlob` normalisedPath) (configExtraIgnores config)
  where
   normalisedPath = FP.normalise filePath
 
+-- | is this rule id overridden to 'SevOff' (fully suppressed)?
 isSuppressed :: Config -> Text -> Bool
 isSuppressed config ruleId = effectiveSeverity config ruleId == Just SevOff
 
+-- | the stable rule id for a bash-lint violation (the key configs override on).
 bashRuleId :: Bash.ViolationType -> Text
 bashRuleId Bash.VHeredoc = "no-heredoc-in-inline-bash"
 bashRuleId Bash.VHereString = "no-heredoc-in-inline-bash"
 bashRuleId Bash.VEval = "no-eval"
 bashRuleId Bash.VBacktick = "no-backtick"
 
+-- | the stable rule id for a nix-lint violation.
 nixRuleId :: NixLint.ViolationType -> Text
 nixRuleId NixLint.VWith = "with-lib"
 nixRuleId NixLint.VRec = "rec-anywhere"
@@ -210,16 +221,20 @@ nixRuleId NixLint.VRawWriteShellApplication = "no-raw-writeshellapplication"
 nixRuleId NixLint.VWriteShellScript = "prefer-write-shell-application"
 nixRuleId (NixLint.VLongInlineString _) = "long-inline-string"
 
+-- | the stable rule id for a derivation-lint violation.
 derivRuleId :: Deriv.DerivViolationType -> Text
 derivRuleId = Deriv.derivRuleId
 
+-- | the stable rule id for a package-layout violation.
 packageRuleId :: LintPackages.PackageViolationCode -> Text
 packageRuleId LintPackages.P001 = "default-nix-in-packages"
 
+-- | the stable rule id for a prelude-pattern violation.
 patternRuleId :: LintPatterns.PatternViolationType -> Text
 patternRuleId LintPatterns.VOrNullFallback = "or-null-fallback"
 patternRuleId LintPatterns.VAttrTranslation = "no-translate-attrs-outside-prelude"
 
+-- | the rule id carried by type-check failures.
 typeCheckRuleId :: Text
 typeCheckRuleId = "type-check-failure"
 

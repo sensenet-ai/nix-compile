@@ -89,6 +89,7 @@ data NamingConvention
 --                                                                                         // errors
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- | a layout-violation code; each constructor names one rule that can fail.
 data ErrorCode
   = -- | File in wrong location for its module kind
     E001
@@ -112,6 +113,9 @@ data ErrorCode
     E010
   deriving (Eq, Show)
 
+{- | a single layout violation: its code, the offending path and module kind, a
+human message, and the expected value (e.g. corrected name / location) if any.
+-}
 data LayoutError = LayoutError
   { errCode :: !ErrorCode
   , errPath :: !FilePath

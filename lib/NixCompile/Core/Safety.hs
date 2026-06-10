@@ -56,17 +56,20 @@ import System.IO.Error (isDoesNotExistError)
 -- ── single-source depth constant ──────────────────────────────────
 -- Every guard in the codebase reads from here. Do not duplicate.
 
+-- | the single AST-depth limit every guard in the codebase reads from.
 maxRecursionDepth :: Int
 maxRecursionDepth = 200
 
 -- ── errors ────────────────────────────────────────────────────────
 
+-- | a depth-limit breach: the offending depth and the constructor tag where it tripped.
 data DepthError = DepthError
   { deDepth :: !Int
   , deContext :: !Text
   }
   deriving (Eq, Show)
 
+-- | any failure the safety layer converts an exception or limit breach into.
 data SafetyError
   = SafetyDepthExceeded !DepthError
   | SafetyParseFailed !Text
@@ -77,6 +80,7 @@ data SafetyError
 
 instance Exception SafetyError
 
+-- | render a 'SafetyError' as a one-line human-readable message.
 renderSafetyError :: SafetyError -> Text
 renderSafetyError (SafetyDepthExceeded (DepthError d ctx)) =
   "depth limit exceeded ("
@@ -94,9 +98,11 @@ renderSafetyError (SafetyIOError t) = "I/O error: " <> t
 -- Walks EVERY Fix unwrap. Cannot be bypassed by NWith/NStr/NSynHole.
 -- Strictly counts depth on every recursion regardless of constructor.
 
+-- | check an AST against 'maxRecursionDepth', failing on the first node that exceeds it.
 analyzeDepth :: NExprLoc -> Either DepthError ()
 analyzeDepth = analyzeDepthWith maxRecursionDepth
 
+-- | 'analyzeDepth' with an explicit depth limit; walks every 'Fix' unwrap, unbypassable.
 analyzeDepthWith :: Int -> NExprLoc -> Either DepthError ()
 analyzeDepthWith limit = go 0
  where
@@ -171,6 +177,7 @@ analyzeDepthWith limit = go 0
 safeIO :: IO a -> IO (Either SafetyError a)
 safeIO = safeIOWith mempty
 
+-- | like 'safeIO' but prefixes a context string onto any I/O or internal error message.
 safeIOWith :: Text -> IO a -> IO (Either SafetyError a)
 safeIOWith prefix action = do
   result <- try (action >>= evaluate)

@@ -52,11 +52,15 @@ derivViolationDiagnostic dv =
   (code, desc) = if T.null rest then ("", full) else (codePart, T.drop 2 rest)
   lastLine note = take 1 (reverse (filter (not . T.null) (map T.strip (T.lines note))))
 
+{- | a derivation-quality defect: a missing @meta@ attribute, or missing
+@description@ within @meta@.
+-}
 data DerivViolationType
   = VMissingMeta
   | VMissingDescription
   deriving (Eq, Show)
 
+-- | one derivation-quality violation: its kind, originating file, and source span.
 data DerivViolation = DerivViolation
   { dvType :: !DerivViolationType
   , dvPath :: !FilePath
@@ -66,6 +70,7 @@ data DerivViolation = DerivViolation
 
 -- ── entry point ────────────────────────────────────────────────────
 
+-- | walk an expression, flagging @mkDerivation@ calls missing @meta@/@description@.
 findDerivViolations :: FilePath -> NExprLoc -> [DerivViolation]
 findDerivViolations = traverseDerivExpr
 
@@ -191,6 +196,7 @@ isDescriptionBinding (NamedVar (StaticKey bindingName :| []) _ _) =
   varNameText bindingName == "description"
 isDescriptionBinding _ = False
 
+-- | the stable short rule id string for a derivation violation type.
 derivRuleId :: DerivViolationType -> Text
 derivRuleId VMissingMeta = "missing-meta"
 derivRuleId VMissingDescription = "missing-description"
@@ -199,6 +205,7 @@ derivRuleId VMissingDescription = "missing-description"
 --                                                                              // output formatting
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- | render a list of derivation violations as human-readable text blocks.
 formatDerivViolations :: [DerivViolation] -> Text
 formatDerivViolations = T.unlines . map formatOneDerivViolation
 

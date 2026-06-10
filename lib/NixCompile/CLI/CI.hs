@@ -40,11 +40,18 @@ import NixCompile.Layout.Convention qualified as Layout
 import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Lint.Packages qualified as LintPackages
 
+{- | @check <dir>@: run all CI phases over a directory, then print the aggregate
+summary and exit (0 if clean, non-zero on any failure/violation).
+-}
 cmdCI :: Config.Config -> FilePath -> AppM ()
 cmdCI config dir = do
   counts <- runCIPhases config dir
   reportCISummary counts
 
+{- | Run the five CI phases (type-check, graph, bash, packages, layout) over a
+directory and accumulate their findings into a single 'CICounts'. Graph/bash
+phases run only when a @flake.nix@ is present.
+-}
 runCIPhases :: Config.Config -> FilePath -> AppM CICounts
 runCIPhases config dir = do
   let flakePath = dir </> "flake.nix"
@@ -90,6 +97,9 @@ runCIPhases config dir = do
       , ciLayoutViolations = layoutCount
       }
 
+{- | Type-check phase: collect every .nix file under the dir and check each
+concurrently (bounded by the capability count), tallying ok/skip/fail counts.
+-}
 runTypeCheckPhase :: Config.Config -> FilePath -> AppM CICounts
 runTypeCheckPhase config dir = do
   files <- liftIO $ collectFiles config dir
@@ -122,6 +132,9 @@ runTypeCheckPhase config dir = do
       , ciLayoutViolations = 0
       }
 
+{- | Graph phase: build the import-reachable module graph from the flake and
+tally its lint violations and build failures (emits only the aggregate count).
+-}
 runGraphPhase :: Config.Config -> FilePath -> AppM CICounts
 runGraphPhase config flakePath = do
   let conv = Config.effectiveLayout config
@@ -160,6 +173,9 @@ runGraphPhase config flakePath = do
                 }
           else pure emptyCICounts
 
+{- | Bash phase: extract embedded shell scripts from the flake's .nix files and
+check each, returning the total bash-violation count.
+-}
 runNixPhase :: Config.Config -> FilePath -> AppM CICounts
 runNixPhase config flakePath = do
   scripts <- parseNixFiles flakePath
@@ -169,6 +185,9 @@ runNixPhase config flakePath = do
       { ciBashViolations = totalErrors
       }
 
+{- | Package phase: check that package directories carry a @default.nix@; emit
+the (non-suppressed) violations and return their count.
+-}
 runPackagePhase :: Config.Config -> [FilePath] -> AppM Int
 runPackagePhase config files = do
   packageViolations <- liftIO $ LintPackages.checkPackageDirs files
@@ -224,6 +243,10 @@ layoutDiagnostic e =
     , Diag.diagSnippet = Nothing
     }
 
+{- | Print the one-line CI summary ("checked N files: … ok, … failed, …
+violations") at 'InfoS' and 'exitSuccess' when clean, else at 'ErrorS' and
+'exitFailure'.
+-}
 reportCISummary :: CICounts -> AppM ()
 reportCISummary counts = do
   let totalFailures =
@@ -258,6 +281,9 @@ reportCISummary counts = do
       $(logTM) ErrorS $ logStr summary
       liftIO exitFailure
 
+{- | Gather the .nix files to check: recurse a directory (honoring configured
+ignores) or yield the single path (unless ignored).
+-}
 collectFiles :: Config.Config -> FilePath -> IO [FilePath]
 collectFiles config path = do
   isDirectory <- doesDirectoryExist path
@@ -315,6 +341,10 @@ classifyEntries basePath ignoredDirs =
     )
     ([], [])
 
+{- | Run 'checkFile' in plain 'IO' by re-establishing the captured katip
+logging environment/context/namespace — lets the type-check phase fan files
+out via 'forConcurrently' outside 'AppM'.
+-}
 wrapCheckFile :: Config.Config -> (LogEnv, LogContexts, Namespace) -> FilePath -> IO TCResult
 wrapCheckFile config (loggingEnv, loggingContext, loggingNamespace) file =
   runKatipContextT loggingEnv loggingContext loggingNamespace (checkFile config file)

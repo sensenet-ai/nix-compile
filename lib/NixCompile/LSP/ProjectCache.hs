@@ -110,6 +110,7 @@ instance Show FileEntry where
   show e =
     "FileEntry { feType = " <> show (feType e) <> ", feStatus = " <> show (feStatus e) <> " }"
 
+-- | Freshness state of a 'FileEntry'.
 data EntryStatus
   = -- | the entry reflects the current on-disk (or last-saved) content
     Fresh
@@ -137,6 +138,7 @@ data ProjectCache = ProjectCache
   -- ^ project root (directory containing flake.nix); set by the LSP on initialize
   }
 
+-- | Create an empty project cache (no entries, no workers, no root set).
 newProjectCache :: IO ProjectCache
 newProjectCache = atomically $ do
   files <- newTVar Map.empty
@@ -168,6 +170,7 @@ startWorkers pc = do
   threads <- replicateM (max 1 n) (forkIO (workerLoop pc))
   atomically $ modifyTVar' (pcWorkerThreads pc) (threads ++)
 
+-- | Kill all worker threads spawned by 'startWorkers' and clear the thread list.
 stopWorkers :: ProjectCache -> IO ()
 stopWorkers pc = do
   threads <- atomically $ do
@@ -286,6 +289,7 @@ lookupFile pc fp = do
   freshOnly (Just e) | feStatus e == Fresh = Just e
   freshOnly _ = Nothing
 
+-- | Non-blocking snapshot of all cache entries (any status), keyed by canonical path.
 snapshotFiles :: ProjectCache -> IO (Map FilePath FileEntry)
 snapshotFiles pc = atomically (readTVar (pcFiles pc))
 
@@ -322,6 +326,7 @@ enqueueFile pc fp = do
     unless (alreadyFresh || inFlight) $
       writeTQueue (pcQueue pc) canon
 
+-- | 'enqueueFile' over a list of files.
 enqueueFiles :: ProjectCache -> [FilePath] -> IO ()
 enqueueFiles pc = mapM_ (enqueueFile pc)
 
@@ -367,6 +372,9 @@ invalidateFile pc fp = do
 -- Stats (for debugging / logging)
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+{- | Snapshot counts for debugging/logging: total entries, fresh/stale splits,
+  in-flight files, and live worker threads.
+-}
 data ProjectCacheStats = ProjectCacheStats
   { pcsFiles :: !Int
   , pcsFresh :: !Int
@@ -376,6 +384,7 @@ data ProjectCacheStats = ProjectCacheStats
   }
   deriving (Eq, Show)
 
+-- | Compute current 'ProjectCacheStats' from the cache's live state.
 statsOf :: ProjectCache -> IO ProjectCacheStats
 statsOf pc = atomically $ do
   files <- readTVar (pcFiles pc)

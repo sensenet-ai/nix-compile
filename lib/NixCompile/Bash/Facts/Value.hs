@@ -78,6 +78,7 @@ extractVarRef text
 
 -- ── config value dynamic representation ──────────────────────────
 
+-- | a parsed config RHS: a single variable, a plain literal, or a mixed text/var template.
 data ConfigValueDynamic
   = -- | single variable reference
     CVDVar Text

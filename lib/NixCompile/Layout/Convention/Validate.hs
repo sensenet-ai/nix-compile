@@ -55,12 +55,15 @@ import System.FilePath (makeRelative, splitDirectories, takeFileName)
 -- Checks that apply regardless of convention: banned file names, _class
 -- attribute validation.
 
+-- | is this a banned @_index.nix@ file?
 isIndexFile :: FilePath -> Bool
 isIndexFile path = takeFileName path == "_index.nix"
 
+-- | is this a banned @_main.nix@ file?
 isMainFile :: FilePath -> Bool
 isMainFile path = takeFileName path == "_main.nix"
 
+-- | flag @_index.nix@ / @_main.nix@ files, which are banned regardless of convention.
 checkBannedFiles :: FilePath -> [LayoutError]
 checkBannedFiles path
   | isIndexFile path =
@@ -125,6 +128,9 @@ findClassAttrWithSpan = go
   varNameText :: VarName -> Text
   varNameText = coerce
 
+{- | for a module whose directory implies a @_class@, flag a missing or mismatched
+@_class@ attribute.
+-}
 checkClassAttr :: FilePath -> NExprLoc -> [LayoutError]
 checkClassAttr path expr = maybe [] check (classForPath path)
  where

@@ -161,6 +161,10 @@ legacyBuildCrossEnv uri = do
         baseEnv
         (Map.toList (Mod.mgModules mg))
 
+{- | Build a cross-module 'Scope.ScopeGraph' for the URI's project from its
+  module graph, splicing in the caller's current (possibly unsaved) expression
+  for that file. Empty graph when no project root/module graph is found.
+-}
 buildCrossScopeGraphWith :: Uri -> Maybe NExprLoc -> IO Scope.ScopeGraph
 buildCrossScopeGraphWith uri mCurrentExpr = do
   mMg <- getOrBuildModuleGraph uri

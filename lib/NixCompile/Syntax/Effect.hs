@@ -39,6 +39,9 @@ import NixCompile.Inference.Nix.Type (NixType)
 -- coeffects (requirements)
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | a requirement an overlay places on its context: a name it needs from
+upstream, from itself, or another file it must import.
+-}
 data Coeffect
   = RequireUpstream !Text !NixType
   | RequireSelf !Text !NixType
@@ -53,6 +56,9 @@ instance ToJSON Coeffect
 -- effects (production)
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | something an overlay produces: a new name, an override of an existing one,
+or an in-place modification.
+-}
 data Effect
   = Define !Text !NixType
   | Override !Text !NixType
@@ -67,6 +73,7 @@ instance ToJSON Effect
 -- overlay algebra
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- | an overlay's type signature: what it requires (coeffects) and what it produces (effects).
 data OverlaySignature = OverlaySignature
   { osCoeffects :: !(Set Coeffect)
   , osEffects :: !(Set Effect)
@@ -77,6 +84,9 @@ instance FromJSON OverlaySignature
 
 instance ToJSON OverlaySignature
 
+{- | compose two overlay signatures left-to-right: union the effects, and keep
+only the second's coeffects not already satisfied by the first's effects.
+-}
 mergeSignatures :: OverlaySignature -> OverlaySignature -> OverlaySignature
 mergeSignatures signature1 signature2 =
   OverlaySignature
@@ -93,6 +103,7 @@ mergeSignatures signature1 signature2 =
   definesName targetName (Override name _) = name == targetName
   definesName targetName (Modify name) = name == targetName
 
+-- | report each upstream coeffect of a signature not satisfied by the base environment.
 checkCompatibility :: Map Text NixType -> OverlaySignature -> [Text]
 checkCompatibility baseEnv sig =
   [ "Missing upstream dependency: " <> name

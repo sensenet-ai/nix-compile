@@ -20,6 +20,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Docs.Types
 
+{- | Filter doc items to those whose name or description contains the query
+(case-insensitive substring match).
+-}
 search :: Text -> [DocItem] -> [DocItem]
 search query = filter (matches (T.toLower query))
 

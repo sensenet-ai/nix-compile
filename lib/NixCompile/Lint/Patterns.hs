@@ -52,11 +52,15 @@ patternViolationDiagnostic pv =
   (code, desc) = if T.null rest then ("", full) else (codePart, T.drop 2 rest)
   lastLine note = take 1 (reverse (filter (not . T.null) (map T.strip (T.lines note))))
 
+{- | a heuristic pattern smell: an @or null@ attribute fallback, or an
+attribute-translation call (@translateAttrs@/@mapAttrsToList@/…).
+-}
 data PatternViolationType
   = VOrNullFallback
   | VAttrTranslation
   deriving (Eq, Show)
 
+-- | one pattern violation: its kind, source span, and a short context label.
 data PatternViolation = PatternViolation
   { pvType :: !PatternViolationType
   , pvSpan :: !Span
@@ -66,6 +70,7 @@ data PatternViolation = PatternViolation
 
 -- ── entry point ────────────────────────────────────────────────────
 
+-- | walk an expression and collect every pattern violation.
 findPatternViolations :: NExprLoc -> [PatternViolation]
 findPatternViolations = traversePatternExpr
 
@@ -190,6 +195,7 @@ patternBindingExprs (Inherit Nothing _ _) = []
 --                                                                              // output formatting
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- | render a list of pattern violations as human-readable text blocks.
 formatPatternViolations :: [PatternViolation] -> Text
 formatPatternViolations = T.unlines . map formatOnePatternViolation
 

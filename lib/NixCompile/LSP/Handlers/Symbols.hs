@@ -28,6 +28,10 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 
+{- | Pure: the document-symbol outline for a file — its top-level attribute
+  bindings as a nested 'DocumentSymbol' tree, each classified by value shape.
+  Descends through leading lambda/let/with wrappers to the outline attrset.
+-}
 collectTopBindingSymbols :: NExprLoc -> [DocumentSymbol]
 collectTopBindingSymbols (Layer (NSet _ bindings)) = concatMap bindingToSymbol bindings
 collectTopBindingSymbols (Layer (NAbs _ body)) = collectTopBindingSymbols body

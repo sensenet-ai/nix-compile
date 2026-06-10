@@ -29,10 +29,12 @@ import System.FilePath (takeDirectory, takeExtension, (</>))
 
 import NixCompile.Layout.ModuleKind (detectKindFromFile, isPackage)
 
+-- | package-directory lint codes; @P001@ is "package dir missing default.nix".
 data PackageViolationCode
   = P001
   deriving (Show, Eq)
 
+-- | one package-directory violation: its code, the offending directory, and a message.
 data PackageViolation = PackageViolation
   { pvCode :: !PackageViolationCode
   , pvPath :: !FilePath
@@ -40,6 +42,7 @@ data PackageViolation = PackageViolation
   }
   deriving (Show, Eq)
 
+-- | given a set of .nix files, flag every package directory that lacks a @default.nix@.
 checkPackageDirs :: [FilePath] -> IO [PackageViolation]
 checkPackageDirs nixFiles = do
   let dirs = nub (map takeDirectory nixFiles)

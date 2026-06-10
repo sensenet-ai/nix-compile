@@ -51,6 +51,9 @@ import GHC.Generics (Generic)
 --                                                                                  // core // types
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+{- | the whole scope graph for one file: all scopes by id, the root scope, the
+next fresh id to hand out, and the originating file path.
+-}
 data ScopeGraph = ScopeGraph
   { sgScopes :: Map ScopeId Scope
   , sgRoot :: ScopeId
@@ -59,6 +62,9 @@ data ScopeGraph = ScopeGraph
   }
   deriving stock (Eq, Show, Generic)
 
+{- | a single scope (graph node): its id, the declarations and references it
+holds, its outgoing edges, and what kind of scope it is.
+-}
 data Scope = Scope
   { scopeId :: ScopeId
   , scopeDeclarations :: [Declaration]
@@ -68,6 +74,9 @@ data Scope = Scope
   }
   deriving stock (Eq, Show, Generic)
 
+{- | what syntactic construct introduced a scope (file, @let@, attrset, @rec@
+attrset, lambda, or @with@).
+-}
 data ScopeKind
   = FileScope
   | LetScope
@@ -78,10 +87,14 @@ data ScopeKind
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToDhall)
 
+-- | a scope's unique identifier within a 'ScopeGraph'.
 newtype ScopeId = ScopeId {unScopeId :: Int}
   deriving stock (Eq, Ord, Show, Generic)
   deriving newtype (Num, ToJSON, ToJSONKey)
 
+{- | a name bound in a scope: its name, source span, owning scope, an optional
+associated scope (e.g. a lambda body), and optional inferred type and doc.
+-}
 data Declaration = Declaration
   { declName :: Text
   , declSpan :: SourceSpan
@@ -92,6 +105,9 @@ data Declaration = Declaration
   }
   deriving stock (Eq, Show, Generic)
 
+{- | a use of a name: the referenced name, its source span, the scope it occurs
+in, and the kind of reference.
+-}
 data Reference = Reference
   { refName :: Text
   , refSpan :: SourceSpan
@@ -100,6 +116,7 @@ data Reference = Reference
   }
   deriving stock (Eq, Show, Generic)
 
+-- | how a name is referenced: plain variable, attribute access, @inherit@, or import.
 data RefKind
   = VarRef
   | AttrRef
@@ -108,6 +125,7 @@ data RefKind
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToDhall)
 
+-- | a labelled, directed edge between two scopes in the graph.
 data Edge = Edge
   { edgeSource :: ScopeId
   , edgeTarget :: ScopeId
@@ -115,6 +133,9 @@ data Edge = Edge
   }
   deriving stock (Eq, Show, Generic)
 
+{- | the label on a scope edge: lexical @Parent@, @Import@, @With@, @Inherit@,
+or @AttrAccess@ — the relation that resolution follows.
+-}
 data EdgeLabel
   = Parent
   | Import
@@ -128,6 +149,7 @@ data EdgeLabel
 --                                                                            // source // locations
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- | a source range: start and end positions plus an optional file path.
 data SourceSpan = SourceSpan
   { spanStart :: SourcePos
   , spanEnd :: SourcePos
@@ -135,6 +157,7 @@ data SourceSpan = SourceSpan
   }
   deriving stock (Eq, Show, Generic)
 
+-- | a 1-based line/column source position.
 data SourcePos = SourcePos
   { posLine :: Int
   , posCol :: Int

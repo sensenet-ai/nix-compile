@@ -90,6 +90,9 @@ typeDiagnostic sev file raw =
         (Just (Span (Loc l c) (Loc l c) (Just file)), T.drop 2 rest)
   parseLoc _ = (Nothing, raw)
 
+{- | Split bash 'Violation's into @(suppressed, active)@ by the config's
+suppression rules.
+-}
 partitionViolations :: Config.Config -> [Violation] -> ([Violation], [Violation])
 partitionViolations config = foldr go ([], [])
  where
@@ -97,6 +100,7 @@ partitionViolations config = foldr go ([], [])
     | Config.isSuppressed config (Config.bashRuleId (vType v)) = (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
+-- | Split Nix lint violations into @(suppressed, active)@ by the config's rules.
 partitionNixViolations ::
   Config.Config -> [Lint.NixViolation] -> ([Lint.NixViolation], [Lint.NixViolation])
 partitionNixViolations config = foldr go ([], [])
@@ -105,6 +109,7 @@ partitionNixViolations config = foldr go ([], [])
     | Config.isSuppressed config (Config.nixRuleId (Lint.nvType v)) = (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
+-- | Split derivation lint violations into @(suppressed, active)@ by config rules.
 partitionDerivViolations ::
   Config.Config ->
   [Derivation.DerivViolation] ->
@@ -116,6 +121,7 @@ partitionDerivViolations config = foldr go ([], [])
         (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
+-- | Split package-directory violations into @(suppressed, active)@ by config rules.
 partitionPackageViolations ::
   Config.Config ->
   [LintPackages.PackageViolation] ->
@@ -127,6 +133,7 @@ partitionPackageViolations config = foldr go ([], [])
         (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
+-- | Split pattern lint violations into @(suppressed, active)@ by config rules.
 partitionPatternViolations ::
   Config.Config ->
   [LintPatterns.PatternViolation] ->
@@ -138,6 +145,9 @@ partitionPatternViolations config = foldr go ([], [])
         (v : suppressed, active)
     | otherwise = (suppressed, v : active)
 
+{- | Render a bare-command finding (ALEPH-B005) as a clippy-style text block,
+given the source path and the command's name + span.
+-}
 formatBareCommand :: Text -> (Text, Span) -> Text
 formatBareCommand src (cmd, sourceSpan) =
   let tok = locLine (spanStart sourceSpan)
@@ -149,6 +159,9 @@ formatBareCommand src (cmd, sourceSpan) =
         , "    /nix/store/...-pkg/bin/" <> cmd
         ]
 
+{- | Render a dynamic-command finding (ALEPH-B006) as a clippy-style text block,
+given the source path and the variable's name + span.
+-}
 formatDynamicCommand :: Text -> (Text, Span) -> Text
 formatDynamicCommand src (var, sourceSpan) =
   let tok = locLine (spanStart sourceSpan)
@@ -160,10 +173,14 @@ formatDynamicCommand src (var, sourceSpan) =
         , "  Use a known store path or a case statement over a small allowlist."
         ]
 
+-- | Prefix every line of a multi-line text block with the given prefix.
 indentBlock :: Text -> Text -> Text
 indentBlock prefix block =
   T.unlines [prefix <> line | line <- T.lines block]
 
+{- | Render package-directory violations (ALEPH-P001) as a text block listing the
+offending paths; @""@ when there are none.
+-}
 formatPackageViolations :: [LintPackages.PackageViolation] -> Text
 formatPackageViolations [] = ""
 formatPackageViolations violations =
@@ -197,6 +214,9 @@ dynamicDiagnostic (var, sp) =
     , Diag.diagSnippet = Nothing
     }
 
+{- | Exit a single-file check by its total error count: 'exitSuccess' when zero,
+'exitFailure' otherwise (diagnostics were already emitted).
+-}
 printCheckResult :: FilePath -> Int -> AppM ()
 printCheckResult _file totalErrors
   | totalErrors > 0 = liftIO exitFailure

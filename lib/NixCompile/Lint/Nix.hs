@@ -53,6 +53,9 @@ nixViolationDiagnostic v =
   -- the last non-blank line of the note (the suggestion), or none
   lastLine note = take 1 (reverse (filter (not . T.null) (map T.strip (T.lines note))))
 
+{- | a banned Nix construct: @with@, @rec@, @substituteAll@, the raw derivation
+builders, @writeShellScript@, or an over-long inline string (with its length).
+-}
 data ViolationType
   = VWith
   | VRec
@@ -64,6 +67,7 @@ data ViolationType
   | VLongInlineString !Int
   deriving (Eq, Show)
 
+-- | one Nix-idiom violation: its kind, source span, and a short context label.
 data NixViolation = NixViolation
   { nvType :: !ViolationType
   , nvSpan :: !Span
@@ -76,6 +80,7 @@ maxInlineStringLength = 120
 
 -- ── entry point ────────────────────────────────────────────────────
 
+-- | walk an expression and collect every banned-construct violation.
 findNixViolations :: NExprLoc -> [NixViolation]
 findNixViolations = traverseNixExpr
 
@@ -203,6 +208,7 @@ nixViolation typ srcSpan ctx =
 --                                                                              // output formatting
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+-- | render a list of Nix violations as human-readable text blocks.
 formatNixViolations :: [NixViolation] -> Text
 formatNixViolations = T.unlines . map formatOneNixViolation
 

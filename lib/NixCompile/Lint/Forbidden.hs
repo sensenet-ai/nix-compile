@@ -44,6 +44,7 @@ import NixCompile.Core.Span (Loc (..), Span (..))
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (Position (..))
 
+-- | the kind of forbidden bash construct: heredoc, here-string, @eval@, or backticks.
 data ViolationType
   = VHeredoc
   | VHereString
@@ -51,6 +52,7 @@ data ViolationType
   | VBacktick
   deriving (Eq, Show)
 
+-- | one detected forbidden construct: its kind, source span, and a short context label.
 data Violation = Violation
   { vType :: !ViolationType
   , vSpan :: !Span
@@ -58,6 +60,7 @@ data Violation = Violation
   }
   deriving (Eq, Show)
 
+-- | walk a parsed bash AST and collect every forbidden-construct violation.
 findViolations :: BashAST -> [Violation]
 findViolations (BashAST root posMap) = runReader (go root) posMap
 
@@ -158,6 +161,7 @@ violationDiagnostic Violation{..} =
     , diagSnippet = Nothing
     }
 
+-- | render one violation as a rustc-style @error[CODE]@ block, with @src@ as the file name.
 formatViolationAt :: Text -> Violation -> Text
 formatViolationAt src Violation{..} =
   T.unlines
@@ -236,12 +240,15 @@ forbiddenSuggestion VBacktick =
     , "    result=`command`"
     ]
 
+-- | render one violation with the placeholder file name @\<input\>@.
 formatViolation :: Violation -> Text
 formatViolation = formatViolationAt "<input>"
 
+-- | render a list of violations (blank-line separated) with @src@ as the file name.
 formatViolationsAt :: Text -> [Violation] -> Text
 formatViolationsAt _ [] = ""
 formatViolationsAt src violations = T.intercalate "\n" (map (formatViolationAt src) violations)
 
+-- | render a list of violations with the placeholder file name @\<input\>@.
 formatViolations :: [Violation] -> Text
 formatViolations = formatViolationsAt "<input>"

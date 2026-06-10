@@ -325,11 +325,14 @@ maximumByConfidence (hint : hints) = foldl keepHigher hint hints
 isNixOSModule :: Detection -> Bool
 isNixOSModule d = detectedKind d `elem` [NixOSModule, HomeModule, DarwinModule]
 
+-- | A derivation / package definition.
 isPackage :: Detection -> Bool
 isPackage d = detectedKind d == Package
 
+-- | A nixpkgs overlay (@final: prev: …@).
 isOverlay :: Detection -> Bool
 isOverlay d = detectedKind d == Overlay
 
+-- | A flake-parts module or flake part.
 isFlakeModule :: Detection -> Bool
 isFlakeModule d = detectedKind d `elem` [FlakeModule, FlakePart]

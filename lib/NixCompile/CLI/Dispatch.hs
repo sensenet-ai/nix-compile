@@ -42,6 +42,10 @@ import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Syntax.Format qualified as Formatter
 import NixCompile.Syntax.Parse qualified as Nix
 
+{- | @check <path>@: dispatch on the path — a directory runs the full CI sweep
+('cmdCI'), a @.nix@ file is type-checked, any other file is checked as bash.
+A missing path fails via 'failSafety'.
+-}
 cmdCheck :: Config.Config -> FilePath -> AppM ()
 cmdCheck config path = do
   isDir <- liftIO $ doesDirectoryExist path
@@ -68,6 +72,9 @@ withSafeNix file act = do
   guardDepth expr = either depthFailed (const (act expr)) (Safety.analyzeDepth expr)
   depthFailed de = failSafety (Safety.renderSafetyError (Safety.SafetyDepthExceeded de))
 
+{- | @fmt <file>@: format a Nix file and write the result to stdout (after the
+depth guard). I/O failures go to stderr via 'failSafety'.
+-}
 cmdFmt :: FilePath -> AppM ()
 cmdFmt file = withSafeNix file $ \expr -> do
   srcResult <- liftIO $ safeReadFile file
@@ -76,29 +83,41 @@ cmdFmt file = withSafeNix file $ \expr -> do
     (\src -> liftIO $ TIO.putStr $ Formatter.formatNixFile src file expr)
     srcResult
 
+-- | @infer <file>@: print the Nix file annotated with inferred types to stdout.
 cmdInfer :: FilePath -> AppM ()
 cmdInfer file = withSafeNix file $ \_expr -> do
   result <- liftIO $ Annotate.annotateFile file
   either failSafety (liftIO . TIO.putStr) result
 
+{- | @emit <file>@: from a script's inferred schema, emit the generated
+@emit-config@ bash function to stdout.
+-}
 cmdEmit :: FilePath -> AppM ()
 cmdEmit file = do
   result <- liftIO $ parseScriptFile file
   either failSafety (liftIO . TIO.putStr . emitConfigFunction . scriptSchema) result
 
+{- | @lsp@: run the language server over stdio until the client disconnects,
+then exit cleanly.
+-}
 cmdLSP :: AppM ()
 cmdLSP = liftIO LSP.run >> liftIO exitSuccess
 
+{- | @scope <file>@: build the scope graph and print it as a human-readable
+framed report (scopes, declarations, references, edges, resolution) to stdout.
+-}
 cmdScope :: FilePath -> AppM ()
 cmdScope file = withSafeNix file $ \expr -> do
   let scopeGraph = Scope.fromNixFile file expr
   liftIO $ printScopeGraph scopeGraph
 
+-- | @scope --json <file>@: build the scope graph and print it as JSON to stdout.
 cmdScopeJSON :: FilePath -> AppM ()
 cmdScopeJSON file = withSafeNix file $ \expr -> do
   let scopeGraph = Scope.fromNixFile file expr
   liftIO $ BL.putStrLn $ encode scopeGraph
 
+-- | @scope --dhall <file>@: build the scope graph and print it as Dhall to stdout.
 cmdScopeDhall :: FilePath -> AppM ()
 cmdScopeDhall file = withSafeNix file $ \expr -> do
   let scopeGraph = Scope.fromNixFile file expr

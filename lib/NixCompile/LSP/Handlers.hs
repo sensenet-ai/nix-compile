@@ -107,6 +107,9 @@ lspSafeParse txt = unsafePerformIO $ do
   parseAndCheck t = either (const Nothing) checkDepth (parseNixTextLoc t)
   checkDepth e = either (const Nothing) (const (Just e)) (Safety.analyzeDepth e)
 
+{- | The full request registry: maps every supported LSP notification/request
+  method to its handler. Passed to the server as the static handler set.
+-}
 handlers :: Handlers (LspM ())
 handlers =
   mconcat
@@ -430,10 +433,14 @@ inlayHintHandler req responder = do
 
 -- ═══════════════════════ diagnostics engine ═══════════════════════
 
+{- | Single-file diagnostics for buffer text: safe-parse, then run the lint
+  rules; empty list on parse failure. Never blocks.
+-}
 fullLint :: Text -> [Diagnostic]
 fullLint txt = maybe [] (diagnosticsForExpr "<buffer>") (lspSafeParse txt)
 
 -- ═══════════════════════ legacy lint ═══════════════════════
 
+-- | Legacy alias for 'fullLint', kept for existing call sites.
 lintFile :: Text -> [Diagnostic]
 lintFile = fullLint

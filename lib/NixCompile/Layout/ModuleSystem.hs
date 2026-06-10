@@ -48,6 +48,9 @@ import NixCompile.Syntax.Annotation (pattern Layer)
 -- types
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+{- | one declared module option: its dotted path, inferred type, optional
+default expression and description, and source span.
+-}
 data OptionInfo = OptionInfo
   { optPath :: !Text
   , optType :: !NixType
@@ -57,6 +60,9 @@ data OptionInfo = OptionInfo
   }
   deriving (Eq, Show)
 
+{- | a module's extracted metadata: its options by path, its @config@ body (if
+any), and the paths it imports.
+-}
 data ModuleOptions = ModuleOptions
   { moOptions :: !(Map Text OptionInfo)
   , moConfig :: !(Maybe NExprLoc)
@@ -230,9 +236,11 @@ extractLiteralPath _ = Nothing
 -- queries
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- | look up the option declared at a given dotted path, if any.
 optionAtPath :: ModuleOptions -> Text -> Maybe OptionInfo
 optionAtPath mos path = Map.lookup path (moOptions mos)
 
+-- | every declared option path in the module.
 allOptionPaths :: ModuleOptions -> [Text]
 allOptionPaths mos = Map.keys (moOptions mos)
 

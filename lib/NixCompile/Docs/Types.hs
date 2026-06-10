@@ -25,6 +25,9 @@ import Data.Aeson (ToJSON (..), object, (.=))
 
 import NixCompile.Core.Span (Span)
 
+{- | A documented binding: its name, description (extracted comment), optional
+inferred type, source span, and kind. Serializes to JSON for the docs output.
+-}
 data DocItem = DocItem
   { docName :: Text
   , docDescription :: Text
@@ -44,6 +47,9 @@ instance ToJSON DocItem where
       , "kind" .= docKind d
       ]
 
+{- | What kind of binding a 'DocItem' documents: a function, a plain variable, a
+module option, or an attribute-set member.
+-}
 data DocKind = Function | Variable | Option | Attribute
   deriving (Eq, Show, Generic)
 

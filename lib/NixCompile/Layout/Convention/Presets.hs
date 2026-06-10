@@ -128,6 +128,7 @@ straylight =
 --                                                                              // other conventions
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- | the nixpkgs @pkgs/by-name@ layout (camelCase attrs, packages under by-name).
 nixpkgsByName :: Convention
 nixpkgsByName =
   Convention
@@ -147,6 +148,7 @@ nixpkgsByName =
     , convRequireFlakeMod = False
     }
 
+-- | the standard flake-parts layout (modules/, packages/, overlays/; no naming policy).
 flakeParts :: Convention
 flakeParts =
   Convention
@@ -184,6 +186,7 @@ flakeParts =
     , convRequireFlakeMod = False
     }
 
+-- | a NixOS system-configuration layout (modules/ or hosts/, users/ or home/).
 nixosConfig :: Convention
 nixosConfig =
   Convention

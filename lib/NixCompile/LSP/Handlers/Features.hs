@@ -60,6 +60,9 @@ import NixCompile.Syntax.Annotation (pattern Layer)
 
 -- ═══════════════════════ navigation ═══════════════════════
 
+{- | Pure: find the reference in the scope graph whose span contains the
+  1-based @(line, col)@ cursor, if any. Used by go-to-definition/references.
+-}
 findRef :: (Int, Int) -> Scope.ScopeGraph -> Maybe Scope.Reference
 findRef (l, c) sg =
   let refs = [r | s <- Map.elems (Scope.sgScopes sg), r <- Scope.scopeReferences s]
@@ -76,11 +79,15 @@ spanContains (cl, cc) sp =
       ec = Scope.posCol e
    in cl >= sl && cl <= el && (cl /= sl || cc >= sc) && (cl /= el || cc <= ec)
 
+-- | Pure: convert a 1-based scope-graph 'Scope.SourcePos' to a 0-based LSP 'Position'.
 toLspPos :: Scope.SourcePos -> Position
 toLspPos sp = Position (fromIntegral (Scope.posLine sp - 1)) (fromIntegral (Scope.posCol sp - 1))
 
 -- ═══════════════════════ completion ═══════════════════════
 
+{- | Pure: completion items at the cursor for an expression — scope names,
+  builtins, and module-system options matching the cursor prefix.
+-}
 completionsForExpr :: TypeEnv -> NExprLoc -> Int -> Int -> [CompletionItem]
 completionsForExpr _env expr l c =
   maybe [] withPfx (prefixAtCursor l c)
@@ -146,6 +153,9 @@ mkCompletionItem label' kind' detail' =
 
 -- ═══════════════════════ signature help ═══════════════════════
 
+{- | Pure: signature help for the call enclosing the cursor — resolves the
+  applied function name and renders its builtin type scheme as parameters.
+-}
 signatureAtCursor :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe SignatureHelp
 signatureAtCursor _env expr l c = do
   target <- findExprAt l c expr
@@ -191,12 +201,18 @@ lookupBuiltinSig name = do
 
 -- ═══════════════════════ code actions ═══════════════════════
 
+{- | Pure: does the given range overlap the start of the diagnostic's range?
+  Used to find the diagnostics a code-action request applies to.
+-}
 rangeOverlapsDiag :: Range -> Diagnostic -> Bool
 rangeOverlapsDiag range (Diagnostic r _ _ _ _ _ _ _ _) =
   let Range (Position rl rc) (Position rel rec) = range
       Range (Position dl dc) _ = r
    in (rl < dl || (rl == dl && rc <= dc)) && (rel > dl || (rel == dl && rec >= dc))
 
+{- | Pure: quick-fix code actions for a lint diagnostic, keyed off its
+  ALEPH rule code; empty when no fix is offered for that rule.
+-}
 violationAction :: Diagnostic -> [CodeAction]
 violationAction diag
   | "ALEPH-N001" `T.isInfixOf` msg = [simpleAction "Replace `with` by explicit bindings" True diag]
@@ -226,6 +242,9 @@ diagMsg (Diagnostic _ _ _ _ _ msg _ _ _) = msg
 
 -- ═══════════════════════ inlay hints ═══════════════════════
 
+{- | Pure: inferred-type inlay hints for the let/attr bindings within @range@,
+  placed after each binding name; empty if inference fails.
+-}
 inlayHintsForExpr :: TypeEnv -> NExprLoc -> Range -> [InlayHint]
 inlayHintsForExpr env expr range = either (const []) withBindings (inferExprWithEnv env expr)
  where
@@ -258,14 +277,19 @@ cursorInRange (Position l c) (Range (Position rl rc) (Position rel rec)) =
 
 -- ═══════════════════════ option lookup + hover fallbacks ═══════════════════════
 
+{- | Pure: the module-system 'MS.OptionInfo' for the option named at the cursor,
+  if the cursor sits on a name declared via @options@ in the expression.
+-}
 inferOptionAtPath :: TypeEnv -> NExprLoc -> Int -> Int -> Maybe MS.OptionInfo
 inferOptionAtPath _env expr l c = do
   target <- findExprAt l c expr
   let name = exprName target; opts = MS.extractOptions expr
   name >>= (`Map.lookup` opts)
 
+-- | Hover-fallback markup shown when no file is open at the requested URI.
 noFile :: MarkupContent
 noFile = MarkupContent MarkupKind_Markdown "`no file`"
 
+-- | Hover-fallback markup shown when the open file fails to parse.
 parseErr :: MarkupContent
 parseErr = MarkupContent MarkupKind_Markdown "`parse error`"

@@ -53,6 +53,7 @@ data Diagnostic = Diagnostic
   }
   deriving (Eq, Show)
 
+-- | the lowercase word shown for a severity in the header (@error@, @warning@, @note@, @debug@).
 severityWord :: Severity -> Text
 severityWord DebugS = "debug"
 severityWord InfoS = "note"
