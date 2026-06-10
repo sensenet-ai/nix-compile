@@ -1,3 +1,4 @@
+-- yellow: lsp-types promoted 'Method_* symbols only (see HOUSE_STYLE)
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}

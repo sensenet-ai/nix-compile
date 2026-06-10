@@ -196,25 +196,39 @@ against the binding law above.
 {-# LANGUAGE DuplicateRecordFields #-} -- when domain records genuinely collide
 {-# LANGUAGE TypeApplications #-}      -- to disambiguate, not to show off
 {-# LANGUAGE PatternSynonyms #-}       -- only where it makes a type read better
+{-# LANGUAGE DataKinds #-}             -- ONLY to consume lsp-types' promoted symbols
 ```
 
 `TemplateHaskell` is yellow, not green: it costs build time and stage
 restrictions. We accept it for exactly one thing — katip's compile-time log
 location splice (`$(logTM)`) — and we do not reach for it elsewhere.
 
+`DataKinds` is yellow, not red, for one reason: it is *forced by a dependency,
+not chosen for type-level programming of our own*. `lsp-types` exposes its typed
+handler API through promoted constructors — every handler signature names a
+`'Method_*` symbol (`TRequestMessage 'Method_TextDocumentHover`,
+`TNotificationMessage 'Method_Initialized`, …), and those leading-tick promoted
+data constructors require `DataKinds` to write. No rewrite keeps the typed LSP
+API without it. Its single foothold is `NixCompile.LSP.Handlers` (and that
+subtree); it stays confined there. We do **not** reach for `DataKinds` to do
+type-level programming of our own — *that* remains red, below.
+
 ### Red — justify your existence (and prefer to remove)
 
 ```haskell
 {-# LANGUAGE LambdaCase #-}            -- it is `case` in a trenchcoat; see the law
-{-# LANGUAGE DataKinds #-}             -- type-level programming rarely pays in an app
+{-# LANGUAGE DataKinds #-}             -- for type-level programming of our OWN (see yellow)
 {-# LANGUAGE NondecreasingIndentation #-} -- a layout escape hatch; refactor instead
 {-# LANGUAGE UndecidableInstances #-}  -- usually the wrong problem
 {-# LANGUAGE ImplicitParams #-}        -- a debugging nightmare
 ```
 
-`LambdaCase` is red *here* specifically because of the binding law. Every current
-use is a rewrite target. `DataKinds` and `NondecreasingIndentation` each have a
-single foothold in the tree today; both are on the list to retire.
+`LambdaCase` is red *here* specifically because of the binding law; it carries no
+live use in the case-ban-covered tree (`lib/`, `app/`, `straylint/`), and any new
+one is a rewrite target. `DataKinds` is split: **red** when *we* author type-level
+machinery, **yellow** (above) only when consuming `lsp-types`' promoted method
+symbols — the lone sanctioned foothold. `NondecreasingIndentation` and the other
+two carry no foothold in the tree today; keep it that way.
 
 ## Control flow: flat is a feature
 
