@@ -41,6 +41,7 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Bash.Parse (parseBash)
 import NixCompile.Core.Safety qualified as Safety
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, extendImport, inferExprWithEnv)
 import NixCompile.Inference.Nix qualified as Infer
 import NixCompile.Inference.Nix.Type qualified as NT
@@ -55,7 +56,6 @@ import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolat
 import NixCompile.Lint.Patterns qualified as Patterns
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 import NixCompile.Syntax.Parse qualified as NixParse
-import NixCompile.Types (Loc (..), Span (..))
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Unsafe (unsafePerformIO)

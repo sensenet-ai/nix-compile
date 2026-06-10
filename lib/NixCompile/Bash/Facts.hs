@@ -32,7 +32,8 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Bash.Parse (BashAST (..))
 import NixCompile.Bash.Patterns
-import NixCompile.Types
+import NixCompile.Bash.Types
+import NixCompile.Core.Span (Loc (..), Span (..))
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (Position (..))
 

@@ -49,8 +49,8 @@ import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Parser qualified
 import NixCompile.Core.Safety qualified as Safety
+import NixCompile.Core.Span (Span (..))
 import NixCompile.Syntax.Annotation (toSpan, varNameText, pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Span (..))
 
 -- | A bash script extracted from a Nix file
 data BashScript = BashScript

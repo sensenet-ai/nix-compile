@@ -56,8 +56,8 @@ import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils (Path (..))
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Syntax.Annotation (pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Loc (..), Span (..))
 
 -- ══════════════════════════════════════════════════════════════════════════════
 --                                                                     // types

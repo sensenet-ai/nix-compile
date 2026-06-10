@@ -33,7 +33,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
-import NixCompile.Types
+import NixCompile.Bash.Types
 
 {- | Validate config paths before building a tree.
 A config tree cannot represent a path as both a leaf and a branch:

@@ -40,7 +40,7 @@ import Data.Text (Text)
 import Nix.Expr.Types (NExprF, NKeyName (..), NPos (..), NSourcePos (..), VarName (..))
 import Nix.Expr.Types.Annotated (AnnUnit (..), Compose (..), NExprLoc, SrcSpan (..))
 import Nix.Utils (Path (..))
-import NixCompile.Types (Loc (..), Span (..))
+import NixCompile.Core.Span (Loc (..), Span (..))
 import Text.Megaparsec.Pos (unPos)
 
 {- | View an annotated expression as its underlying functor layer.

@@ -24,9 +24,10 @@ module Main (main) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import NixCompile.Bash.Types
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Emit.Config
 import NixCompile.Syntax.Pretty (toText)
-import NixCompile.Types
 import System.Exit (exitFailure, exitSuccess)
 
 -- | Empty span for tests

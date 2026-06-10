@@ -46,8 +46,8 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix.Type
-import NixCompile.Types (Loc (..), Span (..))
 
 -- | a single typed binding (name, resolved type, source location)
 data Binding = Binding

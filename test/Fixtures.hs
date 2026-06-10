@@ -25,11 +25,11 @@ import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile (Schema (..), Script (..), parseScript)
+import NixCompile.Bash.Types (Fact (..))
 import NixCompile.Inference.Nix (inferFile)
 import NixCompile.Layout.Convention (ErrorCode (..), LayoutError (..), validateFileExpr)
 import NixCompile.Lint.Nix (NixViolation (..), ViolationType (..), findNixViolations)
 import NixCompile.Syntax.Parse (parseNixFile)
-import NixCompile.Types (Fact (..))
 import System.Exit (exitFailure, exitSuccess)
 
 -- | Run all fixture tests

@@ -40,7 +40,7 @@ import Data.Text qualified as T
 import Katip (Severity (ErrorS))
 import NixCompile.Bash.Parse (BashAST (..))
 import NixCompile.Core.Diagnostic (Diagnostic (..))
-import NixCompile.Types (Loc (..), Span (..))
+import NixCompile.Core.Span (Loc (..), Span (..))
 import ShellCheck.AST qualified as SA
 import ShellCheck.Interface (Position (..))
 

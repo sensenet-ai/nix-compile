@@ -4,20 +4,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                   // nix // compile // types
+--                                                          // bash // types
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --
---   "the matrix, cyberspace, where the great corporate hotcores burned
---    like neon novas, data so dense you suffered sensory overload if you
---    tried to apprehend more than the merest outline."
+--   "He had a feel for the shape of the data, the way a sculptor feels the
+--    stone."
 --
 --                                                                 — Count Zero
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                     // core // types
+--   The shared vocabulary of the bash analysis pipeline: the small type
+--   language ('Type' / 'Subst' / 'Constraint') its Hindley-Milner solver runs
+--   on, the 'Fact's the parser observes, the 'Command' / config / store-path
+--   model, and the 'Schema' those facts resolve into. Source locations live in
+--   'NixCompile.Core.Span'; everything here is bash-pipeline-specific.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-module NixCompile.Types (
+module NixCompile.Bash.Types (
   -- * Types
   Type (..),
   TypeVar (..),
@@ -29,10 +32,6 @@ module NixCompile.Types (
   singleSubst,
   composeSubst,
   applySubst,
-
-  -- * Source locations
-  Loc (..),
-  Span (..),
 
   -- * Literals
   Literal (..),
@@ -69,8 +68,6 @@ module NixCompile.Types (
 
   -- * Errors
   TypeError (..),
-  LintError (..),
-  Severity (..),
 )
 where
 
@@ -83,6 +80,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import NixCompile.Core.Span (Span (..))
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Types
@@ -130,29 +128,6 @@ applySubst substitution = go
  where
   go (TVar variable) = maybe (TVar variable) go (Map.lookup variable substitution)
   go typ = typ
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- Source Locations
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-data Loc = Loc
-  { locLine :: !Int
-  , locCol :: !Int
-  }
-  deriving stock (Eq, Ord, Show, Generic)
-
-instance FromJSON Loc
-instance ToJSON Loc
-
-data Span = Span
-  { spanStart :: !Loc
-  , spanEnd :: !Loc
-  , spanFile :: !(Maybe FilePath)
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance FromJSON Span
-instance ToJSON Span
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Literals
@@ -368,24 +343,3 @@ data TypeError
 
 instance FromJSON TypeError
 instance ToJSON TypeError
-
-data Severity
-  = SevError
-  | SevWarning
-  | SevInfo
-  deriving stock (Eq, Ord, Show, Generic)
-
-instance FromJSON Severity
-instance ToJSON Severity
-
-data LintError = LintError
-  { lintCode :: !Text
-  , lintMessage :: !Text
-  , lintSeverity :: !Severity
-  , lintSpan :: !Span
-  , lintSuggestion :: !(Maybe Text)
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance FromJSON LintError
-instance ToJSON LintError

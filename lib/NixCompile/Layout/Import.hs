@@ -35,8 +35,8 @@ import Nix.Expr.Types hiding (Binding)
 import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated
 import Nix.Utils qualified as NixPath
+import NixCompile.Core.Span (Span)
 import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Span)
 import System.FilePath (normalise, (</>))
 
 -- | one resolved `import` edge: where it points, how it was written, its args, its span

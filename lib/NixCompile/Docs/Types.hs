@@ -23,7 +23,7 @@ import GHC.Generics (Generic)
 
 import Data.Aeson (ToJSON (..), object, (.=))
 
-import NixCompile.Types (Span)
+import NixCompile.Core.Span (Span)
 
 data DocItem = DocItem
   { docName :: Text

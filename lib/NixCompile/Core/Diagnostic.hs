@@ -25,7 +25,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Katip (Severity (..))
-import NixCompile.Types (Loc (..), Span (..))
+import NixCompile.Core.Span (Loc (..), Span (..))
 
 -- | A single source line plus the caret range to underline within it.
 data Snippet = Snippet

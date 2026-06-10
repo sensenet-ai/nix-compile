@@ -32,8 +32,8 @@ import Nix.Atoms (NAtom (..))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import NixCompile.Core.Diagnostic (Diagnostic (..))
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Loc (..), Span (..))
 
 -- | Pattern (heuristic) violation as a unified 'Diagnostic' (a warning).
 patternViolationDiagnostic :: PatternViolation -> Diagnostic

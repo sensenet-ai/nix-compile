@@ -26,7 +26,8 @@ where
 import Control.Monad (foldM)
 import Data.List (nub)
 import Data.Map.Strict qualified as Map
-import NixCompile.Types
+import NixCompile.Bash.Types
+import NixCompile.Core.Span (Loc (..), Span (..))
 
 -- | Unify two types, producing a substitution
 unify :: Type -> Type -> Either TypeError Subst

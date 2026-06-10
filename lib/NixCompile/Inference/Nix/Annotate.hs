@@ -31,10 +31,10 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Core.Safety qualified as Safety
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix (Binding (..), InferResult (..), TypeEnv, builtinEnv, inferExprWithEnv)
 import NixCompile.Inference.Nix.Type (prettyType)
 import NixCompile.Syntax.Parse (parseNix, parseNixFile)
-import NixCompile.Types (Loc (..), Span (..))
 
 -- | Annotate a file with inferred types using the default (no-import) env.
 annotateFile :: FilePath -> IO (Either Text Text)

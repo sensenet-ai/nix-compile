@@ -58,6 +58,7 @@ import Nix.Expr.Types qualified as Nix
 import Nix.Expr.Types.Annotated (AnnUnit (..), NExprLoc, nullSpan)
 import Nix.Parser (parseNixFileLoc)
 import Nix.Utils qualified as Nix
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix.Builtins
 import NixCompile.Inference.Nix.Constraint
 import NixCompile.Inference.Nix.Environment
@@ -65,7 +66,6 @@ import NixCompile.Inference.Nix.Scheme
 import NixCompile.Inference.Nix.Type
 import NixCompile.Inference.Nix.Unify
 import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Loc (..), Span (..))
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- instantiation

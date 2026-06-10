@@ -22,6 +22,7 @@ import System.Exit (exitFailure, exitSuccess)
 
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash)
+import NixCompile.Bash.Types (Fact (BareCommand, DynamicCommand))
 import NixCompile.CLI.Check
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
@@ -32,7 +33,6 @@ import NixCompile.Inference.Bash.Schema (validateConfigPaths)
 import NixCompile.Inference.Bash.Unify (solve)
 import NixCompile.Lint.Forbidden (findViolations, violationDiagnostic)
 import NixCompile.Syntax.Parse qualified as Nix
-import NixCompile.Types (Fact (BareCommand, DynamicCommand))
 
 checkBashFile :: Config.Config -> FilePath -> AppM ()
 checkBashFile config file = do

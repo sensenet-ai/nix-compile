@@ -23,10 +23,10 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Docs.Types
 import NixCompile.Layout.Scope (Declaration (..), Scope (..), ScopeGraph (..), ScopeId, ScopeKind (..), SourcePos (..), SourceSpan (..))
 import NixCompile.Layout.Scope qualified as Scope
-import NixCompile.Types (Loc (..), Span (..))
 
 extractDocs :: ScopeGraph -> Text -> [DocItem]
 extractDocs sg src =

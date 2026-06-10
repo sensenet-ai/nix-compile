@@ -32,7 +32,7 @@ where
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import NixCompile.Types (Type (..))
+import NixCompile.Bash.Types (Type (..))
 
 data ArgSpec = ArgSpec
   { argType :: !Type

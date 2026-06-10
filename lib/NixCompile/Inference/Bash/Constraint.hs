@@ -22,7 +22,7 @@ module NixCompile.Inference.Bash.Constraint (
 where
 
 import NixCompile.Bash.Builtins (lookupArgType)
-import NixCompile.Types
+import NixCompile.Bash.Types
 
 -- | Convert all facts to constraints
 factsToConstraints :: [Fact] -> [Constraint]

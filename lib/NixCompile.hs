@@ -34,8 +34,6 @@ module NixCompile (
 
   -- * Errors
   TypeError (..),
-  LintError (..),
-  Severity (..),
 
   -- * Config
   Config.Config (..),
@@ -51,7 +49,8 @@ module NixCompile (
   Config.derivRuleId,
 
   -- * Re-exports
-  module NixCompile.Types,
+  module NixCompile.Bash.Types,
+  module NixCompile.Core.Span,
 )
 where
 
@@ -61,11 +60,12 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile.Bash.Facts (extractFacts)
 import NixCompile.Bash.Parse (parseBash, parseBashWithFilename)
+import NixCompile.Bash.Types
 import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Bash.Constraint (factsToConstraints)
 import NixCompile.Inference.Bash.Schema (buildSchema, validateConfigPaths)
 import NixCompile.Inference.Bash.Unify (solve)
-import NixCompile.Types
 
 {- | Parse a bash script and extract its schema.
 

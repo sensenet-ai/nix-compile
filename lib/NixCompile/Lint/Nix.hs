@@ -29,8 +29,8 @@ import Katip (Severity (ErrorS))
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import NixCompile.Core.Diagnostic (Diagnostic (..))
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Syntax.Annotation (srcSpanToSpan, pattern Layer, pattern LayerAnn)
-import NixCompile.Types (Loc (..), Span (..))
 
 {- | A lint violation as a unified 'Diagnostic': the rule code, a one-line
 summary, the span, and the suggestion line as @= help:@. The verbose

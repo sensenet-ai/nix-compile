@@ -104,7 +104,8 @@ library
         NixCompile.Syntax.Pretty
         NixCompile.Core.Safety
         NixCompile.Inference.Bash.Schema
-        NixCompile.Types
+        NixCompile.Bash.Types
+        NixCompile.Core.Span
     build-depends:
         aeson >= 2.0 && < 2.3,
         async >= 2.2 && < 2.3,

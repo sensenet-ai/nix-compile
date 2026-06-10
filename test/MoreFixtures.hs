@@ -26,11 +26,11 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import NixCompile (Script (..), parseScript)
 import NixCompile.Bash.Parse (parseBash)
+import NixCompile.Bash.Types (Fact (..))
 import NixCompile.Lint.Forbidden (Violation (..), ViolationType (..), findViolations)
 import NixCompile.Lint.Nix (NixViolation (..), findNixViolations)
 import NixCompile.Lint.Nix qualified as NixLint
 import NixCompile.Syntax.Parse (BashScript (..), extractBashScripts, parseNixFile)
-import NixCompile.Types (Fact (..))
 import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()

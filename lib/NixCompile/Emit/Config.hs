@@ -36,7 +36,7 @@ import Data.Text qualified as T
 import Numeric (showHex)
 
 import NixCompile.Bash.Patterns (escapeForParamExpansion)
-import NixCompile.Types
+import NixCompile.Bash.Types
 
 jsonEscape :: Text -> Text
 jsonEscape = T.concatMap escapeChar

@@ -43,7 +43,7 @@ import Control.Monad (guard)
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Text (Text)
 import Data.Text qualified as T
-import NixCompile.Types
+import NixCompile.Bash.Types
 import Text.Read (readMaybe)
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
