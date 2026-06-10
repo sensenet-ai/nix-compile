@@ -11,7 +11,26 @@
 --                                                                                      — Count Zero
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---                                                                              // type // inference
+--   The inference engine: a syntax-directed walk over the hnix AST ('infer') that
+--   assigns a 'NixType' to every node, in the Hindley–Milner / Algorithm-W
+--   tradition. Three rules carry the polymorphism:
+--
+--     * at a VARIABLE use ('inferSymbol') the variable's 'Scheme' is INSTANTIATED
+--       — a fresh copy, so each use can specialise differently.
+--     * at an APPLICATION ('inferApp') the function's parameter type is UNIFIED
+--       with the argument's type, and the result type falls out.
+--     * at a `let` ('inferLet' / 'inferLetGroup') each binding's inferred type is
+--       GENERALISED into a 'Scheme' (closed over the vars the environment does not
+--       mention), so the bound name is polymorphic downstream. Bindings are first
+--       grouped into strongly-connected components ('stronglyConnComp'), so a set
+--       of mutually-recursive definitions is solved together and the rest in
+--       dependency order.
+--
+--   The Nix-specific parts layer on top: attrsets are row-polymorphic records
+--   (open until proven closed); `with` opens a dynamically-scoped field lookup
+--   (memoised in the state); `import` is resolved and its file typed; builtins
+--   carry hand-written schemes ('builtinEnv'). The whole engine is pure ('Infer'
+--   = State + Except, no IO) — which is exactly what lets the oracle replay it.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Inference.Nix (

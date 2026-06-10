@@ -10,9 +10,27 @@
 --                                                                                     — Neuromancer
 --
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
---   The constraint solver: row-variable-aware unification over 'NixType', the
---   occurs check, and the join ('mergeTypes') used to combine branch / element
---   types. Runs in the Infer monad ('Constraint'); knows nothing of the AST.
+--   Unification — the heart of inference. To UNIFY two types is to find the most
+--   general substitution that makes them equal: a variable unifies with anything
+--   (and we record the binding); two constructors unify when their heads match
+--   and their children unify recursively; anything else is a type error. 'unify'
+--   first normalises both sides through the current substitution, then matches
+--   structurally ('unify''). Three wrinkles past the textbook:
+--
+--     * the OCCURS CHECK ('occursCheck') refuses to bind @a@ to a type that
+--       CONTAINS @a@ (e.g. @a ~ [a]@) — that is an infinite type, and the bug it
+--       guards against is a non-terminating substitution.
+--     * RECORDS unify row-by-row ('unifyRec'): closed/closed is exact; open/
+--       closed lets the open side's row variable absorb the closed side's extra
+--       fields; open/open binds both tails to a SHARED fresh row so the field
+--       UNION survives. This is the row polymorphism 'NixCompile.Inference.Nix.Type'
+--       sets up.
+--     * 'mergeTypes' is the JOIN (least upper bound), NOT unification: where
+--       'unify' ASSERTS that two types are equal, 'mergeTypes' COMBINES two types
+--       into one that covers both — the arms of an `if`, the elements of a list.
+--       Equal types collapse; incompatible ones become a 'TUnion'.
+--
+--   Runs in the Infer monad ('Constraint'); knows nothing of the AST.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Inference.Nix.Unify (
