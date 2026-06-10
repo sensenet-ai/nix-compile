@@ -32,6 +32,7 @@ import NixCompile (parseScriptFile, scriptSchema)
 import NixCompile.CLI.Bash
 import NixCompile.CLI.CI
 import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Draw qualified as Draw
 import NixCompile.Core.Log
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (emitConfigFunction)
@@ -116,7 +117,7 @@ failSafety err = do
 
 printScopeGraph :: Scope.ScopeGraph -> IO ()
 printScopeGraph scopeGraph = do
-  putStrLn "=== Scope Graph ==="
+  TIO.putStrLn (Draw.framed Draw.Double "Scope Graph")
   putStrLn $ "File: " ++ fromMaybe "(none)" (Scope.sgFile scopeGraph)
   putStrLn $ "Scopes: " ++ show (Map.size (Scope.sgScopes scopeGraph))
   putStrLn ""
@@ -165,10 +166,12 @@ printScopeGraph scopeGraph = do
   either reportUnresolved reportResolved (Scope.resolveAll scopeGraph)
  where
   reportUnresolved errors = do
-    putStrLn $ "=== Unresolved References (" ++ show (length errors) ++ ") ==="
+    TIO.putStrLn $
+      Draw.framed Draw.Double ("Unresolved References (" <> T.pack (show (length errors)) <> ")")
     forM_ errors printUnresolved
   reportResolved resolved =
-    putStrLn $ "=== All " ++ show (length resolved) ++ " references resolved ==="
+    TIO.putStrLn $
+      Draw.framed Draw.Double ("All " <> T.pack (show (length resolved)) <> " references resolved")
   printUnresolved (Scope.Unresolved ref) = TIO.putStrLn $ "  " <> Scope.refName ref
   printUnresolved (Scope.Ambiguous ref _) =
     TIO.putStrLn $ "  " <> Scope.refName ref <> " (ambiguous)"

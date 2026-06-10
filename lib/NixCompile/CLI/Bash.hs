@@ -27,6 +27,7 @@ import NixCompile.CLI.Check
 import NixCompile.CLI.Report
 import NixCompile.CLI.Types
 import NixCompile.Core.Config qualified as Config
+import NixCompile.Core.Draw qualified as Draw
 import NixCompile.Core.Log
 import NixCompile.Inference.Bash.Constraint (factsToConstraints)
 import NixCompile.Inference.Bash.Schema (validateConfigPaths)
@@ -110,7 +111,7 @@ reportNixResults _file totalErrors
 
 checkScript :: Config.Config -> FilePath -> Nix.BashScript -> AppM Int
 checkScript configuration _file bs = do
-  $(logTM) DebugS $ logStr $ "\n=== " <> Nix.bsName bs <> " ==="
+  $(logTM) DebugS $ logStr $ "\n" <> Draw.framed Draw.Double (Nix.bsName bs)
   either onParseError onAst (parseBash (Nix.bsContent bs))
  where
   onParseError err = do

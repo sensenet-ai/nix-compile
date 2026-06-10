@@ -24,7 +24,9 @@ module Main (main) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import NixCompile.Bash.Types
+import qualified NixCompile.Core.Draw as Draw
 import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Emit.Config
 import NixCompile.Syntax.Pretty (toText)
@@ -137,7 +139,7 @@ testJsonEscapeInOutput =
 -- | Run all tests
 main :: IO ()
 main = do
-  putStrLn "=== EmitConfig Generator Tests ==="
+  TIO.putStrLn (Draw.framed Draw.Double "EmitConfig Generator Tests")
   results <-
     sequence
       [ check "JSON output structure" testJsonOutput
@@ -149,10 +151,10 @@ main = do
       ]
   if and results
     then do
-      putStrLn "=== All tests passed ==="
+      TIO.putStrLn (Draw.framed Draw.Double "All tests passed")
       exitSuccess
     else do
-      putStrLn "=== Some tests failed ==="
+      TIO.putStrLn (Draw.framed Draw.Double "Some tests failed")
       exitFailure
  where
   check name True = do

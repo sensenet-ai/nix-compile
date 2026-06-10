@@ -71,6 +71,7 @@ import NixCompile.CLI.Types (
  )
 import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Core.Diagnostic qualified as Diag
+import NixCompile.Core.Draw qualified as Draw
 import NixCompile.Core.Log (Severity (ErrorS, WarningS), runLog)
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (
@@ -4738,7 +4739,7 @@ nixAdversarialTests =
 main :: IO ()
 main = do
   putStrLn "nix-compile property tests"
-  putStrLn "========================="
+  TIO.putStrLn (Draw.rule Draw.Double 25)
   putStrLn ""
 
   results <-

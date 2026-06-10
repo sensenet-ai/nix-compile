@@ -38,7 +38,9 @@ import Data.Char (isSpace)
 import Data.List (intercalate)
 import Data.Maybe (catMaybes, fromMaybe, isNothing)
 import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import Nix.Parser (parseNixTextLoc)
+import NixCompile.Core.Draw qualified as Draw
 import NixCompile.Inference.Nix (inferExpr)
 import NixCompile.Inference.Nix.Type (NixType (..))
 import System.Directory (findExecutable)
@@ -302,7 +304,7 @@ dumpGolden = do
 runOracle :: IO ()
 runOracle = do
   putStrLn "nix-compile differential oracle (checker vs nix-instantiate)"
-  putStrLn "============================================================"
+  TIO.putStrLn (Draw.rule Draw.Double 60)
   -- Every corpus entry must have a frozen ground truth; a missing one means the
   -- corpus grew without a `--dump-golden` refresh, which we fail on loudly.
   let missing = [e | e <- corpus, isNothing (goldenFor e)]

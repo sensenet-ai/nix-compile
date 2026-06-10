@@ -21,7 +21,7 @@ import Data.Text qualified as T
 import NixCompile.Docs.Types
 
 search :: Text -> [DocItem] -> [DocItem]
-search query items = filter (matches (T.toLower query)) items
+search query = filter (matches (T.toLower query))
 
 matches :: Text -> DocItem -> Bool
 matches q item =
