@@ -28,8 +28,8 @@ import NixCompile.Core.Span (Span (..))
 import NixCompile.LSP.Handlers.Cursor (selectAtCursor)
 import NixCompile.LSP.Handlers.Features (nixpkgsCompletionsFromText)
 import NixCompile.Nixpkgs.Index (buildNixpkgsIndex, lookupPackage)
-import System.Directory (createDirectoryIfMissing)
-import System.FilePath ((</>))
+import System.Directory (canonicalizePath, createDirectoryIfMissing)
+import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 
 -- ── helpers ────────────────────────────────────────────────────────
@@ -118,6 +118,24 @@ testCompletionNonPkgs =
     idx <- buildNixpkgsIndex root
     pure (null (nixpkgsCompletionsFromText idx "  y = foo.bar" 0 13))
 
+{- | A legacy @name = callPackage <path> { }@ binding in all-packages.nix
+resolves (syntactic parse, no eval); the relative path is canonicalised.
+-}
+testAllPackagesResolves :: IO Bool
+testAllPackagesResolves =
+  withSystemTempDirectory "nixpkgs-idx" $ \root -> do
+    let toolFile = root </> "pkgs" </> "tools" </> "mytool.nix"
+        apFile = root </> "pkgs" </> "top-level" </> "all-packages.nix"
+    createDirectoryIfMissing True (takeDirectory toolFile)
+    writeFile toolFile "{ }\n"
+    createDirectoryIfMissing True (takeDirectory apFile)
+    writeFile apFile "{ }:\nwith pkgs;\n{\n  mytool = callPackage ../tools/mytool.nix { };\n}\n"
+    idx <- buildNixpkgsIndex root
+    want <- canonicalizePath toolFile
+    pure $ case lookupPackage idx "mytool" of
+      Just sp -> spanFile sp == Just want
+      Nothing -> False
+
 -- ── runner ─────────────────────────────────────────────────────────
 
 -- | The nixpkgs-index / cursor-recognizer / completion tests.
@@ -131,4 +149,5 @@ nixpkgsIndexTests =
   , ("nixpkgs_select_ignores_bare_sym", testSelectIgnoresBareSym)
   , ("nixpkgs_completion_prefix", testCompletionPrefix)
   , ("nixpkgs_completion_non_pkgs", testCompletionNonPkgs)
+  , ("nixpkgs_allpackages_resolves", testAllPackagesResolves)
   ]

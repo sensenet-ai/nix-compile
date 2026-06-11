@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                                              // nixpkgs // index
@@ -30,19 +31,26 @@ module NixCompile.Nixpkgs.Index (
 
   -- * Sources
   byNameEntries,
+  allPackagesEntries,
 
   -- * Query
   lookupPackage,
 )
 where
 
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
+import Nix.Expr.Types.Annotated (NExprLoc)
+import Nix.Utils qualified as NixUtils
+import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Core.Span (Loc (..), Span (..))
-import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
+import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
+import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath ((</>))
 
 {- | Where a nixpkgs symbol is defined: a file with a span. For by-name packages
@@ -64,13 +72,16 @@ data NixpkgsIndex = NixpkgsIndex
 emptyIndex :: FilePath -> NixpkgsIndex
 emptyIndex root = NixpkgsIndex root Map.empty
 
-{- | Build the index for a nixpkgs checkout. Pure IO — a directory walk, no Nix
-evaluation and no parsing — so it cannot fail on adversarial package contents.
+{- | Build the index for a nixpkgs checkout. by-name (a directory walk, no parse)
+is authoritative; all-packages.nix (a syntactic callPackage parse, no eval) fills
+in legacy names absent from by-name. No Nix is evaluated.
 -}
 buildNixpkgsIndex :: FilePath -> IO NixpkgsIndex
 buildNixpkgsIndex root = do
   byName <- byNameEntries root
-  pure (NixpkgsIndex root (Map.fromList byName))
+  allPkgs <- allPackagesEntries root
+  -- 'Map.union' is left-biased, so by-name wins any name collision.
+  pure (NixpkgsIndex root (Map.union (Map.fromList byName) (Map.fromList allPkgs)))
 
 {- | Scan @pkgs/by-name@ into @(name, location)@ pairs. The layout is
 @pkgs/by-name/<shard>/<name>/package.nix@ with @shard = toLower (take 2 name)@;
@@ -101,6 +112,61 @@ byNameEntries root = do
     pure (if ok then Just (T.pack name, headSpan pkgFile) else Nothing)
   headSpan f = Span (Loc 1 1) (Loc 1 1) (Just f)
 
--- | Look up a package attribute name in the by-name map.
+{- | Parse @pkgs/top-level/all-packages.nix@ for @name = callPackage <path> …@
+bindings — the legacy packages not yet migrated to by-name. Purely syntactic
+(no Nix evaluation): descend the leading lambda/let/with wrappers to the package
+attrset, then read each binding whose RHS is a @callPackage@/@callPackages@
+applied to a literal path. Paths are relative to @pkgs/top-level@; a directory
+path resolves to its @default.nix@. A parse failure yields an empty list.
+-}
+allPackagesEntries :: FilePath -> IO [(Text, Location)]
+allPackagesEntries root = do
+  let apFile = root </> "pkgs" </> "top-level" </> "all-packages.nix"
+      topDir = root </> "pkgs" </> "top-level"
+  present <- doesFileExist apFile
+  if not present
+    then pure []
+    else do
+      parsed <- Safety.safeParseNixFile apFile
+      either (const (pure [])) (resolveAll topDir) parsed
+ where
+  resolveAll topDir expr = catMaybes <$> mapM (resolveEntry topDir) (callPackageBindings expr)
+  resolveEntry topDir (name, relPath) = do
+    let raw = topDir </> T.unpack relPath
+    isFile <- doesFileExist raw
+    target <- pickTarget raw isFile
+    maybe (pure Nothing) (clean name) target
+  -- Prefer the path as-is; a directory callPackage target resolves to default.nix.
+  pickTarget raw True = pure (Just raw)
+  pickTarget raw False = do
+    let dflt = raw </> "default.nix"
+    isDflt <- doesFileExist dflt
+    pure (if isDflt then Just dflt else Nothing)
+  -- canonicalise so the `../..` from the relative path collapses to a clean path.
+  clean name t = do
+    c <- canonicalizePath t
+    pure (Just (name, headSpan c))
+  headSpan f = Span (Loc 1 1) (Loc 1 1) (Just f)
+
+{- | The @(name, relative-path)@ pairs of every @callPackage@/@callPackages@
+binding at the top level of all-packages.nix.
+-}
+callPackageBindings :: NExprLoc -> [(Text, Text)]
+callPackageBindings = concatMap binding . topBindings
+ where
+  topBindings (Layer (NSet _ bs)) = bs
+  topBindings (Layer (NAbs _ b)) = topBindings b
+  topBindings (Layer (NLet _ b)) = topBindings b
+  topBindings (Layer (NWith _ b)) = topBindings b
+  topBindings _ = []
+  binding (NamedVar (StaticKey k :| []) rhs _) =
+    maybe [] (\p -> [(varNameText k, p)]) (callPackagePath rhs)
+  binding _ = []
+  callPackagePath
+    (Layer (NApp (Layer (NApp (Layer (NSym f)) (Layer (NLiteralPath (NixUtils.Path p))))) _))
+      | varNameText f `elem` (["callPackage", "callPackages"] :: [Text]) = Just (T.pack p)
+  callPackagePath _ = Nothing
+
+-- | Look up a package attribute name in the index.
 lookupPackage :: NixpkgsIndex -> Text -> Maybe Location
 lookupPackage idx name = Map.lookup name (pkgsByName idx)
