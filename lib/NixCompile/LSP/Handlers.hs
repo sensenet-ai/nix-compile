@@ -50,11 +50,13 @@ import Language.LSP.VFS (virtualFileText)
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Safety qualified as Safety
+import NixCompile.Core.Span qualified as CSpan
 import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.LSP.Handlers.Cursor (
   findExprAt,
   inferExprAt,
   inferExprAtWithEnv,
+  selectAtCursor,
  )
 import NixCompile.LSP.Handlers.Diagnostics (
   NixViolation (..),
@@ -81,6 +83,7 @@ import NixCompile.LSP.Handlers.Project (
   buildCrossScopeGraphWith,
   getProjectCache,
   invalidateModuleGraphCache,
+  lookupNixpkgsIndex,
   voidProjectDiags,
  )
 import NixCompile.LSP.Handlers.SemanticTokens (semanticLegend, semanticTokens)
@@ -88,6 +91,7 @@ import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
+import NixCompile.Nixpkgs.Index qualified as Nixpkgs
 import System.IO.Unsafe (unsafePerformIO)
 
 {- | Parse text inside an LSP handler. Returns Nothing on parse failure,
@@ -156,6 +160,10 @@ documentOpenHandler notif = do
     -- Keep the existing flake-graph warm path for now; safe to call in
     -- parallel with the per-file cache.
     voidProjectDiags uri
+    -- Warm the nixpkgs symbol index in the background so the first
+    -- go-to-def on a `pkgs.<name>` resolves instantly.
+    _ <- lookupNixpkgsIndex uri
+    pure ()
  where
   enqueue fp = do
     pc <- getProjectCache
@@ -246,10 +254,27 @@ definitionHandler req responder = do
   maybe nullResp (withExpr uri pos) (mvf >>= lspSafeParse . virtualFileText)
  where
   nullResp = responder $ Right $ InR $ InR Null
+  -- External-first: if the cursor is on a `pkgs.<name>` select and the nixpkgs
+  -- index resolves it, jump straight into nixpkgs. Otherwise fall through to the
+  -- normal cross-module scope resolution. Purely additive; never blocks (the
+  -- index is Nothing until its background build lands).
   withExpr uri (Position l c) expr = do
+    mIdx <- liftIO $ lookupNixpkgsIndex uri
+    let mHit = mIdx >>= \idx -> nixpkgsHit idx (fromIntegral l) (fromIntegral c) expr
+    maybe (scopePath uri l c expr) (emitNixpkgsLoc uri) mHit
+  nixpkgsHit idx l c expr = do
+    (base, key) <- selectAtCursor l c expr
+    if base == "pkgs" then Nixpkgs.lookupPackage idx key else Nothing
+  scopePath uri l c expr = do
     sg <- liftIO $ buildCrossScopeGraphWith uri (Just expr)
     let cursorLine = fromIntegral l + 1; cursorCol = fromIntegral c + 1
     maybe nullResp (resolveRef uri sg) (findRef (cursorLine, cursorCol) sg)
+  emitNixpkgsLoc uri sp =
+    let declUri = maybe uri filePathToUri (CSpan.spanFile sp)
+        zeroBased n = fromIntegral (max 0 (n - 1))
+        toPos (CSpan.Loc ln col) = Position (zeroBased ln) (zeroBased col)
+        loc = Location declUri (Range (toPos (CSpan.spanStart sp)) (toPos (CSpan.spanEnd sp)))
+     in responder $ Right $ InL (Definition (InL loc))
   resolveRef uri sg ref = either (const nullResp) (emitDecl uri) (Scope.resolve sg ref)
   emitDecl uri decl =
     let declUri = maybe uri filePathToUri (Scope.spanFile (Scope.declSpan decl))

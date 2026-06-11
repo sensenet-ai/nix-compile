@@ -22,6 +22,7 @@ module NixCompile.LSP.Handlers.Cursor (
   inferExprAt,
   inferExprAtWithEnv,
   exprName,
+  selectAtCursor,
 )
 where
 
@@ -131,3 +132,28 @@ exprName :: NExprLoc -> Maybe Text
 exprName (Layer (NSym name)) = Just $ varNameText name
 exprName (Layer (NSelect _ _ (StaticKey k :| _))) = Just $ varNameText k
 exprName _ = Nothing
+
+{- | If the editor (line, col) sits on an attribute select whose base is a bare
+  symbol — e.g. the cursor anywhere within @pkgs.ripgrep@ — return
+  @(baseName, firstKey)@: the base identifier (@pkgs@) and the first attribute
+  after it (@ripgrep@). The caller decides whether @baseName@ denotes the nixpkgs
+  package set. Finds the INNERMOST enclosing such select, so nested selects like
+  @(pkgs.lib).foo@ resolve to the closest one; works whether the cursor is on the
+  base or on a key (hnix gives the whole select one span). 'Nothing' otherwise.
+-}
+selectAtCursor :: Int -> Int -> NExprLoc -> Maybe (Text, Text)
+selectAtCursor l c = go
+ where
+  targetLine = l + 1
+  targetCol = c + 1
+  contains (Span (Loc sl sc) (Loc el ec) _) =
+    (sl < targetLine || (sl == targetLine && sc <= targetCol))
+      && (el > targetLine || (el == targetLine && ec >= targetCol))
+  spanOf (LayerAnn sp _) = srcSpanToSpan sp
+  kids (Layer ef) = childExprs ef
+  go e
+    | not (contains (spanOf e)) = Nothing
+    | otherwise = maybe (thisSelect e) Just (listToMaybe (mapMaybe go (kids e)))
+  thisSelect (Layer (NSelect _ (Layer (NSym base)) (StaticKey k :| _))) =
+    Just (varNameText base, varNameText k)
+  thisSelect _ = Nothing

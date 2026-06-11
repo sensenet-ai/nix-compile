@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -23,15 +24,20 @@ module NixCompile.LSP.Handlers.Project (
   buildCrossScopeGraphWith,
   invalidateModuleGraphCache,
   voidProjectDiags,
+  lookupNixpkgsIndex,
+  warmNixpkgsIndex,
 )
 where
 
 import Control.Concurrent.Async (Async, async, waitCatch)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (SomeException, try)
-import Control.Monad (when)
+import Control.Monad (void, when)
 import Data.Map.Strict qualified as Map
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text (Text)
+import Data.Text qualified as T
 import Language.LSP.Protocol.Types (Uri, uriToFilePath)
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, extendImport)
@@ -39,7 +45,9 @@ import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.Convention (straylight)
 import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Layout.Scope qualified as Scope
-import System.Directory (canonicalizePath, doesFileExist)
+import NixCompile.Nixpkgs.Index qualified as Nixpkgs
+import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist)
+import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -75,6 +83,81 @@ getProjectCache = modifyMVar projectCacheRef orCreate
     pc <- PC.newProjectCache
     PC.startWorkers pc
     pure (Just pc, pc)
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
+-- nixpkgs symbol index (the cross-jump into nixpkgs)
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+{-# NOINLINE nixpkgsIndexCache #-}
+
+{- | Built nixpkgs symbol indices, keyed by checkout root. Like 'moduleGraphCache',
+an unsafePerformIO CAF behind a small functional surface. A store-path root never
+changes, so an entry here is effectively permanent for the session.
+-}
+nixpkgsIndexCache :: MVar (Map.Map FilePath Nixpkgs.NixpkgsIndex)
+nixpkgsIndexCache = unsafePerformIO (newMVar Map.empty)
+
+{-# NOINLINE nixpkgsIndexInflight #-}
+
+{- | Roots whose index is being built, so concurrent first-requests don't each
+re-scan @by-name@.
+-}
+nixpkgsIndexInflight :: MVar (Set FilePath)
+nixpkgsIndexInflight = unsafePerformIO (newMVar Set.empty)
+
+{- | Resolve the nixpkgs checkout to index, WITHOUT evaluating Nix. v1 sources,
+in order: the @NIX_COMPILE_NIXPKGS@ env var, then a @nixpkgs=@ entry in
+@NIX_PATH@. (flake.lock → store path is the next source to add.) Returns the
+first that names an existing directory.
+-}
+resolveNixpkgsRoot :: IO (Maybe FilePath)
+resolveNixpkgsRoot = firstJustM [fromEnvVar, fromNixPath]
+ where
+  firstJustM [] = pure Nothing
+  firstJustM (a : as) = a >>= maybe (firstJustM as) (pure . Just)
+  fromEnvVar = lookupEnv "NIX_COMPILE_NIXPKGS" >>= maybe (pure Nothing) keepDir
+  fromNixPath = lookupEnv "NIX_PATH" >>= maybe (pure Nothing) (keepFirstDir . nixpkgsPaths)
+  nixpkgsPaths np =
+    [ T.unpack (T.drop 8 e)
+    | e <- T.splitOn ":" (T.pack np)
+    , "nixpkgs=" `T.isPrefixOf` e
+    ]
+  keepFirstDir [] = pure Nothing
+  keepFirstDir (d : ds) = keepDir d >>= maybe (keepFirstDir ds) (pure . Just)
+  keepDir d = do
+    ok <- doesDirectoryExist d
+    pure (if ok then Just d else Nothing)
+
+{- | Non-blocking lookup of the nixpkgs symbol index for the project. Returns the
+built index if ready; otherwise kicks a background build (once per root) and
+returns 'Nothing' so the caller falls back to its normal behaviour. Never blocks
+— same discipline as the per-file cache. The @uri@ is reserved for future
+per-project root resolution (flake.lock).
+-}
+lookupNixpkgsIndex :: Uri -> IO (Maybe Nixpkgs.NixpkgsIndex)
+lookupNixpkgsIndex _uri = do
+  mRoot <- resolveNixpkgsRoot
+  maybe (pure Nothing) viaRoot mRoot
+ where
+  viaRoot root = do
+    cache <- readMVar nixpkgsIndexCache
+    maybe (warmNixpkgsIndex root >> pure Nothing) (pure . Just) (Map.lookup root cache)
+
+{- | Build the nixpkgs index for a root on a background thread (once per root).
+Idempotent: concurrent calls dedup via the inflight set; a failed build is
+swallowed (nav falls back to single-file behaviour).
+-}
+warmNixpkgsIndex :: FilePath -> IO ()
+warmNixpkgsIndex root = do
+  won <- modifyMVar nixpkgsIndexInflight claim
+  when won (void (async build))
+ where
+  claim s = pure (if Set.member root s then (s, False) else (Set.insert root s, True))
+  build = do
+    result <- try (Nixpkgs.buildNixpkgsIndex root) :: IO (Either SomeException Nixpkgs.NixpkgsIndex)
+    either (const (pure ())) install result
+    modifyMVar_ nixpkgsIndexInflight (pure . Set.delete root)
+  install idx = modifyMVar_ nixpkgsIndexCache (pure . Map.insert root idx)
 
 {- | Maximum number of directory levels to walk up looking for a project root.
 n.b. raised from 10 to 64 to handle deeply nested workspaces (B6 from review-2).

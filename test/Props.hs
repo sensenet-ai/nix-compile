@@ -102,6 +102,7 @@ import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
 import NixCompile.Syntax.Effect
 import NixCompile.Syntax.Format (formatNixFile)
+import NixpkgsIndexSpec qualified
 import ProjectCacheSpec qualified
 import Psychotic qualified
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)
@@ -5222,8 +5223,26 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- nixpkgs hop (by-name index + cursor recognizer) --"
+  nixpkgsResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- NixpkgsIndexSpec.nixpkgsIndexTests
+      ]
+
+  putStrLn ""
   let allResults =
-        results ++ psychoticResults ++ pcResults ++ advResults ++ nixAdvResults ++ lspResults
+        results
+          ++ psychoticResults
+          ++ pcResults
+          ++ advResults
+          ++ nixAdvResults
+          ++ lspResults
+          ++ nixpkgsResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
