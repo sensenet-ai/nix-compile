@@ -26,14 +26,22 @@ module NixCompile.LSP.Handlers.Project (
   voidProjectDiags,
   lookupNixpkgsIndex,
   warmNixpkgsIndex,
+  nixpkgsRootFromLock,
 )
 where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent.Async (Async, async, waitCatch)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (void, when)
+import Data.Aeson (Value (..), decode)
+import Data.Aeson.Key qualified as K
+import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Lazy qualified as LBS
+import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (listToMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -46,6 +54,7 @@ import NixCompile.Layout.Convention (straylight)
 import NixCompile.Layout.Graph qualified as Mod
 import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
+import NixCompile.Nixpkgs.StorePath (fixedOutputSourcePath)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist)
 import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, (</>))
@@ -105,13 +114,14 @@ re-scan @by-name@.
 nixpkgsIndexInflight :: MVar (Set FilePath)
 nixpkgsIndexInflight = unsafePerformIO (newMVar Set.empty)
 
-{- | Resolve the nixpkgs checkout to index, WITHOUT evaluating Nix. v1 sources,
-in order: the @NIX_COMPILE_NIXPKGS@ env var, then a @nixpkgs=@ entry in
-@NIX_PATH@. (flake.lock → store path is the next source to add.) Returns the
+{- | Resolve the nixpkgs checkout to index, WITHOUT evaluating Nix. Sources, in
+order: the @NIX_COMPILE_NIXPKGS@ env var (explicit override); the project's
+@flake.lock@ (the locked nixpkgs input → its realized @/nix/store@ path, computed
+purely from the @narHash@); then a @nixpkgs=@ entry in @NIX_PATH@. Returns the
 first that names an existing directory.
 -}
-resolveNixpkgsRoot :: IO (Maybe FilePath)
-resolveNixpkgsRoot = firstJustM [fromEnvVar, fromNixPath]
+resolveNixpkgsRoot :: Uri -> IO (Maybe FilePath)
+resolveNixpkgsRoot uri = firstJustM [fromEnvVar, fromFlakeLock, fromNixPath]
  where
   firstJustM [] = pure Nothing
   firstJustM (a : as) = a >>= maybe (firstJustM as) (pure . Just)
@@ -122,21 +132,56 @@ resolveNixpkgsRoot = firstJustM [fromEnvVar, fromNixPath]
     | e <- T.splitOn ":" (T.pack np)
     , "nixpkgs=" `T.isPrefixOf` e
     ]
+  fromFlakeLock = findProjectRoot uri >>= maybe (pure Nothing) viaLock
+  viaLock projRoot = do
+    let lockPath = projRoot </> "flake.lock"
+    present <- doesFileExist lockPath
+    if not present
+      then pure Nothing
+      else do
+        raw <- LBS.readFile lockPath
+        maybe (pure Nothing) keepDir (nixpkgsRootFromLock raw)
   keepFirstDir [] = pure Nothing
   keepFirstDir (d : ds) = keepDir d >>= maybe (keepFirstDir ds) (pure . Just)
   keepDir d = do
     ok <- doesDirectoryExist d
     pure (if ok then Just d else Nothing)
 
+{- | Pure: from flake.lock bytes, the nixpkgs checkout directory — either the
+@locked.path@ (a path-type input) or the @/nix/store@ path computed from
+@locked.narHash@ (a github/tarball input). Navigates the lock JSON by hand
+(@root.inputs.nixpkgs@ → node → @locked@); 'Nothing' if absent or malformed.
+-}
+nixpkgsRootFromLock :: LBS.ByteString -> Maybe FilePath
+nixpkgsRootFromLock raw = do
+  Object top <- decode raw
+  Object nodes <- KM.lookup "nodes" top
+  rootName <- asText =<< KM.lookup "root" top
+  Object rootNode <- KM.lookup (K.fromText rootName) nodes
+  Object inputs <- KM.lookup "inputs" rootNode
+  npName <- inputName =<< KM.lookup "nixpkgs" inputs
+  Object npNode <- KM.lookup (K.fromText npName) nodes
+  Object locked <- KM.lookup "locked" npNode
+  let fromPath = T.unpack <$> (asText =<< KM.lookup "path" locked)
+      fromNar = fixedOutputSourcePath =<< (asText =<< KM.lookup "narHash" locked)
+  fromPath <|> fromNar
+ where
+  asText (String s) = Just s
+  asText _ = Nothing
+  -- a direct input is the node-name string; a `follows` is an array (take head).
+  inputName (String s) = Just s
+  inputName (Array a) = asText =<< listToMaybe (toList a)
+  inputName _ = Nothing
+
 {- | Non-blocking lookup of the nixpkgs symbol index for the project. Returns the
 built index if ready; otherwise kicks a background build (once per root) and
 returns 'Nothing' so the caller falls back to its normal behaviour. Never blocks
-— same discipline as the per-file cache. The @uri@ is reserved for future
-per-project root resolution (flake.lock).
+— same discipline as the per-file cache. The @uri@ locates the project (its
+flake.lock) for root resolution.
 -}
 lookupNixpkgsIndex :: Uri -> IO (Maybe Nixpkgs.NixpkgsIndex)
-lookupNixpkgsIndex _uri = do
-  mRoot <- resolveNixpkgsRoot
+lookupNixpkgsIndex uri = do
+  mRoot <- resolveNixpkgsRoot uri
   maybe (pure Nothing) viaRoot mRoot
  where
   viaRoot root = do

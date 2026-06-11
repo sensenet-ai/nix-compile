@@ -18,16 +18,20 @@
 
 module NixpkgsIndexSpec (nixpkgsIndexTests) where
 
+import Data.ByteString.Lazy qualified as LBS
 import Data.List (sort)
 import Data.Maybe (isNothing)
 import Data.Text (Text)
+import Data.Text.Encoding qualified as TE
 import Language.LSP.Protocol.Types (CompletionItem (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Span (Span (..))
 import NixCompile.LSP.Handlers.Cursor (selectAtCursor)
 import NixCompile.LSP.Handlers.Features (nixpkgsCompletionsFromText)
+import NixCompile.LSP.Handlers.Project (nixpkgsRootFromLock)
 import NixCompile.Nixpkgs.Index (buildNixpkgsIndex, lookupPackage)
+import NixCompile.Nixpkgs.StorePath (fixedOutputSourcePath)
 import System.Directory (canonicalizePath, createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -136,6 +140,45 @@ testAllPackagesResolves =
       Just sp -> spanFile sp == Just want
       Nothing -> False
 
+-- ── flake.lock → nixpkgs store path (no eval) ──────────────────────
+
+-- | A known (narHash, store path) vector: nixpkgs rev 64c08a7 as locked here.
+vecNarHash :: Text
+vecNarHash = "sha256-tpyBcxPpcQb8ukyNF7DoCwfSY3VPsxHoYwj00Cayv5o="
+
+vecStorePath :: FilePath
+vecStorePath = "/nix/store/81sr43harc753claf8bzyv3mrnjzq652-source"
+
+{- | The fixed-output store-path computation, pinned to the known vector. If this
+flips, the @makeFixedOutputPath@ math drifted from Nix.
+-}
+testStorePathVector :: IO Bool
+testStorePathVector = pure (fixedOutputSourcePath vecNarHash == Just vecStorePath)
+
+-- | Construct a minimal flake.lock with one nixpkgs node's @locked@ object.
+flakeLock :: Text -> LBS.ByteString
+flakeLock lockedObj =
+  LBS.fromStrict . TE.encodeUtf8 $
+    "{\"nodes\":{\"root\":{\"inputs\":{\"nixpkgs\":\"nixpkgs\"}},"
+      <> "\"nixpkgs\":{\"locked\":"
+      <> lockedObj
+      <> "}},\"root\":\"root\"}"
+
+-- | A github nixpkgs input resolves via its narHash to the realized store path.
+testLockGithub :: IO Bool
+testLockGithub =
+  pure (nixpkgsRootFromLock lock == Just vecStorePath)
+ where
+  lock = flakeLock ("{\"type\":\"github\",\"narHash\":\"" <> vecNarHash <> "\"}")
+
+-- | A path-type nixpkgs input resolves to its literal directory.
+testLockPath :: IO Bool
+testLockPath =
+  pure
+    ( nixpkgsRootFromLock (flakeLock "{\"type\":\"path\",\"path\":\"/local/nixpkgs\"}")
+        == Just "/local/nixpkgs"
+    )
+
 -- ── runner ─────────────────────────────────────────────────────────
 
 -- | The nixpkgs-index / cursor-recognizer / completion tests.
@@ -150,4 +193,7 @@ nixpkgsIndexTests =
   , ("nixpkgs_completion_prefix", testCompletionPrefix)
   , ("nixpkgs_completion_non_pkgs", testCompletionNonPkgs)
   , ("nixpkgs_allpackages_resolves", testAllPackagesResolves)
+  , ("nixpkgs_storepath_known_vector", testStorePathVector)
+  , ("nixpkgs_lock_github_input", testLockGithub)
+  , ("nixpkgs_lock_path_input", testLockPath)
   ]

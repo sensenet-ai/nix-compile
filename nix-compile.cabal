@@ -123,6 +123,7 @@ library
         NixCompile.Bash.Types
         NixCompile.Core.Span
         NixCompile.Nixpkgs.Index
+        NixCompile.Nixpkgs.StorePath
     build-depends:
         aeson >= 2.0 && < 2.3,
         async >= 2.2 && < 2.3,
