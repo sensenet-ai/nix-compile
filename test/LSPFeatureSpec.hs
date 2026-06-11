@@ -34,7 +34,7 @@ import Data.Either (isLeft)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, listToMaybe)
 import Data.Text (Text)
-import Language.LSP.Protocol.Types (CompletionItem (..), Position (..), Range (..))
+import Language.LSP.Protocol.Types (CompletionItem (..), Position (..), Range (..), filePathToUri)
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Inference.Nix (builtinEnv, inferExprWithEnv)
@@ -44,6 +44,7 @@ import NixCompile.LSP.Handlers.Features (
   findRef,
   inlayHintsForExpr,
  )
+import NixCompile.LSP.Handlers.Project qualified as Project
 import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.Layout.Scope qualified as Scope
 
@@ -208,6 +209,19 @@ testFindRefAtDecl =
     (sg, Just d, _) -> tripwire (isJust (findRef (declPos d) sg))
     _ -> tripwire False
 
+{- | GUARD: the cross-module scope-graph builder is non-blocking — when no
+module graph has been built for the project (cold cache, or a loose file with no
+flake root) it answers from the current file ALONE rather than blocking on a
+synchronous build or returning an empty graph. So within-file go-to-def works
+instantly and needs no project root. (Pins the cold-window de-block of
+'buildCrossScopeGraphWith'; the cross-file result arrives on a later request.)
+-}
+testNavSingleFileFallback :: IO Bool
+testNavSingleFileFallback = do
+  let uri = filePathToUri "/nonexistent-no-flake-root-xyz/foo.nix"
+  sg <- Project.buildCrossScopeGraphWith uri (Just (parse "let x = 1; in x + x"))
+  holds (not (null (concatMap Scope.scopeDeclarations (Map.elems (Scope.sgScopes sg)))))
+
 -- ── runner ─────────────────────────────────────────────────────────
 
 {- | All LSP feature contract tests. Names tagged @[tripwire]@ are inverted
@@ -227,4 +241,5 @@ lspFeatureTests =
   , ("lsp_nav_findref_at_use", testFindRefAtUse)
   , ("lsp_nav_findreferences_enumerates", testFindReferencesEnumerates)
   , ("lsp_nav_findref_at_decl [tripwire]", testFindRefAtDecl)
+  , ("lsp_nav_single_file_fallback_nonblocking", testNavSingleFileFallback)
   ]

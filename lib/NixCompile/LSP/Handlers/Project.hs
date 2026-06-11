@@ -29,9 +29,9 @@ where
 import Control.Concurrent.Async (Async, async, waitCatch)
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (SomeException, try)
+import Control.Monad (when)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Data.Text qualified as T
 import Language.LSP.Protocol.Types (Uri, uriToFilePath)
 import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, extendImport)
@@ -100,82 +100,63 @@ findProjectRoot uri = maybe (pure Nothing) fromPath (uriToFilePath uri)
         let parent = takeDirectory dir
          in if parent == dir then pure Nothing else findRoot parent (n - 1)
 
-{- | Build a TypeEnv enriched with cross-module type information.
+{- | Build a TypeEnv enriched with cross-module type information from the
+per-file project cache. Non-blocking by construction:
 
-Order of preference, non-blocking:
+  1. Every 'Fresh' entry in the project cache contributes its inferred type as
+     an import; 'Stale'/missing entries are simply absent (inference treats
+     absent imports as opaque and proceeds).
+  2. 'builtinEnv' underlies everything.
 
-  1. Project cache (per-file, content-addressed): consult first. Whatever's
-     'Fresh' goes into the env. Stale or missing entries are simply absent;
-     the inference engine treats absent imports as opaque and proceeds.
-  2. Module-graph cache (legacy, all-or-nothing): used as a backstop only
-     when the project cache has nothing useful. This will be removed once
-     the per-file cache stabilises.
-  3. 'builtinEnv': always.
-
-Crucially, this function never blocks. If the project cache is still warming,
-hover/definition still return immediately with single-file precision.
+If the cache is still cold for this project we kick the cross-module graph build
+off in the BACKGROUND (for the navigation path) and return immediately — hover /
+completion get single-file precision now and richer cross-module types as the
+per-file workers fill the cache. This function never blocks on a build.
 -}
 buildCrossEnv :: Uri -> IO TypeEnv
 buildCrossEnv uri = do
   pc <- getProjectCache
   snap <- PC.snapshotFiles pc
-  let pcEnv =
-        Map.foldlWithKey'
-          ( \acc fp entry ->
-              if PC.feStatus entry == PC.Fresh
-                then extendImport fp (PC.feType entry) acc
-                else acc
-          )
-          builtinEnv
-          snap
-  -- If the per-file cache hasn't produced anything for this project yet,
-  -- fall back to the legacy module-graph cache so we don't regress the
-  -- first hover.
-  if Map.null snap
-    then legacyBuildCrossEnv uri
-    else pure pcEnv
-
-legacyBuildCrossEnv :: Uri -> IO TypeEnv
-legacyBuildCrossEnv uri = do
-  mMg <- getOrBuildModuleGraph uri
-  maybe (pure builtinEnv) withMg mMg
+  -- Cold cache: warm the cross-module graph in the background for the nav path,
+  -- but never block this request on the build.
+  when (Map.null snap) (voidProjectDiags uri)
+  pure (Map.foldlWithKey' addFresh builtinEnv snap)
  where
-  withMg mg = pure finalEnv
-   where
-    canonicalTypes = Mod.mgModuleTypes mg
-    baseEnv = builtinEnv{envImportTypes = canonicalTypes}
-    finalEnv =
-      foldr
-        ( \(_, m) acc ->
-            foldr
-              ( \imp acc' ->
-                  let raw = T.unpack (Mod.impRawPath imp)
-                   in maybe
-                        acc'
-                        (\t -> extendImport raw t acc')
-                        (Map.lookup (Mod.impPath imp) canonicalTypes)
-              )
-              acc
-              (Mod.modImports m)
-        )
-        baseEnv
-        (Map.toList (Mod.mgModules mg))
+  addFresh acc fp entry
+    | PC.feStatus entry == PC.Fresh = extendImport fp (PC.feType entry) acc
+    | otherwise = acc
 
-{- | Build a cross-module 'Scope.ScopeGraph' for the URI's project from its
-  module graph, splicing in the caller's current (possibly unsaved) expression
-  for that file. Empty graph when no project root/module graph is found.
+{- | Build a cross-module 'Scope.ScopeGraph' for the URI's project, splicing in
+the caller's current (possibly unsaved) expression for that file. Non-blocking:
+if the module graph has already been built we use it for full cross-file
+precision; otherwise we warm it in the BACKGROUND and answer NOW from the
+current file alone, so within-file navigation works immediately and cross-file
+results arrive on a later request. The single-file fallback needs no project
+root, so within-file go-to-def/references work even outside a flake.
 -}
 buildCrossScopeGraphWith :: Uri -> Maybe NExprLoc -> IO Scope.ScopeGraph
 buildCrossScopeGraphWith uri mCurrentExpr = do
-  mMg <- getOrBuildModuleGraph uri
-  maybe (pure Scope.empty) withMg mMg
+  mMg <- lookupModuleGraph uri
+  maybe onCold (pure . crossGraph) mMg
  where
-  withMg mg =
+  -- Not built yet: warm in the background and answer from the current file now.
+  onCold = voidProjectDiags uri >> pure singleFileGraph
+  currentFile = uriToFilePath uri
+  singleFileGraph = maybe Scope.empty (Scope.fromNixExpr currentFile) mCurrentExpr
+  crossGraph mg =
     let exprs = Map.map Mod.modExpr (Mod.mgModules mg)
-        currentFile = uriToFilePath uri
         exprs' =
           maybe exprs (\(f, e) -> Map.insert f e exprs) ((,) <$> currentFile <*> mCurrentExpr)
-     in pure $ Scope.fromModuleGraph exprs'
+     in Scope.fromModuleGraph exprs'
+
+{- | Non-blocking: the cached module graph for the URI's project if one has
+already been built, else Nothing. NEVER triggers a build — warming the cache is
+the background path's job ('voidProjectDiags').
+-}
+lookupModuleGraph :: Uri -> IO (Maybe Mod.ModuleGraph)
+lookupModuleGraph uri = do
+  mRoot <- findProjectRoot uri
+  maybe (pure Nothing) (\root -> Map.lookup root <$> readMVar moduleGraphCache) mRoot
 
 {- | Look up or build the module graph for a project root.
 n.b. fixes from review-2:
