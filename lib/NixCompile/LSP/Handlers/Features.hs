@@ -26,6 +26,7 @@ module NixCompile.LSP.Handlers.Features (
   toLspPos,
   -- completion
   completionsForExpr,
+  nixpkgsCompletionsFromText,
   -- signature help
   signatureAtCursor,
   -- code actions
@@ -41,6 +42,7 @@ module NixCompile.LSP.Handlers.Features (
 where
 
 import Control.Applicative ((<|>))
+import Data.Char (isAlphaNum)
 import Data.List (nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (listToMaybe)
@@ -56,6 +58,7 @@ import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.LSP.Handlers.Cursor (childExprs, exprName, findExprAt)
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
+import NixCompile.Nixpkgs.Index qualified as Nixpkgs
 import NixCompile.Syntax.Annotation (pattern Layer)
 
 -- ═══════════════════════ navigation ═══════════════════════
@@ -150,6 +153,50 @@ mkCompletionItem label' kind' detail' =
     , _command = Nothing
     , _data_ = Nothing
     }
+
+{- | Text-based @pkgs.<prefix>@ completion: scan backward from the cursor on the
+current line for a @pkgs.<partial>@ and offer matching package names from the
+index. Works on half-typed source the parser would reject (e.g. a bare @pkgs.@),
+so it is independent of the parsed AST. Capped to keep responses bounded.
+-}
+nixpkgsCompletionsFromText :: Nixpkgs.NixpkgsIndex -> Text -> Int -> Int -> [CompletionItem]
+nixpkgsCompletionsFromText idx txt l c =
+  maybe [] pkgsItems (lineUpToCursor >>= pkgsPrefixAt)
+ where
+  lineUpToCursor = T.take c <$> safeIx l (T.lines txt)
+  pkgsItems (base, prefix)
+    | base == "pkgs" =
+        take
+          maxItems
+          [ mkCompletionItem name (Just CompletionItemKind_Module) (Just "nixpkgs package")
+          | name <- Map.keys (Nixpkgs.pkgsByName idx)
+          , prefix `T.isPrefixOf` name
+          ]
+    | otherwise = []
+  maxItems = 1000
+
+-- | Safe list index: 'Nothing' for negative or out-of-range @i@.
+safeIx :: Int -> [a] -> Maybe a
+safeIx i xs
+  | i < 0 = Nothing
+  | otherwise = listToMaybe (drop i xs)
+
+{- | Peel a trailing @base.partial@ off the line text up to the cursor — the base
+identifier and the partial attribute being typed (e.g. @"… = pkgs.rip"@ →
+@("pkgs","rip")@, @"pkgs."@ → @("pkgs","")@). Backward scan over identifier
+characters; 'Nothing' if the cursor is not just after a @base.@.
+-}
+pkgsPrefixAt :: Text -> Maybe (Text, Text)
+pkgsPrefixAt before = fromDot (T.uncons afterPrefix) (T.reverse prefixRev)
+ where
+  (prefixRev, afterPrefix) = T.span isPkgChar (T.reverse before)
+  fromDot (Just ('.', afterDot)) prefix =
+    Just (T.reverse (T.takeWhile isPkgChar afterDot), prefix)
+  fromDot _ _ = Nothing
+
+-- | Characters that may appear in a Nix attribute / package name.
+isPkgChar :: Char -> Bool
+isPkgChar ch = isAlphaNum ch || ch == '_' || ch == '\'' || ch == '-'
 
 -- ═══════════════════════ signature help ═══════════════════════
 

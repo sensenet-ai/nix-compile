@@ -1,3 +1,4 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -17,12 +18,15 @@
 
 module NixpkgsIndexSpec (nixpkgsIndexTests) where
 
+import Data.List (sort)
 import Data.Maybe (isNothing)
 import Data.Text (Text)
+import Language.LSP.Protocol.Types (CompletionItem (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Span (Span (..))
 import NixCompile.LSP.Handlers.Cursor (selectAtCursor)
+import NixCompile.LSP.Handlers.Features (nixpkgsCompletionsFromText)
 import NixCompile.Nixpkgs.Index (buildNixpkgsIndex, lookupPackage)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
@@ -88,9 +92,35 @@ testSelectIgnoresBareSym :: IO Bool
 testSelectIgnoresBareSym =
   pure (isNothing (selectAtCursor 0 1 (parse "pkgs")))
 
+-- | The label of a completion item.
+completionLabel :: CompletionItem -> Text
+completionLabel CompletionItem{_label = l} = l
+
+{- | @pkgs.<prefix>@ completion offers exactly the matching package names — and
+works off raw text, including a prefix the parser would choke on.
+-}
+testCompletionPrefix :: IO Bool
+testCompletionPrefix =
+  withSystemTempDirectory "nixpkgs-idx" $ \root -> do
+    seedPackage root "ri" "ripgrep"
+    seedPackage root "ri" "ripgrep-all"
+    seedPackage root "he" "hello"
+    idx <- buildNixpkgsIndex root
+    -- "  x = pkgs.rip" with the cursor at end (col 14) → prefix "rip"
+    let labels = map completionLabel (nixpkgsCompletionsFromText idx "  x = pkgs.rip" 0 14)
+    pure (sort labels == ["ripgrep", "ripgrep-all"])
+
+-- | A non-@pkgs@ base yields no nixpkgs completions (caller's own list stands).
+testCompletionNonPkgs :: IO Bool
+testCompletionNonPkgs =
+  withSystemTempDirectory "nixpkgs-idx" $ \root -> do
+    seedPackage root "ri" "ripgrep"
+    idx <- buildNixpkgsIndex root
+    pure (null (nixpkgsCompletionsFromText idx "  y = foo.bar" 0 13))
+
 -- ── runner ─────────────────────────────────────────────────────────
 
--- | The nixpkgs-index / cursor-recognizer tests.
+-- | The nixpkgs-index / cursor-recognizer / completion tests.
 nixpkgsIndexTests :: [(String, IO Bool)]
 nixpkgsIndexTests =
   [ ("nixpkgs_byname_resolves", testByNameResolves)
@@ -99,4 +129,6 @@ nixpkgsIndexTests =
   , ("nixpkgs_select_recognized", testSelectRecognized)
   , ("nixpkgs_select_first_segment", testSelectFirstSegment)
   , ("nixpkgs_select_ignores_bare_sym", testSelectIgnoresBareSym)
+  , ("nixpkgs_completion_prefix", testCompletionPrefix)
+  , ("nixpkgs_completion_non_pkgs", testCompletionNonPkgs)
   ]

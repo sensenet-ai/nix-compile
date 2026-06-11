@@ -71,6 +71,7 @@ import NixCompile.LSP.Handlers.Features (
   findRef,
   inferOptionAtPath,
   inlayHintsForExpr,
+  nixpkgsCompletionsFromText,
   noFile,
   parseErr,
   rangeOverlapsDiag,
@@ -376,13 +377,23 @@ completionHandler req responder = do
   let CompletionParams textDoc pos _workDone _partialResult _context = params
   let TextDocumentIdentifier uri = textDoc
   mvf <- getVirtualFile (toNormalizedUri uri)
-  maybe nullResp (withExpr uri pos) (mvf >>= lspSafeParse . virtualFileText)
+  maybe nullResp (withVf uri pos) mvf
  where
   nullResp = responder $ Right $ InR (InR Null)
-  withExpr uri (Position l c) expr = do
+  withVf uri (Position l c) vf = do
+    let txt = virtualFileText vf
+    -- nixpkgs `pkgs.<prefix>` completion works off the raw text, so it survives
+    -- the half-typed source the parser rejects; scope/builtin completion needs a
+    -- parse. Union both. Neither blocks (the index is Nothing until warm).
+    idx <- liftIO $ lookupNixpkgsIndex uri
     env <- liftIO $ buildCrossEnv uri
-    let items = completionsForExpr env expr (fromIntegral l) (fromIntegral c)
-    responder $ Right $ InL items
+    let li = fromIntegral l
+        ci = fromIntegral c
+        nixItems = maybe [] (\i -> nixpkgsCompletionsFromText i txt li ci) idx
+        scopeItems = maybe [] (\e -> completionsForExpr env e li ci) (lspSafeParse txt)
+    -- In a `pkgs.<prefix>` context the package list is what's wanted; only fall
+    -- back to scope/builtin completion when we're not completing a package.
+    responder $ Right $ InL (if null nixItems then scopeItems else nixItems)
 
 -- ═══════════════════════ signature help ═══════════════════════
 
