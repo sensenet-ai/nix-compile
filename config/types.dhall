@@ -27,10 +27,18 @@ let Profile =
       , files : Optional (List Text)
       }
 
-let Config =
-      { profile : Text
-      , extra-ignores : List Text
-      , overrides : List RuleOverride
+let Lsp =
+      { max-threads : Natural
+      , max-memory-mb : Natural
+      , max-disk-mb : Natural
       }
 
-in  { Severity, Language, RuleOverride, Profile, Config }
+let Config =
+      { profile : Text
+      , layout : Text
+      , extra-ignores : List Text
+      , overrides : List RuleOverride
+      , lsp : Lsp
+      }
+
+in  { Severity, Language, RuleOverride, Profile, Lsp, Config }

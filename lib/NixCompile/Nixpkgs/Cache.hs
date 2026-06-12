@@ -39,7 +39,6 @@ module NixCompile.Nixpkgs.Cache (
   -- * Configuration
   CacheConfig (..),
   defaultCacheConfig,
-  cacheConfigFromEnv,
 
   -- * The cache
   EvalCache,
@@ -99,9 +98,7 @@ import System.Directory (
   doesFileExist,
   getXdgDirectory,
  )
-import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, (</>))
-import Text.Read (readMaybe)
 
 import NixCompile.Core.Span (spanFile)
 import NixCompile.Inference.Nix.Type (NixType)
@@ -179,21 +176,6 @@ defaultCacheConfig =
     { ccMaxMemoryBytes = 256 * 1024 * 1024
     , ccMaxDiskBytes = 512 * 1024 * 1024
     }
-
-{- | The quotas from the environment, the trivially-configurable knob surface:
-@NIX_COMPILE_LSP_MAX_MEMORY_MB@ and @NIX_COMPILE_LSP_MAX_DISK_MB@ (in MiB), each
-falling back to 'defaultCacheConfig' when unset or unparsable. (The third knob,
-@NIX_COMPILE_LSP_MAX_THREADS@, sizes the eval pool and lives with it.)
--}
-cacheConfigFromEnv :: IO CacheConfig
-cacheConfigFromEnv = do
-  mem <- envMiB "NIX_COMPILE_LSP_MAX_MEMORY_MB" (ccMaxMemoryBytes defaultCacheConfig)
-  disk <- envMiB "NIX_COMPILE_LSP_MAX_DISK_MB" (ccMaxDiskBytes defaultCacheConfig)
-  pure (CacheConfig mem disk)
- where
-  envMiB name dflt = do
-    raw <- lookupEnv name
-    pure (maybe dflt ((* (1024 * 1024)) . max 1) (raw >>= readMaybe))
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- the cache

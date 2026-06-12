@@ -51,10 +51,10 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
+import NixCompile.Core.Config (getLspRuntime, lspMaxThreads)
 import NixCompile.Inference.Nix.Type (NixType (..))
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..))
 import NixCompile.Nixpkgs.Index (nixpkgsRoot)
-import System.Environment (lookupEnv)
 import System.IO (BufferMode (..), Handle, hClose, hFlush, hSetBuffering)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (
@@ -66,7 +66,6 @@ import System.Process (
   terminateProcess,
  )
 import System.Timeout (timeout)
-import Text.Read (readMaybe)
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- the backend
@@ -148,14 +147,12 @@ data ReplProc = ReplProc
 replPools :: MVar (Map FilePath (TChan ReplProc))
 replPools = unsafePerformIO (newMVar Map.empty)
 
-{-# NOINLINE poolSize #-}
-
 {- | How many warm processes per root (the symbol-completion parallelism), from
-@NIX_COMPILE_LSP_MAX_THREADS@ (the third LSP knob), default 4. A CAF read once.
+the @max-threads@ LSP knob (see "NixCompile.Core.Config"), floored at 1. Read when
+a root's pool is first created — after the server has installed the project config.
 -}
-poolSize :: Int
-poolSize =
-  unsafePerformIO (maybe 4 (max 1) . (>>= readMaybe) <$> lookupEnv "NIX_COMPILE_LSP_MAX_THREADS")
+poolSize :: IO Int
+poolSize = fromIntegral . max 1 . lspMaxThreads <$> getLspRuntime
 
 -- | The sentinel that delimits one query's output (a Nix string literal).
 sentinel :: Text
@@ -168,7 +165,8 @@ getChan root = modifyMVar replPools $ \m ->
  where
   create m = do
     ch <- newTChanIO
-    forM_ [1 .. poolSize] $ \_ -> void (async (spawnInto root ch))
+    n <- poolSize
+    forM_ [1 .. n] $ \_ -> void (async (spawnInto root ch))
     pure (Map.insert root ch m, ch)
 
 -- | Start a warm process and hand it to the channel (or drop it on failure).

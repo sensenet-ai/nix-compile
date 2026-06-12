@@ -42,6 +42,7 @@ import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
@@ -49,6 +50,7 @@ import Language.LSP.Server
 import Language.LSP.VFS (virtualFileText)
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
+import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Core.Span qualified as CSpan
 import NixCompile.Inference.Nix.Type qualified as NT
@@ -96,8 +98,8 @@ import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Nixpkgs.Cache (
+  CacheConfig (..),
   EvalCache,
-  cacheConfigFromEnv,
   cachingBackend,
   defaultCachePath,
   flushCacheAsync,
@@ -106,6 +108,7 @@ import NixCompile.Nixpkgs.Cache (
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), composeBackend, shapeBackend)
 import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
+import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
 
 {- | Parse text inside an LSP handler. Returns Nothing on parse failure,
@@ -137,13 +140,25 @@ nixpkgsBackend = cachingBackend nixpkgsEvalCache (composeBackend replBackend sha
 {-# NOINLINE nixpkgsEvalCache #-}
 
 {- | The process-wide eval cache, loaded once from NVMe (or empty on first run)
-using the env-configured quotas. A CAF like the other LSP caches; forced lazily
-on the first symbol query. Checkpointed back to disk on save (see
+using the quotas from the project config's @lsp@ block. A CAF like the other LSP
+caches; forced lazily on the first symbol query — by which point 'initializedHandler'
+has installed the config. Checkpointed back to disk on save (see
 'documentSaveHandler').
 -}
 nixpkgsEvalCache :: EvalCache
-nixpkgsEvalCache =
-  unsafePerformIO (cacheConfigFromEnv >>= \cfg -> defaultCachePath >>= loadCacheFrom cfg)
+nixpkgsEvalCache = unsafePerformIO $ do
+  lsp <- Cfg.getLspRuntime
+  defaultCachePath >>= loadCacheFrom (lspCacheConfig lsp)
+
+-- | The cache quotas from the LSP knobs: MiB fields widened to bytes.
+lspCacheConfig :: Cfg.LspConfig -> CacheConfig
+lspCacheConfig lsp =
+  CacheConfig
+    { ccMaxMemoryBytes = mib (Cfg.lspMaxMemoryMB lsp)
+    , ccMaxDiskBytes = mib (Cfg.lspMaxDiskMB lsp)
+    }
+ where
+  mib n = fromIntegral n * 1024 * 1024
 
 {- | The full request registry: maps every supported LSP notification/request
   method to its handler. Passed to the server as the static handler set.
@@ -172,12 +187,23 @@ handlers =
 
 initializedHandler :: TNotificationMessage 'Method_Initialized -> LspM () ()
 initializedHandler _not = do
+  -- Install the project's lsp knobs (eval-pool size, cache quotas) BEFORE the
+  -- cache / warm pool are first forced. Absent or unparsable config → defaults.
+  mroot <- getRootPath
+  liftIO (installLspConfig mroot)
   -- Eagerly construct the project cache so its workers are running and
   -- ready to drain enqueued files as soon as the first didOpen lands.
   -- Cheap: just spawns N idle threads.
   _ <- liftIO getProjectCache
   sendNotification SMethod_WindowLogMessage $
     LogMessageParams MessageType_Info "nix-compile LSP — panopticon online"
+
+-- | Load @<root>/.nix-compile.dhall@ and install its @lsp@ knobs (defaults on miss).
+installLspConfig :: Maybe FilePath -> IO ()
+installLspConfig mroot = do
+  let path = fromMaybe "." mroot </> ".nix-compile.dhall"
+  cfg <- either (const Cfg.defaultConfig) id <$> Cfg.loadConfig path
+  Cfg.setLspRuntime (Cfg.configLsp cfg)
 
 documentOpenHandler :: TNotificationMessage 'Method_TextDocumentDidOpen -> LspM () ()
 documentOpenHandler notif = do

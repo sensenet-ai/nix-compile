@@ -10,4 +10,5 @@ in  { profile = "standard"
       , "tools/fmtparity/**"
       ]
     , overrides = [ overrideOff "long-inline-string" ]
+    , lsp = { max-threads = 4, max-memory-mb = 256, max-disk-mb = 512 }
     }

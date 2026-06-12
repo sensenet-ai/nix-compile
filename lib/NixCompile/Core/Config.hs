@@ -17,9 +17,13 @@
 module NixCompile.Core.Config (
   Severity (..),
   RuleOverride (..),
+  LspConfig (..),
+  defaultLspConfig,
   Config (..),
   loadConfig,
   defaultConfig,
+  getLspRuntime,
+  setLspRuntime,
   effectiveSeverity,
   effectiveLayout,
   configIgnores,
@@ -36,6 +40,7 @@ where
 
 import Control.Exception (SomeException, try)
 import Data.Foldable (toList)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -45,7 +50,9 @@ import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import Dhall.Parser qualified as DhallParser
 import GHC.Generics (Generic)
+import Numeric.Natural (Natural)
 import System.FilePath qualified as FP
+import System.IO.Unsafe (unsafePerformIO)
 
 import NixCompile.Layout.Convention (Convention, layoutFromName)
 import NixCompile.Lint.Derivation qualified as Deriv
@@ -88,12 +95,37 @@ instance FromDhall RuleOverride where
     renameField "overrideReason" = "reason"
     renameField n = n
 
+{- | the LSP runtime knobs: the warm-eval-pool concurrency and the eval cache's
+memory / disk quotas. Sized in whole units (threads, MiB) so the config reads
+naturally; the cache converts MiB to bytes. See "NixCompile.Nixpkgs.Cache".
+-}
+data LspConfig = LspConfig
+  { lspMaxThreads :: !Natural
+  , lspMaxMemoryMB :: !Natural
+  , lspMaxDiskMB :: !Natural
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance FromDhall LspConfig where
+  autoWith _norm =
+    genericAutoWith (defaultInterpretOptions{fieldModifier = renameField})
+   where
+    renameField "lspMaxThreads" = "max-threads"
+    renameField "lspMaxMemoryMB" = "max-memory-mb"
+    renameField "lspMaxDiskMB" = "max-disk-mb"
+    renameField n = n
+
+-- | the built-in LSP knobs: 4 eval workers, 256 MiB resident, 512 MiB on disk.
+defaultLspConfig :: LspConfig
+defaultLspConfig = LspConfig{lspMaxThreads = 4, lspMaxMemoryMB = 256, lspMaxDiskMB = 512}
+
 -- | the resolved tool configuration: profile, layout convention, ignores, and rule overrides.
 data Config = Config
   { configProfile :: !Text
   , configLayout :: !Text
   , configExtraIgnores :: ![Text]
   , configOverrides :: ![RuleOverride]
+  , configLsp :: !LspConfig
   }
   deriving stock (Eq, Show, Generic)
 
@@ -105,6 +137,7 @@ instance FromDhall Config where
     renameField "configLayout" = "layout"
     renameField "configExtraIgnores" = "extra-ignores"
     renameField "configOverrides" = "overrides"
+    renameField "configLsp" = "lsp"
     renameField n = n
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -119,7 +152,29 @@ defaultConfig =
     , configLayout = "straylight"
     , configExtraIgnores = []
     , configOverrides = []
+    , configLsp = defaultLspConfig
     }
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
+-- LSP runtime knobs
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+{-# NOINLINE lspRuntimeRef #-}
+
+{- | The process-wide LSP knobs, installed once at server startup from the project
+config (see the @initialized@ handler) and read when the eval cache and warm pool
+first spin up. A CAF, like the server's other process-global state.
+-}
+lspRuntimeRef :: IORef LspConfig
+lspRuntimeRef = unsafePerformIO (newIORef defaultLspConfig)
+
+-- | Install the LSP knobs (called once, before the cache / pool are forced).
+setLspRuntime :: LspConfig -> IO ()
+setLspRuntime = writeIORef lspRuntimeRef
+
+-- | Read the installed LSP knobs (defaults until 'setLspRuntime' runs).
+getLspRuntime :: IO LspConfig
+getLspRuntime = readIORef lspRuntimeRef
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- Queries

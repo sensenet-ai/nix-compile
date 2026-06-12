@@ -16,6 +16,8 @@
 let Severity = < Off | Info | Warning | Error >
 
 in  { profile = "nixpkgs"
+    , layout = "flake-parts"
+    , lsp = { max-threads = 4, max-memory-mb = 256, max-disk-mb = 512 }
     , extra-ignores =
       [ ".github/**"      -- CI scripts, not packages
       , "maintainers/**"  -- maintainer scripts

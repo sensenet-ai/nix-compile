@@ -291,6 +291,7 @@ prop_c6_local_config_still_works = QCM.monadicIO $ do
         , ", extra-ignores = [] : List Text"
         , ", overrides = [] : List { id : Text, severity : < Off | Info | Warning | Error >"
             <> ", reason : Optional Text }"
+        , ", lsp = { max-threads = 4, max-memory-mb = 256, max-disk-mb = 512 }"
         , "}"
         ]
     Cfg.loadConfig confPath
