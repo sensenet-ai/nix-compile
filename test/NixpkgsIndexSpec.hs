@@ -28,8 +28,14 @@ import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Span (Span (..))
 import NixCompile.LSP.Handlers.Cursor (selectAtCursor)
-import NixCompile.LSP.Handlers.Features (nixpkgsCompletionsFromText)
+import NixCompile.LSP.Handlers.Features (
+  PkgsCtx (..),
+  attrCompletions,
+  nixpkgsCompletionContext,
+  pkgNameCompletions,
+ )
 import NixCompile.LSP.Handlers.Project (nixpkgsRootFromLock)
+import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..), shapeBackend)
 import NixCompile.Nixpkgs.Index (buildNixpkgsIndex, lookupPackage)
 import NixCompile.Nixpkgs.StorePath (fixedOutputSourcePath)
 import System.Directory (canonicalizePath, createDirectoryIfMissing)
@@ -100,27 +106,53 @@ testSelectIgnoresBareSym =
 completionLabel :: CompletionItem -> Text
 completionLabel CompletionItem{_label = l} = l
 
-{- | @pkgs.<prefix>@ completion offers exactly the matching package names — and
-works off raw text, including a prefix the parser would choke on.
--}
-testCompletionPrefix :: IO Bool
-testCompletionPrefix =
+-- | The completion context recognizer distinguishes name vs symbol vs neither.
+testCtxPkgName :: IO Bool
+testCtxPkgName =
+  pure (nixpkgsCompletionContext "  x = pkgs.rip" 0 14 == Just (PkgName "rip"))
+
+testCtxPkgSymbol :: IO Bool
+testCtxPkgSymbol =
+  pure (nixpkgsCompletionContext "  x = pkgs.hello.over" 0 21 == Just (PkgSymbol "hello" "over"))
+
+testCtxNonPkgs :: IO Bool
+testCtxNonPkgs =
+  pure (isNothing (nixpkgsCompletionContext "  y = foo.bar" 0 13))
+
+-- | @pkgs.<prefix>@ name completion offers exactly the matching package names.
+testPkgNameCompletion :: IO Bool
+testPkgNameCompletion =
   withSystemTempDirectory "nixpkgs-idx" $ \root -> do
     seedPackage root "ri" "ripgrep"
     seedPackage root "ri" "ripgrep-all"
     seedPackage root "he" "hello"
     idx <- buildNixpkgsIndex root
-    -- "  x = pkgs.rip" with the cursor at end (col 14) → prefix "rip"
-    let labels = map completionLabel (nixpkgsCompletionsFromText idx "  x = pkgs.rip" 0 14)
+    let labels = map completionLabel (pkgNameCompletions idx "rip")
     pure (sort labels == ["ripgrep", "ripgrep-all"])
 
--- | A non-@pkgs@ base yields no nixpkgs completions (caller's own list stands).
-testCompletionNonPkgs :: IO Bool
-testCompletionNonPkgs =
+{- | @pkgs.<pkg>.<prefix>@ SYMBOL completion via the tier-1 shape backend: a
+known package's attr names matching the prefix (here the override family).
+-}
+testSymbolCompletionShape :: IO Bool
+testSymbolCompletionShape =
   withSystemTempDirectory "nixpkgs-idx" $ \root -> do
-    seedPackage root "ri" "ripgrep"
+    seedPackage root "he" "hello"
     idx <- buildNixpkgsIndex root
-    pure (null (nixpkgsCompletionsFromText idx "  y = foo.bar" 0 13))
+    spine <- evalSpine shapeBackend idx ["hello"]
+    let items = attrCompletions "nixpkgs attr" (either (const []) id spine) "over"
+    pure (sort (map completionLabel items) == ["override", "overrideAttrs", "overrideDerivation"])
+
+{- | The shape backend declines what it can't answer: an unknown name and any
+nested path (only a real evaluator instantiates @python3Packages.requests@).
+-}
+testSymbolBackendDeclines :: IO Bool
+testSymbolBackendDeclines =
+  withSystemTempDirectory "nixpkgs-idx" $ \root -> do
+    seedPackage root "he" "hello"
+    idx <- buildNixpkgsIndex root
+    unknown <- evalSpine shapeBackend idx ["not-a-package"]
+    nested <- evalSpine shapeBackend idx ["python3Packages", "requests"]
+    pure (unknown == Left Unsupported && nested == Left Unsupported)
 
 {- | A legacy @name = callPackage <path> { }@ binding in all-packages.nix
 resolves (syntactic parse, no eval); the relative path is canonicalised.
@@ -190,8 +222,12 @@ nixpkgsIndexTests =
   , ("nixpkgs_select_recognized", testSelectRecognized)
   , ("nixpkgs_select_first_segment", testSelectFirstSegment)
   , ("nixpkgs_select_ignores_bare_sym", testSelectIgnoresBareSym)
-  , ("nixpkgs_completion_prefix", testCompletionPrefix)
-  , ("nixpkgs_completion_non_pkgs", testCompletionNonPkgs)
+  , ("nixpkgs_ctx_pkg_name", testCtxPkgName)
+  , ("nixpkgs_ctx_pkg_symbol", testCtxPkgSymbol)
+  , ("nixpkgs_ctx_non_pkgs", testCtxNonPkgs)
+  , ("nixpkgs_completion_pkg_name", testPkgNameCompletion)
+  , ("nixpkgs_completion_symbol_shape", testSymbolCompletionShape)
+  , ("nixpkgs_symbol_backend_declines", testSymbolBackendDeclines)
   , ("nixpkgs_allpackages_resolves", testAllPackagesResolves)
   , ("nixpkgs_storepath_known_vector", testStorePathVector)
   , ("nixpkgs_lock_github_input", testLockGithub)

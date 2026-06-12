@@ -124,6 +124,7 @@ library
         NixCompile.Core.Span
         NixCompile.Nixpkgs.Index
         NixCompile.Nixpkgs.StorePath
+        NixCompile.Nixpkgs.Eval
     build-depends:
         aeson >= 2.0 && < 2.3,
         async >= 2.2 && < 2.3,

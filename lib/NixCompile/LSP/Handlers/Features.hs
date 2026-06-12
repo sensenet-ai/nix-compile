@@ -26,7 +26,10 @@ module NixCompile.LSP.Handlers.Features (
   toLspPos,
   -- completion
   completionsForExpr,
-  nixpkgsCompletionsFromText,
+  PkgsCtx (..),
+  nixpkgsCompletionContext,
+  pkgNameCompletions,
+  attrCompletions,
   -- signature help
   signatureAtCursor,
   -- code actions
@@ -154,26 +157,54 @@ mkCompletionItem label' kind' detail' =
     , _data_ = Nothing
     }
 
-{- | Text-based @pkgs.<prefix>@ completion: scan backward from the cursor on the
-current line for a @pkgs.<partial>@ and offer matching package names from the
-index. Works on half-typed source the parser would reject (e.g. a bare @pkgs.@),
-so it is independent of the parsed AST. Capped to keep responses bounded.
+{- | What a @pkgs.…@ completion at the cursor is completing: a package NAME
+(@pkgs.<prefix>@) or a SYMBOL of a package (@pkgs.<pkg>.<prefix>@). The symbol
+case is resolved through the eval backend (shape template / spine-force /
+compiler) by the handler — this layer stays pure.
 -}
-nixpkgsCompletionsFromText :: Nixpkgs.NixpkgsIndex -> Text -> Int -> Int -> [CompletionItem]
-nixpkgsCompletionsFromText idx txt l c =
-  maybe [] pkgsItems (lineUpToCursor >>= pkgsPrefixAt)
+data PkgsCtx
+  = PkgName !Text
+  | PkgSymbol !Text !Text
+  deriving (Eq, Show)
+
+{- | Recognize a @pkgs.…@ completion context from the buffer text + cursor. A
+backward scan over the dotted chain on the current line, so it survives the
+half-typed source the parser rejects (a bare @pkgs.@ / @pkgs.hello.@) and is
+independent of the parsed AST. 'Nothing' if the cursor isn't completing under
+@pkgs@.
+-}
+nixpkgsCompletionContext :: Text -> Int -> Int -> Maybe PkgsCtx
+nixpkgsCompletionContext txt l c =
+  safeIx l (T.lines txt) >>= ctxOf . chainBeforeCursor . T.take c
  where
-  lineUpToCursor = T.take c <$> safeIx l (T.lines txt)
-  pkgsItems (base, prefix)
-    | base == "pkgs" =
-        take
-          maxItems
-          [ mkCompletionItem name (Just CompletionItemKind_Module) (Just "nixpkgs package")
-          | name <- Map.keys (Nixpkgs.pkgsByName idx)
-          , prefix `T.isPrefixOf` name
-          ]
-    | otherwise = []
-  maxItems = 1000
+  ctxOf (["pkgs"], prefix) = Just (PkgName prefix)
+  ctxOf (["pkgs", pkg], prefix) = Just (PkgSymbol pkg prefix)
+  ctxOf _ = Nothing
+
+-- | Package-name completions: index keys matching the prefix, capped.
+pkgNameCompletions :: Nixpkgs.NixpkgsIndex -> Text -> [CompletionItem]
+pkgNameCompletions idx prefix =
+  take
+    maxNixpkgsItems
+    [ mkCompletionItem name (Just CompletionItemKind_Module) (Just "nixpkgs package")
+    | name <- Map.keys (Nixpkgs.pkgsByName idx)
+    , prefix `T.isPrefixOf` name
+    ]
+
+{- | Attribute completions from a list of attr names matching the prefix —
+the symbol case, given names the eval backend produced.
+-}
+attrCompletions :: Text -> [Text] -> Text -> [CompletionItem]
+attrCompletions detail names prefix =
+  take
+    maxNixpkgsItems
+    [ mkCompletionItem name (Just CompletionItemKind_Field) (Just detail)
+    | name <- names
+    , prefix `T.isPrefixOf` name
+    ]
+
+maxNixpkgsItems :: Int
+maxNixpkgsItems = 1000
 
 -- | Safe list index: 'Nothing' for negative or out-of-range @i@.
 safeIx :: Int -> [a] -> Maybe a
@@ -181,18 +212,21 @@ safeIx i xs
   | i < 0 = Nothing
   | otherwise = listToMaybe (drop i xs)
 
-{- | Peel a trailing @base.partial@ off the line text up to the cursor — the base
-identifier and the partial attribute being typed (e.g. @"… = pkgs.rip"@ →
-@("pkgs","rip")@, @"pkgs."@ → @("pkgs","")@). Backward scan over identifier
-characters; 'Nothing' if the cursor is not just after a @base.@.
+{- | The dotted chain and trailing partial just before the cursor: e.g.
+@"… = pkgs.hello.over"@ → @(["pkgs","hello"], "over")@, @"pkgs.rip"@ →
+@(["pkgs"], "rip")@, @"pkgs."@ → @(["pkgs"], "")@. Backward scan over identifier
+runs separated by dots; stops at the first non-identifier, non-dot character.
 -}
-pkgsPrefixAt :: Text -> Maybe (Text, Text)
-pkgsPrefixAt before = fromDot (T.uncons afterPrefix) (T.reverse prefixRev)
+chainBeforeCursor :: Text -> ([Text], Text)
+chainBeforeCursor before =
+  let (firstRev, rest0) = T.span isPkgChar (T.reverse before)
+   in (go [] rest0, T.reverse firstRev)
  where
-  (prefixRev, afterPrefix) = T.span isPkgChar (T.reverse before)
-  fromDot (Just ('.', afterDot)) prefix =
-    Just (T.reverse (T.takeWhile isPkgChar afterDot), prefix)
-  fromDot _ _ = Nothing
+  go acc rest = step acc (T.uncons rest)
+  step acc (Just ('.', more)) =
+    let (segRev, rest') = T.span isPkgChar more
+     in go (T.reverse segRev : acc) rest'
+  step acc _ = acc
 
 -- | Characters that may appear in a Nix attribute / package name.
 isPkgChar :: Char -> Bool

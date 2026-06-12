@@ -67,13 +67,16 @@ import NixCompile.LSP.Handlers.Diagnostics (
   toNixDiag,
  )
 import NixCompile.LSP.Handlers.Features (
+  PkgsCtx (..),
+  attrCompletions,
   completionsForExpr,
   findRef,
   inferOptionAtPath,
   inlayHintsForExpr,
-  nixpkgsCompletionsFromText,
+  nixpkgsCompletionContext,
   noFile,
   parseErr,
+  pkgNameCompletions,
   rangeOverlapsDiag,
   signatureAtCursor,
   toLspPos,
@@ -92,6 +95,7 @@ import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
+import NixCompile.Nixpkgs.Eval (EvalBackend (..), defaultEvalBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -382,18 +386,26 @@ completionHandler req responder = do
   nullResp = responder $ Right $ InR (InR Null)
   withVf uri (Position l c) vf = do
     let txt = virtualFileText vf
-    -- nixpkgs `pkgs.<prefix>` completion works off the raw text, so it survives
-    -- the half-typed source the parser rejects; scope/builtin completion needs a
-    -- parse. Union both. Neither blocks (the index is Nothing until warm).
+    -- nixpkgs completion works off the raw text, so it survives the half-typed
+    -- source the parser rejects; scope/builtin completion needs a parse. Union
+    -- both. Neither blocks (the index is Nothing until warm).
     idx <- liftIO $ lookupNixpkgsIndex uri
     env <- liftIO $ buildCrossEnv uri
     let li = fromIntegral l
         ci = fromIntegral c
-        nixItems = maybe [] (\i -> nixpkgsCompletionsFromText i txt li ci) idx
-        scopeItems = maybe [] (\e -> completionsForExpr env e li ci) (lspSafeParse txt)
-    -- In a `pkgs.<prefix>` context the package list is what's wanted; only fall
-    -- back to scope/builtin completion when we're not completing a package.
+    nixItems <- liftIO $ maybe (pure []) (nixpkgsItems txt li ci) idx
+    let scopeItems = maybe [] (\e -> completionsForExpr env e li ci) (lspSafeParse txt)
+    -- In a `pkgs.…` context the nixpkgs list is what's wanted; only fall back to
+    -- scope/builtin completion when we're not completing under `pkgs`.
     responder $ Right $ InL (if null nixItems then scopeItems else nixItems)
+  -- Package names are pure (index keys); a package's symbols go through the eval
+  -- backend — the shape template today, the nixlang compiler when it lands.
+  nixpkgsItems txt li ci idx =
+    maybe (pure []) (resolveCtx idx) (nixpkgsCompletionContext txt li ci)
+  resolveCtx idx (PkgName prefix) = pure (pkgNameCompletions idx prefix)
+  resolveCtx idx (PkgSymbol pkg prefix) = do
+    spine <- evalSpine defaultEvalBackend idx [pkg]
+    pure (either (const []) (\names -> attrCompletions "nixpkgs attr" names prefix) spine)
 
 -- ═══════════════════════ signature help ═══════════════════════
 
