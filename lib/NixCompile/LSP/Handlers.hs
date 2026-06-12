@@ -43,7 +43,7 @@ import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Char (isAlphaNum)
-import Data.List (nub)
+import Data.List (inits, nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -193,19 +193,30 @@ warmNixpkgsPath path = go (20 :: Int)
     latestNixpkgsIndex
       >>= maybe (threadDelay 100_000 >> go (n - 1)) (\idx -> evalSpine nixpkgsBackend idx path)
 
-{- | The distinct @pkgs.<name>@ references in a document's text — the reachable
+{- | The distinct @pkgs.<chain>@ references in a document's text — the reachable
 nixpkgs set of the current context, used to seed the warm frontier. A lightweight
 text scan (survives the half-typed edits the parser rejects), boundary-checked so
-@mypkgs.x@ does not match @pkgs@.
+@mypkgs.x@ does not match @pkgs@. Each dotted chain (@pkgs.python3Packages.requests@)
+yields its non-empty prefixes (@["python3Packages"]@, @["python3Packages","requests"]@)
+so symbol completion at every depth of the reference is a pre-warmed hit.
 -}
 pkgsReferences :: Text -> [[Text]]
 pkgsReferences txt =
-  [ [name]
-  | name <- nub [refName after | (before, after) <- T.breakOnAll "pkgs." txt, leftOk before]
-  , not (T.null name)
-  ]
+  nub
+    [ prefix
+    | (before, after) <- T.breakOnAll "pkgs." txt
+    , leftOk before
+    , let chain = readChain (T.drop 5 after)
+    , not (null chain)
+    , prefix <- drop 1 (inits chain)
+    ]
  where
-  refName after = T.takeWhile isPkgChar (T.drop 5 after)
+  readChain t =
+    let (seg, rest) = T.span isPkgChar t
+     in if T.null seg then [] else seg : afterDot rest
+  afterDot rest = maybe [] dotMore (T.uncons rest)
+  dotMore ('.', more) = readChain more
+  dotMore _ = []
   leftOk before = maybe True (not . isPkgBoundary) (lastChar before)
   lastChar t = if T.null t then Nothing else Just (T.last t)
   isPkgBoundary ch = isPkgChar ch || ch == '.'

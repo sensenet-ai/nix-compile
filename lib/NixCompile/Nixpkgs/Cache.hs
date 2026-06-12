@@ -100,10 +100,11 @@ import System.Directory (
  )
 import System.FilePath (takeDirectory, (</>))
 
+import Data.Text.Encoding qualified as TE
 import NixCompile.Core.Span (spanFile)
 import NixCompile.Inference.Nix.Type (NixType)
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..))
-import NixCompile.Nixpkgs.Index (NixpkgsIndex, lookupPackage)
+import NixCompile.Nixpkgs.Index (NixpkgsIndex, lookupPackage, nixpkgsRoot)
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- keys and entries
@@ -259,11 +260,26 @@ lookupOrRun cache idx path sel run wrap unwrap = do
 -- content hashing
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 
--- | The content hash of the source file the path's head package resolves to.
+{- | The content hash a path is keyed under. If the head resolves to an indexed
+package, hash that package's @package.nix@ (precise — a per-file edit invalidates
+exactly it). Otherwise — every namespace member, @pkgs.python3Packages.requests@
+and friends, whose head is not a by-name/all-packages entry — fall back to the
+nixpkgs ROOT's identity: @sha256(root)@. For a store-path root the path embeds the
+tree's own content hash, so the key is immutable (any change → new store path → new
+key); for a mutable checkout it is stable, going stale only if a namespace member's
+source is edited under the LSP — the accepted "wrong extremely rarely" tradeoff.
+The empty path alone is uncacheable.
+-}
 contentHashFor :: NixpkgsIndex -> [Text] -> IO (Maybe ContentHash)
 contentHashFor _ [] = pure Nothing
 contentHashFor idx (pkg : _) =
-  maybe (pure Nothing) contentHashOf (lookupPackage idx pkg >>= spanFile)
+  maybe (pure (Just (rootIdentityHash (nixpkgsRoot idx)))) contentHashOf indexed
+ where
+  indexed = lookupPackage idx pkg >>= spanFile
+
+-- | A content hash standing in for the whole tree at @root@ — see 'contentHashFor'.
+rootIdentityHash :: FilePath -> ContentHash
+rootIdentityHash = ContentHash . hexEncode . SHA256.hash . TE.encodeUtf8 . T.pack
 
 -- | SHA-256 (lowercase hex) of a file's bytes; 'Nothing' if it can't be read.
 contentHashOf :: FilePath -> IO (Maybe ContentHash)

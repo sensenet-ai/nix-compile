@@ -182,21 +182,39 @@ testLruRecency =
     (count, _) <- cacheStats cache
     pure (n == 4 && count == 2)
 
--- ── bypass ─────────────────────────────────────────────────────────
+-- ── nested / root-identity caching ─────────────────────────────────
 
-{- | A path whose source the index can't resolve is uncacheable, so it delegates
-straight through every time — never cached, never wrong.
+{- | A nested / namespace path whose head is not an indexed package (e.g.
+@python3Packages.requests@) is still cached — keyed by the nixpkgs root identity —
+so a repeat is a hit, not a re-eval.
 -}
-testUnresolvableBypass :: IO Bool
-testUnresolvableBypass =
+testNestedCachedViaRoot :: IO Bool
+testNestedCachedViaRoot =
   withSystemTempDirectory "nixpkgs-cache" $ \root -> do
     seedPkg root "he" "hello" "{ }\n"
     idx <- indexOf root
     ref <- newIORef 0
     cache <- newEvalCache defaultCacheConfig
     let be = cachingBackend cache (countingBackend ref)
-    _ <- evalSpine be idx ["ghost"] -- not in the index
-    _ <- evalSpine be idx ["ghost"]
+    _ <- evalSpine be idx ["python3Packages", "requests"] -- head not in the index
+    _ <- evalSpine be idx ["python3Packages", "requests"]
+    n <- readIORef ref
+    (count, _) <- cacheStats cache
+    pure (n == 1 && count == 1)
+
+{- | The empty path is the one genuinely uncacheable case: it delegates straight
+through every time.
+-}
+testEmptyPathBypass :: IO Bool
+testEmptyPathBypass =
+  withSystemTempDirectory "nixpkgs-cache" $ \root -> do
+    seedPkg root "he" "hello" "{ }\n"
+    idx <- indexOf root
+    ref <- newIORef 0
+    cache <- newEvalCache defaultCacheConfig
+    let be = cachingBackend cache (countingBackend ref)
+    _ <- evalSpine be idx []
+    _ <- evalSpine be idx []
     n <- readIORef ref
     (count, _) <- cacheStats cache
     pure (n == 2 && count == 0)
@@ -257,7 +275,8 @@ nixpkgsCacheTests =
   , ("cache_content_invalidation", testContentInvalidation)
   , ("cache_eviction_caps_size", testEvictionCapsSize)
   , ("cache_lru_recency", testLruRecency)
-  , ("cache_unresolvable_bypass", testUnresolvableBypass)
+  , ("cache_nested_cached_via_root", testNestedCachedViaRoot)
+  , ("cache_empty_path_bypass", testEmptyPathBypass)
   , ("cache_persist_round_trip", testPersistRoundTrip)
   , ("cache_persist_stale_is_safe", testPersistStaleIsSafe)
   ]
