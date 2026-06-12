@@ -158,13 +158,14 @@ mkCompletionItem label' kind' detail' =
     }
 
 {- | What a @pkgs.…@ completion at the cursor is completing: a package NAME
-(@pkgs.<prefix>@) or a SYMBOL of a package (@pkgs.<pkg>.<prefix>@). The symbol
-case is resolved through the eval backend (shape template / spine-force /
-compiler) by the handler — this layer stays pure.
+(@pkgs.<prefix>@) or a SYMBOL at an attribute PATH (@pkgs.<a>.<b>.<prefix>@, the
+path being @[a,b]@ to any depth). The symbol case is resolved through the eval
+backend (shape template / spine-force / compiler) by the handler — this layer
+stays pure.
 -}
 data PkgsCtx
   = PkgName !Text
-  | PkgSymbol !Text !Text
+  | PkgSymbol ![Text] !Text
   deriving (Eq, Show)
 
 {- | Recognize a @pkgs.…@ completion context from the buffer text + cursor. A
@@ -177,8 +178,9 @@ nixpkgsCompletionContext :: Text -> Int -> Int -> Maybe PkgsCtx
 nixpkgsCompletionContext txt l c =
   safeIx l (T.lines txt) >>= ctxOf . chainBeforeCursor . T.take c
  where
-  ctxOf (["pkgs"], prefix) = Just (PkgName prefix)
-  ctxOf (["pkgs", pkg], prefix) = Just (PkgSymbol pkg prefix)
+  ctxOf ("pkgs" : rest, prefix)
+    | null rest = Just (PkgName prefix)
+    | otherwise = Just (PkgSymbol rest prefix)
   ctxOf _ = Nothing
 
 -- | Package-name completions: index keys matching the prefix, capped.

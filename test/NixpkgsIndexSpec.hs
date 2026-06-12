@@ -115,7 +115,15 @@ testCtxPkgName =
 
 testCtxPkgSymbol :: IO Bool
 testCtxPkgSymbol =
-  pure (nixpkgsCompletionContext "  x = pkgs.hello.over" 0 21 == Just (PkgSymbol "hello" "over"))
+  pure (nixpkgsCompletionContext "  x = pkgs.hello.over" 0 21 == Just (PkgSymbol ["hello"] "over"))
+
+-- | A deeper chain carries the full attribute path (so namespace members complete).
+testCtxPkgSymbolDeep :: IO Bool
+testCtxPkgSymbolDeep =
+  pure
+    ( nixpkgsCompletionContext "  x = pkgs.python3Packages.requests.ver" 0 39
+        == Just (PkgSymbol ["python3Packages", "requests"] "ver")
+    )
 
 testCtxNonPkgs :: IO Bool
 testCtxNonPkgs =
@@ -252,6 +260,7 @@ nixpkgsIndexTests =
   , ("nixpkgs_select_ignores_bare_sym", testSelectIgnoresBareSym)
   , ("nixpkgs_ctx_pkg_name", testCtxPkgName)
   , ("nixpkgs_ctx_pkg_symbol", testCtxPkgSymbol)
+  , ("nixpkgs_ctx_pkg_symbol_deep", testCtxPkgSymbolDeep)
   , ("nixpkgs_ctx_non_pkgs", testCtxNonPkgs)
   , ("nixpkgs_completion_pkg_name", testPkgNameCompletion)
   , ("nixpkgs_completion_symbol_shape", testSymbolCompletionShape)

@@ -113,7 +113,7 @@ import NixCompile.Nixpkgs.Cache (
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..), composeBackend, shapeBackend)
 import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
-import NixCompile.Nixpkgs.Warm (WarmPool, newWarmPool, swapFocus)
+import NixCompile.Nixpkgs.Warm (WarmPool, enqueueDemand, newWarmPool, swapFocus)
 import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -527,10 +527,26 @@ completionHandler req responder = do
   nixpkgsItems txt li ci idx =
     maybe (pure []) (resolveCtx idx) (nixpkgsCompletionContext txt li ci)
   resolveCtx idx (PkgName prefix) = pure (pkgNameCompletions idx prefix)
-  resolveCtx idx (PkgSymbol pkg prefix) = do
+  resolveCtx idx (PkgSymbol path prefix) = do
     -- real names via the warm nix-repl pool, falling back to the shape template.
-    spine <- evalSpine nixpkgsBackend idx [pkg]
-    pure (either (const []) (\names -> attrCompletions "nixpkgs attr" names prefix) spine)
+    spine <- evalSpine nixpkgsBackend idx path
+    either (const (pure [])) (served path prefix) spine
+  served path prefix names = do
+    -- Prefix-aware pre-warm: warm the spines of the children the user is narrowing
+    -- toward, so drilling into one is a hit. Bounded — skip an empty prefix (would
+    -- be the whole namespace) and cap the batch.
+    warmMatchingChildren path prefix names
+    pure (attrCompletions "nixpkgs attr" names prefix)
+  warmMatchingChildren path prefix names
+    | T.null prefix = pure ()
+    | otherwise =
+        enqueueDemand
+          warmPool
+          (take maxWarmChildren [path <> [n] | n <- names, prefix `T.isPrefixOf` n])
+
+-- | Cap on children pre-warmed per completion — bounds a short prefix's fan-out.
+maxWarmChildren :: Int
+maxWarmChildren = 32
 
 -- ═══════════════════════ signature help ═══════════════════════
 
