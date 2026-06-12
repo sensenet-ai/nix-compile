@@ -102,6 +102,7 @@ import NixCompile.Lint.Packages qualified as PackageLint
 import NixCompile.Lint.Patterns qualified as PatternLint
 import NixCompile.Syntax.Effect
 import NixCompile.Syntax.Format (formatNixFile)
+import NixpkgsCacheSpec qualified
 import NixpkgsIndexSpec qualified
 import ProjectCacheSpec qualified
 import Psychotic qualified
@@ -5235,6 +5236,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- nixpkgs eval cache (content-addressed; hermetic fake backend) --"
+  cacheResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- NixpkgsCacheSpec.nixpkgsCacheTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5243,6 +5256,7 @@ main = do
           ++ nixAdvResults
           ++ lspResults
           ++ nixpkgsResults
+          ++ cacheResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed

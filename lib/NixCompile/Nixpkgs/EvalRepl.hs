@@ -54,6 +54,7 @@ import Data.Text.IO qualified as TIO
 import NixCompile.Inference.Nix.Type (NixType (..))
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..))
 import NixCompile.Nixpkgs.Index (nixpkgsRoot)
+import System.Environment (lookupEnv)
 import System.IO (BufferMode (..), Handle, hClose, hFlush, hSetBuffering)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (
@@ -65,6 +66,7 @@ import System.Process (
   terminateProcess,
  )
 import System.Timeout (timeout)
+import Text.Read (readMaybe)
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- the backend
@@ -146,9 +148,14 @@ data ReplProc = ReplProc
 replPools :: MVar (Map FilePath (TChan ReplProc))
 replPools = unsafePerformIO (newMVar Map.empty)
 
--- | How many warm processes per root (the symbol-completion parallelism).
+{-# NOINLINE poolSize #-}
+
+{- | How many warm processes per root (the symbol-completion parallelism), from
+@NIX_COMPILE_LSP_MAX_THREADS@ (the third LSP knob), default 4. A CAF read once.
+-}
 poolSize :: Int
-poolSize = 4
+poolSize =
+  unsafePerformIO (maybe 4 (max 1) . (>>= readMaybe) <$> lookupEnv "NIX_COMPILE_LSP_MAX_THREADS")
 
 -- | The sentinel that delimits one query's output (a Nix string literal).
 sentinel :: Text

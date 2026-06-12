@@ -95,6 +95,14 @@ import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
+import NixCompile.Nixpkgs.Cache (
+  EvalCache,
+  cacheConfigFromEnv,
+  cachingBackend,
+  defaultCachePath,
+  flushCacheAsync,
+  loadCacheFrom,
+ )
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), composeBackend, shapeBackend)
 import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
@@ -117,12 +125,25 @@ lspSafeParse txt = unsafePerformIO $ do
   parseAndCheck t = either (const Nothing) checkDepth (parseNixTextLoc t)
   checkDepth e = either (const Nothing) (const (Just e)) (Safety.analyzeDepth e)
 
-{- | The eval backend for @pkgs.<pkg>.<symbol>@ completion: the warm nix-repl
-pool (real names + types) in front of the always-available shape template. When
-the in-house compiler lands it composes here in place of the repl pool.
+{- | The eval backend for @pkgs.<pkg>.<symbol>@ completion: a content-addressed
+cache wrapping the warm nix-repl pool (real names + types) in front of the
+always-available shape template. The cache turns a repeat ~62ms eval into a map
+lookup and survives across sessions on NVMe. When the in-house compiler lands it
+composes in place of the repl pool — the cache and shape floor stay.
 -}
 nixpkgsBackend :: EvalBackend
-nixpkgsBackend = composeBackend replBackend shapeBackend
+nixpkgsBackend = cachingBackend nixpkgsEvalCache (composeBackend replBackend shapeBackend)
+
+{-# NOINLINE nixpkgsEvalCache #-}
+
+{- | The process-wide eval cache, loaded once from NVMe (or empty on first run)
+using the env-configured quotas. A CAF like the other LSP caches; forced lazily
+on the first symbol query. Checkpointed back to disk on save (see
+'documentSaveHandler').
+-}
+nixpkgsEvalCache :: EvalCache
+nixpkgsEvalCache =
+  unsafePerformIO (cacheConfigFromEnv >>= \cfg -> defaultCachePath >>= loadCacheFrom cfg)
 
 {- | The full request registry: maps every supported LSP notification/request
   method to its handler. Passed to the server as the static handler set.
@@ -206,6 +227,8 @@ documentSaveHandler notif = do
   liftIO $ do
     invalidateModuleGraphCache uri
     maybe (pure ()) invalidate (uriToFilePath uri)
+    -- Opportunistic, non-blocking checkpoint of the nixpkgs eval cache to NVMe.
+    defaultCachePath >>= \p -> flushCacheAsync p nixpkgsEvalCache
   maybe (return ()) (publish uri) txt
  where
   -- Per-file invalidation: the saved file + its reverse-dep closure are
