@@ -57,6 +57,7 @@ import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Config qualified as Cfg
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Core.Span qualified as CSpan
+import NixCompile.Inference.Nix.Environment (TypeEnv, withPkgsOracle)
 import NixCompile.Inference.Nix.Type qualified as NT
 import NixCompile.LSP.Handlers.Cursor (
   findExprAt,
@@ -113,9 +114,11 @@ import NixCompile.Nixpkgs.Cache (
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..), composeBackend, shapeBackend)
 import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
+import NixCompile.Nixpkgs.Oracle (buildPkgsOracle)
 import NixCompile.Nixpkgs.Warm (WarmPool, enqueueDemand, newWarmPool, swapFocus)
 import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 
 {- | Parse text inside an LSP handler. Returns Nothing on parse failure,
 depth overflow, or stack overflow — handlers respond gracefully instead of
@@ -221,6 +224,23 @@ pkgsReferences txt =
   lastChar t = if T.null t then Nothing else Just (T.last t)
   isPkgBoundary ch = isPkgChar ch || ch == '.'
   isPkgChar ch = isAlphaNum ch || ch == '_' || ch == '\'' || ch == '-'
+
+{- | Seed the inference env with precomputed @pkgs.<path>@ types for this file —
+the eval/cache machinery enriching the type checker (STR-211), so a nixpkgs
+reference hovers as its real type, a bogus attribute is a real error, and a misuse
+unifies away. Bounded to the file's references and time-boxed; with no index yet,
+or on timeout, the env is returned unchanged. The warm pool (didOpen) has usually
+pre-warmed exactly these paths, so the eval calls here are cache hits.
+-}
+enrichPkgsOracle :: Uri -> NExprLoc -> TypeEnv -> IO TypeEnv
+enrichPkgsOracle uri expr env = do
+  mIdx <- lookupNixpkgsIndex uri
+  maybe (pure env) build mIdx
+ where
+  build idx = do
+    mOracle <- timeout oracleBudgetMicros (buildPkgsOracle nixpkgsBackend idx expr)
+    pure (maybe env (`withPkgsOracle` env) mOracle)
+  oracleBudgetMicros = 4_000_000
 
 {- | The full request registry: maps every supported LSP notification/request
   method to its handler. Passed to the server as the static handler set.
@@ -354,7 +374,8 @@ hoverHandler req responder = do
   hover markup = responder $ Right $ InL $ Hover{_contents = InL markup, _range = Nothing}
   withVf uri pos vf = maybe (hover parseErr) (withExpr uri pos) (lspSafeParse (virtualFileText vf))
   withExpr uri (Position l c) expr = do
-    env <- liftIO $ buildCrossEnv uri
+    baseEnv <- liftIO $ buildCrossEnv uri
+    env <- liftIO $ enrichPkgsOracle uri expr baseEnv
     hover
       ( maybe
           noExpr

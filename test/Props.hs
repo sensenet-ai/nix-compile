@@ -105,6 +105,7 @@ import NixCompile.Syntax.Effect
 import NixCompile.Syntax.Format (formatNixFile)
 import NixpkgsCacheSpec qualified
 import NixpkgsIndexSpec qualified
+import NixpkgsOracleSpec qualified
 import NixpkgsWarmSpec qualified
 import ProjectCacheSpec qualified
 import Psychotic qualified
@@ -5274,6 +5275,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- inference enrichment (eval→oracle bridge; hermetic fake backend) --"
+  oracleBridgeResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- NixpkgsOracleSpec.nixpkgsOracleTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5285,6 +5298,7 @@ main = do
           ++ cacheResults
           ++ warmResults
           ++ oracleResults
+          ++ oracleBridgeResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
