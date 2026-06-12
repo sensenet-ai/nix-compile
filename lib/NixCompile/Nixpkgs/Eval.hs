@@ -33,6 +33,7 @@ module NixCompile.Nixpkgs.Eval (
   EvalBackend (..),
   EvalError (..),
   defaultEvalBackend,
+  composeBackend,
 
   -- * Tier 1 — the derivation shape
   derivationShapeAttrs,
@@ -66,11 +67,27 @@ data EvalBackend = EvalBackend
   -- ^ the type of one field (force just that field's value)
   }
 
-{- | The backend the LSP uses today. Currently the no-eval shape template; when
-the nixlang compiler lands, swap it in here (or compose: compiler, then shape).
+{- | The no-external-process default: the shape template. Callers that want real
+evaluation compose a stronger backend in front via 'composeBackend' (the handler
+does: nix-repl pool, then shape).
 -}
 defaultEvalBackend :: EvalBackend
 defaultEvalBackend = shapeBackend
+
+{- | Try the first backend; on 'Left' (declined or failed), fall back to the
+second. So a strong-but-fallible engine (the nix-repl pool, or the compiler) can
+sit in front of the always-available shape template.
+-}
+composeBackend :: EvalBackend -> EvalBackend -> EvalBackend
+composeBackend front back =
+  EvalBackend
+    { backendName = backendName front <> "+" <> backendName back
+    , evalSpine = \idx p -> evalSpine front idx p >>= orElse (evalSpine back idx p)
+    , evalFieldType = \idx p f ->
+        evalFieldType front idx p f >>= orElse (evalFieldType back idx p f)
+    }
+ where
+  orElse fallback = either (const fallback) (pure . Right)
 
 {- | The attributes essentially every @stdenv.mkDerivation@ output carries,
 independent of the package — the structural attrs mkDerivation/stdenv always add

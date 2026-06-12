@@ -27,6 +27,7 @@ import Language.LSP.Protocol.Types (CompletionItem (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
 import NixCompile.Core.Span (Span (..))
+import NixCompile.Inference.Nix.Type (NixType (..))
 import NixCompile.LSP.Handlers.Cursor (selectAtCursor)
 import NixCompile.LSP.Handlers.Features (
   PkgsCtx (..),
@@ -36,6 +37,7 @@ import NixCompile.LSP.Handlers.Features (
  )
 import NixCompile.LSP.Handlers.Project (nixpkgsRootFromLock)
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..), shapeBackend)
+import NixCompile.Nixpkgs.EvalRepl (nixTypeOf, pathExpr, stripAnsi, unNixString)
 import NixCompile.Nixpkgs.Index (buildNixpkgsIndex, lookupPackage)
 import NixCompile.Nixpkgs.StorePath (fixedOutputSourcePath)
 import System.Directory (canonicalizePath, createDirectoryIfMissing)
@@ -154,6 +156,32 @@ testSymbolBackendDeclines =
     nested <- evalSpine shapeBackend idx ["python3Packages", "requests"]
     pure (unknown == Left Unsupported && nested == Left Unsupported)
 
+-- ── nix-repl backend protocol helpers ──────────────────────────────
+
+-- | An attribute path renders to a quoted-attr Nix expression.
+testReplPathExpr :: IO Bool
+testReplPathExpr =
+  pure
+    ( pathExpr "/nixpkgs" ["python3Packages", "requests"]
+        == "(import /nixpkgs {}).\"python3Packages\".\"requests\""
+    )
+
+-- | Un-nix-escaping a printed toJSON string recovers the JSON payload.
+testReplUnNixString :: IO Bool
+testReplUnNixString =
+  -- the repl prints `toJSON ["a","b"]` as the literal "[\"a\",\"b\"]"
+  pure (unNixString "\"[\\\"a\\\",\\\"b\\\"]\"" == "[\"a\",\"b\"]")
+
+-- | ANSI SGR sequences (the repl colourises output) are stripped.
+testReplStripAnsi :: IO Bool
+testReplStripAnsi =
+  pure (stripAnsi "\ESC[35;1m\"hello\"\ESC[0m" == "\"hello\"")
+
+-- | Nix @typeOf@ tags map to 'NixType'.
+testReplTypeOf :: IO Bool
+testReplTypeOf =
+  pure (map nixTypeOf ["string", "int", "bool", "path"] == [TString, TInt, TBool, TPath])
+
 {- | A legacy @name = callPackage <path> { }@ binding in all-packages.nix
 resolves (syntactic parse, no eval); the relative path is canonicalised.
 -}
@@ -228,6 +256,10 @@ nixpkgsIndexTests =
   , ("nixpkgs_completion_pkg_name", testPkgNameCompletion)
   , ("nixpkgs_completion_symbol_shape", testSymbolCompletionShape)
   , ("nixpkgs_symbol_backend_declines", testSymbolBackendDeclines)
+  , ("nixpkgs_repl_path_expr", testReplPathExpr)
+  , ("nixpkgs_repl_unnix_string", testReplUnNixString)
+  , ("nixpkgs_repl_strip_ansi", testReplStripAnsi)
+  , ("nixpkgs_repl_typeof", testReplTypeOf)
   , ("nixpkgs_allpackages_resolves", testAllPackagesResolves)
   , ("nixpkgs_storepath_known_vector", testStorePathVector)
   , ("nixpkgs_lock_github_input", testLockGithub)

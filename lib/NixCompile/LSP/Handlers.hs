@@ -95,7 +95,8 @@ import NixCompile.LSP.Handlers.Symbols (collectTopBindingSymbols)
 import NixCompile.LSP.ProjectCache qualified as PC
 import NixCompile.Layout.ModuleSystem qualified as MS
 import NixCompile.Layout.Scope qualified as Scope
-import NixCompile.Nixpkgs.Eval (EvalBackend (..), defaultEvalBackend)
+import NixCompile.Nixpkgs.Eval (EvalBackend (..), composeBackend, shapeBackend)
+import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -115,6 +116,13 @@ lspSafeParse txt = unsafePerformIO $ do
  where
   parseAndCheck t = either (const Nothing) checkDepth (parseNixTextLoc t)
   checkDepth e = either (const Nothing) (const (Just e)) (Safety.analyzeDepth e)
+
+{- | The eval backend for @pkgs.<pkg>.<symbol>@ completion: the warm nix-repl
+pool (real names + types) in front of the always-available shape template. When
+the in-house compiler lands it composes here in place of the repl pool.
+-}
+nixpkgsBackend :: EvalBackend
+nixpkgsBackend = composeBackend replBackend shapeBackend
 
 {- | The full request registry: maps every supported LSP notification/request
   method to its handler. Passed to the server as the static handler set.
@@ -404,7 +412,8 @@ completionHandler req responder = do
     maybe (pure []) (resolveCtx idx) (nixpkgsCompletionContext txt li ci)
   resolveCtx idx (PkgName prefix) = pure (pkgNameCompletions idx prefix)
   resolveCtx idx (PkgSymbol pkg prefix) = do
-    spine <- evalSpine defaultEvalBackend idx [pkg]
+    -- real names via the warm nix-repl pool, falling back to the shape template.
+    spine <- evalSpine nixpkgsBackend idx [pkg]
     pure (either (const []) (\names -> attrCompletions "nixpkgs attr" names prefix) spine)
 
 -- ═══════════════════════ signature help ═══════════════════════
