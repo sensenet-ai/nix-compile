@@ -104,6 +104,7 @@ import NixCompile.Syntax.Effect
 import NixCompile.Syntax.Format (formatNixFile)
 import NixpkgsCacheSpec qualified
 import NixpkgsIndexSpec qualified
+import NixpkgsWarmSpec qualified
 import ProjectCacheSpec qualified
 import Psychotic qualified
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)
@@ -5248,6 +5249,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- nixpkgs background warm (worker pool + STM frontier; hermetic) --"
+  warmResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- NixpkgsWarmSpec.nixpkgsWarmTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5257,6 +5270,7 @@ main = do
           ++ lspResults
           ++ nixpkgsResults
           ++ cacheResults
+          ++ warmResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
