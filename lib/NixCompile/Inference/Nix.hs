@@ -58,11 +58,13 @@ module NixCompile.Inference.Nix (
 )
 where
 
+import Control.Applicative ((<|>))
 import Control.Exception (IOException, try)
 import Control.Monad (foldM, forM, forM_, replicateM, when)
 import Control.Monad.State.Strict (gets, modify)
 import Data.Coerce (coerce)
 import Data.Fix (Fix (..))
+import Data.Foldable (toList)
 import Data.Functor.Compose (Compose (..))
 import Data.Graph (SCC (..), stronglyConnComp)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -188,6 +190,23 @@ just a fresh polymorphic var.
 The 'hasDefault' parameter (from @attrs.x or default@) suppresses the error,
 because the source has explicitly declared "ok if missing".
 -}
+
+{- | A @pkgs.<path>@ selection whose full STATIC path the caller precomputed
+(into 'envPkgsOracle') gets that type directly, as a monotype scheme — the seam
+where the nixpkgs eval backend enriches inference. Syntactic on the @pkgs@ base,
+exactly like 'builtinsFieldScheme', and fired BEFORE 'inferSelect', so the opaque
+@pkgs : TAny@ is never consulted. A dynamic key or an unseeded path falls through.
+-}
+pkgsOracleScheme :: TypeEnv -> NExprLoc -> NonEmpty (NKeyName NExprLoc) -> Maybe Scheme
+pkgsOracleScheme environment base path
+  | isNamespaceVar "pkgs" base
+  , Just keys <- traverse staticKey (toList path) =
+      Forall [] <$> Map.lookup keys (envPkgsOracle environment)
+  | otherwise = Nothing
+ where
+  staticKey (StaticKey k) = Just (varNameText k)
+  staticKey (DynamicKey _) = Nothing
+
 inferSelect :: TypeEnv -> NExprLoc -> NonEmpty (NKeyName NExprLoc) -> Bool -> Infer NixType
 inferSelect environment base path hasDefault = do
   baseT <- infer environment base
@@ -510,12 +529,13 @@ infer environment (LayerAnn sp expr) = withSpan (srcSpanToSpan sp) (go expr)
   go (NAssert cond body) = inferAssert environment cond body
   go (NAbs params body) = inferLambda environment params body
   go (NApp func arg) = inferAppWithImport environment func arg
-  -- `builtins.<name>`: a modeled namespace field gets a fresh polymorphic instance
+  -- `builtins.<name>`/`lib.<name>` get a fresh polymorphic instance; a
+  -- `pkgs.<path>` whose type the caller precomputed gets that type directly.
   go (NSelect mDef base path) =
     maybe
       (inferSelect environment base path (isJust mDef))
       instantiate
-      (builtinsFieldScheme base path)
+      (builtinsFieldScheme base path <|> pkgsOracleScheme environment base path)
   go (NHasAttr base attr) = inferHasAttr environment base attr
   go (NUnary op e) = inferUnary environment op e
   go (NBinary op left right) = inferBinary environment op left right

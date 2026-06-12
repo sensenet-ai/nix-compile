@@ -37,6 +37,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import InferenceOracleSpec qualified
 import LSPFeatureSpec qualified
 import Language.LSP.Protocol.Types (
   Diagnostic (..),
@@ -5261,6 +5262,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- inference enrichment (pkgs.<path> type oracle; hermetic) --"
+  oracleResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- InferenceOracleSpec.inferenceOracleTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5271,6 +5284,7 @@ main = do
           ++ nixpkgsResults
           ++ cacheResults
           ++ warmResults
+          ++ oracleResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed

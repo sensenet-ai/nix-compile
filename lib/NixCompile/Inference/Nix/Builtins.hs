@@ -20,6 +20,7 @@ module NixCompile.Inference.Nix.Builtins (
   builtinEnv,
   builtinSchemeTable,
   builtinsFieldScheme,
+  isNamespaceVar,
 )
 where
 
@@ -97,6 +98,7 @@ builtinEnv =
     , envImportTypes = Map.empty
     , envLenient = False
     , envModuleParams = False
+    , envPkgsOracle = Map.empty
     }
  where
   -- ── core type scheme helpers ──────────────────────────────────

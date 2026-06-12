@@ -23,6 +23,7 @@ module NixCompile.Inference.Nix.Environment (
   extendImport,
   extendImports,
   lookupImport,
+  withPkgsOracle,
 )
 where
 
@@ -53,12 +54,24 @@ data TypeEnv = TypeEnv
     self-referential @inputs in `mkFlake { inherit inputs; }`). Matched by name
     so ordinary inner lambdas (`x: x + 1`) keep precise inference. Default: False.
   -}
+  , envPkgsOracle :: Map [Text] NixType
+  {- ^ precomputed types for @pkgs.<path>@ attribute references, keyed by the
+    path AFTER @pkgs@ (@["hello","pname"]@ for @pkgs.hello.pname@). Seeded by the
+    caller from the nixpkgs eval backend (see "NixCompile.Nixpkgs.Oracle"); the
+    inferencer consults it syntactically on a @pkgs.…@ selection, turning what was
+    an opaque 'TAny' into a real type — better hover, real attribute-typo errors,
+    sharper unification. Empty by default, so absent it changes nothing.
+  -}
   }
   deriving (Eq, Show)
 
 -- | the empty environment: no bindings, no @with@, no imports, strict mode.
 emptyEnv :: TypeEnv
-emptyEnv = TypeEnv Map.empty Nothing Map.empty False False
+emptyEnv = TypeEnv Map.empty Nothing Map.empty False False Map.empty
+
+-- | seed the @pkgs.<path>@ type oracle (replacing any existing entries).
+withPkgsOracle :: Map [Text] NixType -> TypeEnv -> TypeEnv
+withPkgsOracle oracle env = env{envPkgsOracle = oracle}
 
 {- | extend the env with one name → scheme binding
 n.b. this shadows — if a name already exists the new scheme wins
