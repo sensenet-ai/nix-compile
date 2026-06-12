@@ -26,6 +26,7 @@ module NixCompile.LSP.Handlers.Project (
   voidProjectDiags,
   lookupNixpkgsIndex,
   warmNixpkgsIndex,
+  latestNixpkgsIndex,
   nixpkgsRootFromLock,
 )
 where
@@ -113,6 +114,20 @@ re-scan @by-name@.
 -}
 nixpkgsIndexInflight :: MVar (Set FilePath)
 nixpkgsIndexInflight = unsafePerformIO (newMVar Set.empty)
+
+{-# NOINLINE latestIndexRef #-}
+
+{- | The most-recently-built nixpkgs index, for consumers that have no URI in hand
+(the background-warm pool, STR-231). One project per session is the norm, so
+"latest" is the right index; multi-root sessions simply warm against whichever
+resolved last.
+-}
+latestIndexRef :: MVar (Maybe Nixpkgs.NixpkgsIndex)
+latestIndexRef = unsafePerformIO (newMVar Nothing)
+
+-- | The most-recently-built nixpkgs index, or 'Nothing' before any has resolved.
+latestNixpkgsIndex :: IO (Maybe Nixpkgs.NixpkgsIndex)
+latestNixpkgsIndex = readMVar latestIndexRef
 
 {- | Resolve the nixpkgs checkout to index, WITHOUT evaluating Nix. Sources, in
 order: the @NIX_COMPILE_NIXPKGS@ env var (explicit override); the project's
@@ -202,7 +217,9 @@ warmNixpkgsIndex root = do
     result <- try (Nixpkgs.buildNixpkgsIndex root) :: IO (Either SomeException Nixpkgs.NixpkgsIndex)
     either (const (pure ())) install result
     modifyMVar_ nixpkgsIndexInflight (pure . Set.delete root)
-  install idx = modifyMVar_ nixpkgsIndexCache (pure . Map.insert root idx)
+  install idx = do
+    modifyMVar_ nixpkgsIndexCache (pure . Map.insert root idx)
+    modifyMVar_ latestIndexRef (const (pure (Just idx)))
 
 {- | Maximum number of directory levels to walk up looking for a project root.
 n.b. raised from 10 to 64 to handle deeply nested workspaces (B6 from review-2).

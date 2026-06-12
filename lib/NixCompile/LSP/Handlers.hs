@@ -38,12 +38,16 @@ module NixCompile.LSP.Handlers (
 )
 where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
 import Control.Monad.IO.Class (MonadIO (..))
+import Data.Char (isAlphaNum)
+import Data.List (nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Data.Text qualified as T
 import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
 import Language.LSP.Server
@@ -89,6 +93,7 @@ import NixCompile.LSP.Handlers.Project (
   buildCrossScopeGraphWith,
   getProjectCache,
   invalidateModuleGraphCache,
+  latestNixpkgsIndex,
   lookupNixpkgsIndex,
   voidProjectDiags,
  )
@@ -105,9 +110,10 @@ import NixCompile.Nixpkgs.Cache (
   flushCacheAsync,
   loadCacheFrom,
  )
-import NixCompile.Nixpkgs.Eval (EvalBackend (..), composeBackend, shapeBackend)
+import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..), composeBackend, shapeBackend)
 import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
+import NixCompile.Nixpkgs.Warm (WarmPool, newWarmPool, swapFocus)
 import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -159,6 +165,51 @@ lspCacheConfig lsp =
     }
  where
   mib n = fromIntegral n * 1024 * 1024
+
+{-# NOINLINE warmPool #-}
+
+{- | The process-wide background-warm pool (STR-231): @max-threads@ workers that
+pre-warm the eval cache for whatever the focus seeds. Forced lazily after the
+config is installed. @wpExpand@ is a no-op for now — one-hop namespace speculation
+waits on namespaces being indexed (their heads aren't yet content-addressable, so
+warming their children wouldn't cache). The demand floor (visible @pkgs.<name>@
+references) is the live win.
+-}
+warmPool :: WarmPool
+warmPool = unsafePerformIO $ do
+  n <- fromIntegral . Cfg.lspMaxThreads <$> Cfg.getLspRuntime
+  newWarmPool n warmNixpkgsPath (\_ _ -> [])
+
+{- | Warm one nixpkgs attribute path through the caching backend — a cache miss
+evaluates (~62ms) and stores; a hit is a no-op. The index is built asynchronously
+on didOpen, so a worker that pops a path before it lands briefly polls for it
+(~0.4s build) rather than dropping the seed; it gives up after ~2s (no nixpkgs).
+-}
+warmNixpkgsPath :: [Text] -> IO (Either EvalError [Text])
+warmNixpkgsPath path = go (20 :: Int)
+ where
+  go 0 = pure (Left Unsupported)
+  go n =
+    latestNixpkgsIndex
+      >>= maybe (threadDelay 100_000 >> go (n - 1)) (\idx -> evalSpine nixpkgsBackend idx path)
+
+{- | The distinct @pkgs.<name>@ references in a document's text — the reachable
+nixpkgs set of the current context, used to seed the warm frontier. A lightweight
+text scan (survives the half-typed edits the parser rejects), boundary-checked so
+@mypkgs.x@ does not match @pkgs@.
+-}
+pkgsReferences :: Text -> [[Text]]
+pkgsReferences txt =
+  [ [name]
+  | name <- nub [refName after | (before, after) <- T.breakOnAll "pkgs." txt, leftOk before]
+  , not (T.null name)
+  ]
+ where
+  refName after = T.takeWhile isPkgChar (T.drop 5 after)
+  leftOk before = maybe True (not . isPkgBoundary) (lastChar before)
+  lastChar t = if T.null t then Nothing else Just (T.last t)
+  isPkgBoundary ch = isPkgChar ch || ch == '.'
+  isPkgChar ch = isAlphaNum ch || ch == '_' || ch == '\'' || ch == '-'
 
 {- | The full request registry: maps every supported LSP notification/request
   method to its handler. Passed to the server as the static handler set.
@@ -223,7 +274,9 @@ documentOpenHandler notif = do
     -- Warm the nixpkgs symbol index in the background so the first
     -- go-to-def on a `pkgs.<name>` resolves instantly.
     _ <- lookupNixpkgsIndex uri
-    pure ()
+    -- Focus = the nixpkgs packages this file references; the warm pool
+    -- pre-evaluates their spines so the first hover/completion is a hit (STR-231).
+    swapFocus warmPool (pkgsReferences txt)
  where
   enqueue fp = do
     pc <- getProjectCache
@@ -240,6 +293,9 @@ documentChangeHandler notif = do
   let diags = fullLint txt
   sendNotification SMethod_TextDocumentPublishDiagnostics $
     PublishDiagnosticsParams uri Nothing diags
+  -- Re-seed the warm frontier to the edited file's nixpkgs references (a focus
+  -- change is a single swap, never a restart — in-flight evals still land).
+  liftIO (swapFocus warmPool (pkgsReferences txt))
 
 firstChangeText :: [TextDocumentContentChangeEvent] -> Text
 firstChangeText (TextDocumentContentChangeEvent change : _)
