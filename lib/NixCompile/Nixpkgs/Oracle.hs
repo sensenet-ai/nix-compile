@@ -81,7 +81,22 @@ buildPkgsOracle backend idx expr = do
   insertRecord leaves acc path names = Map.insert path (recordOf leaves path names) acc
   recordOf leaves path names =
     TAttrs (Map.fromList [(n, (fieldType leaves path n, False)) | n <- names])
-  fieldType leaves path n = Map.findWithDefault TAny (path <> [n]) leaves
+  -- a directly-referenced field's scalar leaf wins; otherwise a well-known
+  -- derivation field gets its conventional type; otherwise it stays opaque.
+  fieldType leaves path n = Map.findWithDefault (conventionalFieldType n) (path <> [n]) leaves
+
+{- | Well-known derivation scalar fields whose type is fixed by nixpkgs convention
+(@pname@, @version@, … are always strings). Applied ONLY to fields actually present
+in a value's spine, so a non-derivation record that lacks them is unaffected. This
+makes a let-bound @pkgs.<pkg>.<field>@ precise without an extra eval per field.
+-}
+conventionalFieldType :: Text -> NixType
+conventionalFieldType "pname" = TString
+conventionalFieldType "version" = TString
+conventionalFieldType "name" = TString
+conventionalFieldType "system" = TString
+conventionalFieldType "outputName" = TString
+conventionalFieldType _ = TAny
 
 {- | The @typeOf@-derived type of the value at a path (force just that field), or
 'Nothing' on the empty path or an eval failure.

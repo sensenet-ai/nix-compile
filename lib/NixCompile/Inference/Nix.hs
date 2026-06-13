@@ -58,7 +58,6 @@ module NixCompile.Inference.Nix (
 )
 where
 
-import Control.Applicative ((<|>))
 import Control.Exception (IOException, try)
 import Control.Monad (foldM, forM, forM_, replicateM, when)
 import Control.Monad.State.Strict (gets, modify)
@@ -191,31 +190,52 @@ The 'hasDefault' parameter (from @attrs.x or default@) suppresses the error,
 because the source has explicitly declared "ok if missing".
 -}
 
-{- | A @pkgs.<path>@ selection whose full STATIC path the caller precomputed
-(into 'envPkgsOracle') gets that type directly, as a monotype scheme — the seam
-where the nixpkgs eval backend enriches inference. Syntactic on the @pkgs@ base,
-exactly like 'builtinsFieldScheme', and fired BEFORE 'inferSelect', so the opaque
-@pkgs : TAny@ is never consulted. A dynamic key or an unseeded path falls through.
+{- | If a @pkgs.<path>@ selection has a static prefix the caller precomputed (into
+'envPkgsOracle'), start the selection fold from that prefix's type instead of from
+the opaque @pkgs@ value — the seam where the nixpkgs eval backend enriches
+inference. The LONGEST matching prefix wins, so a fully-precomputed path resolves
+directly AND a path one step beyond a known (closed) record selects through it —
+turning a bogus nixpkgs attribute into a real "missing attribute" error. Syntactic
+on the @pkgs@ base, like 'builtinsFieldScheme'; a path with no matching prefix (or
+a non-@pkgs@ base) falls back to the normal opaque handling.
 -}
-pkgsOracleScheme :: TypeEnv -> NExprLoc -> NonEmpty (NKeyName NExprLoc) -> Maybe Scheme
-pkgsOracleScheme environment base path
-  | isNamespaceVar "pkgs" base
-  , Just keys <- traverse staticKey (toList path) =
-      Forall [] <$> Map.lookup keys (envPkgsOracle environment)
+pkgsOracleStart ::
+  TypeEnv ->
+  NExprLoc ->
+  NonEmpty (NKeyName NExprLoc) ->
+  Maybe (NixType, [NKeyName NExprLoc])
+pkgsOracleStart environment base path
+  | isNamespaceVar "pkgs" base = longest (length staticPrefix)
   | otherwise = Nothing
  where
-  staticKey (StaticKey k) = Just (varNameText k)
-  staticKey (DynamicKey _) = Nothing
+  keyList = toList path
+  staticPrefix = leadingStaticKeys keyList
+  longest 0 = Nothing
+  longest i =
+    maybe
+      (longest (i - 1))
+      (\t -> Just (t, drop i keyList))
+      (Map.lookup (take i staticPrefix) (envPkgsOracle environment))
+
+-- | The leading run of static attribute keys (as text), stopping at the first dynamic key.
+leadingStaticKeys :: [NKeyName NExprLoc] -> [Text]
+leadingStaticKeys (StaticKey k : rest) = varNameText k : leadingStaticKeys rest
+leadingStaticKeys _ = []
 
 inferSelect :: TypeEnv -> NExprLoc -> NonEmpty (NKeyName NExprLoc) -> Bool -> Infer NixType
-inferSelect environment base path hasDefault = do
-  baseT <- infer environment base
+inferSelect environment base path hasDefault =
+  maybe fromBase fromOracle (pkgsOracleStart environment base path)
+ where
   -- Fold the WHOLE dotted path, not just the first key. The dispatch used to
   -- match `(attr :| _)`, silently dropping `b.c` from `x.a.b.c` (so the genuine
   -- "cannot select b from an Int" error was never produced). `expr or default`
   -- suppresses the missing-key error at every level, matching Nix semantics.
-  foldM selectStep baseT path
- where
+  fromBase = do
+    baseT <- infer environment base
+    foldM selectStep baseT (toList path)
+  -- pkgs.<path>: start from the oracle's longest-prefix type, then select the rest
+  -- through it — so a bogus attribute hits the closed-record miss below.
+  fromOracle (startTy, restKeys) = foldM selectStep startTy restKeys
   selectStep baseTy attr = do
     t' <- applyCurrentSubst baseTy
     resolve t' (keyOf attr)
@@ -530,12 +550,12 @@ infer environment (LayerAnn sp expr) = withSpan (srcSpanToSpan sp) (go expr)
   go (NAbs params body) = inferLambda environment params body
   go (NApp func arg) = inferAppWithImport environment func arg
   -- `builtins.<name>`/`lib.<name>` get a fresh polymorphic instance; a
-  -- `pkgs.<path>` whose type the caller precomputed gets that type directly.
+  -- `pkgs.<path>` is enriched from the oracle inside 'inferSelect' (longest-prefix).
   go (NSelect mDef base path) =
     maybe
       (inferSelect environment base path (isJust mDef))
       instantiate
-      (builtinsFieldScheme base path <|> pkgsOracleScheme environment base path)
+      (builtinsFieldScheme base path)
   go (NHasAttr base attr) = inferHasAttr environment base attr
   go (NUnary op e) = inferUnary environment op e
   go (NBinary op left right) = inferBinary environment op left right

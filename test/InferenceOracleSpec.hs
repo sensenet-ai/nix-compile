@@ -64,6 +64,20 @@ testRecordMemberResolves :: IO Bool
 testRecordMemberResolves =
   pure (inferWith helloOracle "let h = pkgs.hello; in h.pname" == Right TString)
 
+{- | The record prefix resolves a DIRECT deep access too — @pkgs.hello.pname@
+typed from the @pkgs.hello@ record even though that leaf was never precomputed.
+-}
+testDirectDeepFromRecord :: IO Bool
+testDirectDeepFromRecord =
+  pure (inferWith helloOracle "pkgs.hello.pname" == Right TString)
+
+{- | A DIRECT deep access to a bogus attribute is now a real error (the prefix
+record is closed) — not the silent 'TAny' it used to fall back to.
+-}
+testDirectDeepTypoErrors :: IO Bool
+testDirectDeepTypoErrors =
+  pure (isLeft (inferWith helloOracle "pkgs.hello.nope"))
+
 -- | A bogus member of a precomputed (closed) record is a real type error.
 testBogusMemberErrors :: IO Bool
 testBogusMemberErrors =
@@ -94,6 +108,8 @@ inferenceOracleTests :: [(String, IO Bool)]
 inferenceOracleTests =
   [ ("oracle_leaf_precise", testLeafPrecise)
   , ("oracle_record_member_resolves", testRecordMemberResolves)
+  , ("oracle_direct_deep_from_record", testDirectDeepFromRecord)
+  , ("oracle_direct_deep_typo_errors", testDirectDeepTypoErrors)
   , ("oracle_bogus_member_errors", testBogusMemberErrors)
   , ("oracle_unification_catch", testUnificationCatch)
   , ("oracle_inert_without_seed", testInertWithoutOracle)

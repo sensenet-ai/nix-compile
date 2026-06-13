@@ -71,23 +71,30 @@ testScalarLeaf = do
   oracle <- oracleFor Map.empty (Map.singleton (["hello"], "pname") TString) "pkgs.hello.pname"
   pure (Map.lookup ["hello", "pname"] oracle == Just TString)
 
-{- | A set-valued path becomes a closed record of its spine, and the field that
-was ALSO referenced as a scalar leaf is enriched to that scalar type.
+{- | A set-valued path becomes a closed record of its spine. A field's type is:
+its scalar leaf if directly referenced ('homepage'), else its nixpkgs convention
+('version' → String), else opaque ('weird').
 -}
 testRecordWithEnrichment :: IO Bool
 testRecordWithEnrichment = do
-  let spines = Map.singleton ["hello"] ["pname", "version"]
+  let spines = Map.singleton ["hello"] ["version", "homepage", "weird"]
       fieldTypes =
         Map.fromList
           [ (([], "hello"), TAny) -- pkgs.hello is a set
-          , ((["hello"], "pname"), TString) -- pkgs.hello.pname is a string
+          , ((["hello"], "homepage"), TString) -- pkgs.hello.homepage referenced → leaf
           ]
-  oracle <- oracleFor spines fieldTypes "{ a = pkgs.hello; b = pkgs.hello.pname; }"
+  oracle <- oracleFor spines fieldTypes "{ a = pkgs.hello; b = pkgs.hello.homepage; }"
   let want =
-        TAttrs (Map.fromList [("pname", (TString, False)), ("version", (TAny, False))])
+        TAttrs
+          ( Map.fromList
+              [ ("version", (TString, False)) -- convention
+              , ("homepage", (TString, False)) -- referenced leaf
+              , ("weird", (TAny, False)) -- neither
+              ]
+          )
   pure
     ( Map.lookup ["hello"] oracle == Just want
-        && Map.lookup ["hello", "pname"] oracle == Just TString
+        && Map.lookup ["hello", "homepage"] oracle == Just TString
     )
 
 -- | An unresolvable path (both spine and field type fail) yields no entry.
