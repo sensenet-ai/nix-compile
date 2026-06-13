@@ -37,6 +37,10 @@ module NixCompile.Inference.Nix.Constraint (
   mkOpenRec,
   applyCurrentSubst,
   addSubst,
+
+  -- * Row lacks-constraints (Gaster–Jones)
+  addLacks,
+  getLacks,
 )
 where
 
@@ -44,6 +48,8 @@ import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import NixCompile.Core.Span (Loc (..), Span (..))
@@ -69,6 +75,13 @@ data InferState = InferState
   , inferBinds :: ![Binding]
   , inferSpan :: !(Maybe Span)
   , inferWithMemo :: !(Map Text NixType)
+  , inferLacks :: !(Map TypeVar (Set Text))
+  {- ^ Gaster–Jones lacks-constraints: for an open row variable @r@, the labels
+  @r@ must NOT contain — exactly the labels owned by every record that has @r@
+  as its tail. Maintained at each 'unify' entry and checked when a row var is
+  bound, so the field-merge in 'applySubst' is disjoint by enforcement (the row is
+  refused any label its record already owns, at a possibly-different type).
+  -}
   }
 
 -- | inference runs in EitherT over State: errors abort, state persists
@@ -80,7 +93,7 @@ starts with empty substitution / fresh-var counter at 0
 runInfer :: Infer a -> Either Text (a, [Binding])
 runInfer inference =
   let (eitherResult, inferState) =
-        runState (runExceptT inference) (InferState 0 emptySubst [] Nothing Map.empty)
+        runState (runExceptT inference) (InferState 0 emptySubst [] Nothing Map.empty Map.empty)
    in (\res -> (res, inferBinds inferState)) <$> eitherResult
 
 -- ── emit a binding into the result list (prepended, reversed later) ──
@@ -146,3 +159,18 @@ insert time — the substitution stays acyclic and the on-read chase terminates.
 addSubst :: TypeVar -> NixType -> Infer ()
 addSubst v t = modify $ \s ->
   s{inferSubst = Map.insert v t (inferSubst s)}
+
+{- | Record that an open row variable must LACK the given labels — accumulated
+(union), since a row var can tail several records over a run. The anonymous
+sentinel ('isAnonRowVar') is never bound, so it carries no constraint. Empty sets
+are a no-op.
+-}
+addLacks :: TypeVar -> Set Text -> Infer ()
+addLacks r labels
+  | isAnonRowVar r = pure ()
+  | Set.null labels = pure ()
+  | otherwise = modify $ \s -> s{inferLacks = Map.insertWith Set.union r labels (inferLacks s)}
+
+-- | The labels an open row variable must lack (empty if unconstrained).
+getLacks :: TypeVar -> Infer (Set Text)
+getLacks r = gets (Map.findWithDefault Set.empty r . inferLacks)

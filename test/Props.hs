@@ -109,6 +109,7 @@ import NixpkgsOracleSpec qualified
 import NixpkgsWarmSpec qualified
 import ProjectCacheSpec qualified
 import Psychotic qualified
+import RowLacksSpec qualified
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import Test.QuickCheck
@@ -5287,6 +5288,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- row lacks-constraint enforcement (Gaster–Jones; hermetic) --"
+  rowLacksResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- RowLacksSpec.rowLacksTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5299,6 +5312,7 @@ main = do
           ++ warmResults
           ++ oracleResults
           ++ oracleBridgeResults
+          ++ rowLacksResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed

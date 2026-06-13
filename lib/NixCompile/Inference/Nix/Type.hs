@@ -123,8 +123,12 @@ instance ToJSON NixType
 {- | A record's row tail: closed (exactly the known fields) or open with a row
 **variable** standing for "at least these fields, plus whatever @r@ resolves to".
 The row var lets open records accumulate fields across unifications (RC1); its
-lacks-constraints (which labels it must NOT gain) live in a side store in the
-inference state ('NixCompile.Inference.Nix').
+lacks-constraints (which labels it must NOT gain — the labels its record already
+owns) live in a side store in the inference state (@inferLacks@ in
+"NixCompile.Inference.Nix.Constraint") and are ENFORCED when the row var is bound
+("NixCompile.Inference.Nix.Unify"'s @bindRowVar@ rejects a binding that would
+supply a lacked label). That is what makes the field merge in 'applySubst' below
+provably disjoint rather than disjoint by happenstance.
 -}
 data RowTail = RClosed | ROpen !TypeVar
   deriving stock (Eq, Ord, Show, Generic)
@@ -279,8 +283,11 @@ applySubst s = go
   resolveRow m' r Nothing = TRec m' (ROpen r)
   resolveRow m' r (Just (TVar r')) | r' == r = TRec m' (ROpen r) -- self-map: identity
   resolveRow m' _ (Just (TVar r')) = TRec m' (ROpen r') -- tail var renamed
-  -- row var bound to a record: merge known fields (disjoint by lacks) and
-  -- continue resolving the bound row's own tail
+  -- row var bound to a record: merge known fields and continue resolving the
+  -- bound row's own tail. The 'Map.union' is disjoint by ENFORCEMENT: the
+  -- lacks-check in 'bindRowVar' refuses to bind a row var to a record sharing a
+  -- label with the record it tails, so a colliding field is a type error there and
+  -- never reaches this merge to be silently dropped.
   resolveRow m' _ (Just (TRec m2 tail2)) = go (TRec (Map.union m' m2) tail2)
   resolveRow m' r (Just _) = TRec m' (ROpen r) -- defensive: non-row binding
 

@@ -78,7 +78,20 @@ unify :: NixType -> NixType -> Infer ()
 unify type1 type2 = do
   t1' <- applyCurrentSubst type1
   t2' <- applyCurrentSubst type2
+  -- record each side's lacks-constraint BEFORE binding any tail: a tail var is
+  -- only ever bound inside a unify that first saw its record, so this captures the
+  -- labels every record tailing it owns (across instantiation, too).
+  registerLacks t1'
+  registerLacks t2'
   unify' t1' t2'
+
+{- | Record the lacks-constraint a top-level open record imposes on its tail
+variable: the tail must lack every label the record already owns. Nested records
+are registered by the recursive 'unify' calls that reach them.
+-}
+registerLacks :: NixType -> Infer ()
+registerLacks (TRec m (ROpen r)) = addLacks r (Map.keysSet m)
+registerLacks _ = pure ()
 
 {- | structural unification — must be applied AFTER current substitution.
 n.b. clause order is load-bearing: the patterns overlap (TFun/TFun before
@@ -186,14 +199,34 @@ unifyRec m1 tl1 m2 tl2 = dispatch tl1 tl2
         throwTypeError ("closed record missing field required by open record: " <> k)
     unless (isAnonRowVar r) $ bindRowVar r (TRec closedExtra RClosed)
 
--- | bind a row variable (with row-occurs check; never binds the anon sentinel)
+-- | bind a row variable (with row-occurs check + lacks check; never binds the anon sentinel)
 bindRowVar :: TypeVar -> NixType -> Infer ()
 bindRowVar r t
   | isAnonRowVar r = pure ()
   | occursCheck r t =
       throwTypeError $
         "recursive row type: " <> prettyType (TVar r) <> " occurs in " <> prettyType t
-  | otherwise = addSubst r t
+  | otherwise = lacksCheck r t >> addSubst r t
+
+{- | Reject binding a row variable to a record that supplies a label the row is
+required to LACK — i.e. a label its own record already owns. Without this, the
+field merge in 'applySubst' ('resolveRow') would silently keep one type and drop
+the other; here it is a type error, which is the sound outcome — the same field
+of the same record constrained two incompatible ways. By construction the bind
+targets ('Map.difference' extras, a fresh tail) are disjoint from the row's record,
+so on well-typed programs this never fires; it ENFORCES that invariant rather than
+leaving it to coincidence.
+-}
+lacksCheck :: TypeVar -> NixType -> Infer ()
+lacksCheck r (TRec m2 _) = do
+  lacked <- getLacks r
+  let clash = Set.intersection (Map.keysSet m2) lacked
+  unless (Set.null clash) $
+    throwTypeError $
+      "conflicting row constraint: field(s) "
+        <> T.intercalate ", " (Set.toList clash)
+        <> " required absent from an open record but supplied by unification"
+lacksCheck _ _ = pure ()
 
 {- | unify a union (sum) type against a concrete type
 single-element unions delegate; multi-element checks membership
