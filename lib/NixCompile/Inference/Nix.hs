@@ -480,9 +480,24 @@ inferLambda environment (Param name) body = do
   pure $ TFun paramT' resultT
 -- set pattern: { name ? default, ... } @ name ->
 inferLambda environment (ParamSet mName variadic paramList) body = do
-  paramTypes <- forM paramList $ \(name, mDefault) -> do
-    t <- maybe (moduleParamVar environment (varNameText name)) (infer environment) mDefault
-    pure (varNameText name, (t, isJust mDefault))
+  -- Nix gives every formal ONE mutually-recursive scope, so a default value
+  -- (`doCheck ? lib.versionAtLeast …`, `x ? callPackage ./p { }`) may reference
+  -- any sibling parameter. Bind a fresh var for each param FIRST, then infer the
+  -- defaults against that full scope, unifying each into its param's var.
+  -- Inferring a default in the bare outer env (as before) wrongly reported sibling
+  -- params like `lib` / `callPackage` unbound, skipping the whole file.
+  freshParams <- forM paramList $ \(name, mDefault) -> do
+    t <- moduleParamVar environment (varNameText name)
+    pure (varNameText name, t, mDefault)
+  let paramScope =
+        foldr (\(n, t, _) e -> extendEnv n (Forall [] t) e) environment freshParams
+      withDefault fresh d = do
+        dt <- infer paramScope d
+        unify fresh dt
+        applyCurrentSubst fresh
+  paramTypes <- forM freshParams $ \(name, fresh, mDefault) -> do
+    t <- maybe (pure fresh) (withDefault fresh) mDefault
+    pure (name, (t, isJust mDefault))
 
   attrsT <-
     if variadic == Variadic

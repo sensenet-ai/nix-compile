@@ -1597,6 +1597,17 @@ prop_review_optional_open_field_ok =
     Right (NT.TInt, _) -> True
     _ -> False
 
+-- A parameter's default value may reference a SIBLING parameter — Nix gives all
+-- formals one mutually-recursive scope. Both orders must type-check. Regression:
+-- defaults were inferred before the siblings were bound, so `{ b ? a, a }` (and
+-- the common nixpkgs `{ lib, doCheck ? lib.versionAtLeast … }`) wrongly reported
+-- the sibling unbound — the dominant skip cause on real nixpkgs trees.
+prop_param_default_refs_sibling :: Bool
+prop_param_default_refs_sibling =
+  ok "{ a, b ? a }: b" && ok "{ b ? a, a }: b"
+ where
+  ok src = either (const False) (const True) (parseAndInfer src)
+
 -- RC1 stage 4: `builtins.attrNames` is row-polymorphic (a scheme instantiated at
 -- the selection site, not a monotype baked into the `builtins` record). It
 -- returns [String] on a record and rejects non-records.
@@ -4949,6 +4960,7 @@ main = do
       , run "review_select_present_ok" (property prop_review_select_present_ok)
       , run "review_select_missing_fails" (property prop_review_select_missing_fails)
       , run "review_optional_open_field_ok" (property prop_review_optional_open_field_ok)
+      , run "param_default_refs_sibling" (property prop_param_default_refs_sibling)
       , run "review_builtins_attrnames_ok" (property prop_review_builtins_attrnames_ok)
       , run
           "review_builtins_attrnames_nonrecord_fails"
