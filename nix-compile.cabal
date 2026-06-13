@@ -103,6 +103,7 @@ library
         NixCompile.Lint.Packages
         NixCompile.Lint.Patterns
         NixCompile.Layout.Closure
+        NixCompile.Layout.Edge
         NixCompile.Layout.Graph
         NixCompile.Layout.Import
         NixCompile.Layout.ModuleKind

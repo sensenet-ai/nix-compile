@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 --                                                                              // nixpkgs // index
@@ -44,12 +43,12 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Nix.Expr.Types (Binding (..), NExprF (..), NKeyName (..))
+import Nix.Expr.Types (Binding (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
-import Nix.Utils qualified as NixUtils
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Core.Span (Loc (..), Span (..))
-import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
+import NixCompile.Layout.Edge qualified as Edge
+import NixCompile.Syntax.Annotation (varNameText)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath ((</>))
 
@@ -152,20 +151,11 @@ allPackagesEntries root = do
 binding at the top level of all-packages.nix.
 -}
 callPackageBindings :: NExprLoc -> [(Text, Text)]
-callPackageBindings = concatMap binding . topBindings
+callPackageBindings = concatMap binding . Edge.topBindings
  where
-  topBindings (Layer (NSet _ bs)) = bs
-  topBindings (Layer (NAbs _ b)) = topBindings b
-  topBindings (Layer (NLet _ b)) = topBindings b
-  topBindings (Layer (NWith _ b)) = topBindings b
-  topBindings _ = []
   binding (NamedVar (StaticKey k :| []) rhs _) =
-    maybe [] (\p -> [(varNameText k, p)]) (callPackagePath rhs)
+    maybe [] (\p -> [(varNameText k, p)]) (Edge.callPackageTargetOf rhs)
   binding _ = []
-  callPackagePath
-    (Layer (NApp (Layer (NApp (Layer (NSym f)) (Layer (NLiteralPath (NixUtils.Path p))))) _))
-      | varNameText f `elem` (["callPackage", "callPackages"] :: [Text]) = Just (T.pack p)
-  callPackagePath _ = Nothing
 
 -- | Look up a package attribute name in the index.
 lookupPackage :: NixpkgsIndex -> Text -> Maybe Location

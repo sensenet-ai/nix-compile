@@ -39,9 +39,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
-import Nix.Utils (Path (..))
 import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix.Type
+import NixCompile.Layout.Edge qualified as Edge
 import NixCompile.Syntax.Annotation (pattern Layer)
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
@@ -218,19 +218,9 @@ topBindings (Layer (NLet _ body)) = topBindings body
 topBindings (Layer (NWith _ body)) = topBindings body
 topBindings _ = []
 
--- | find imports from the top-level `imports` binding
+-- | find imports from the top-level `imports` binding (the shared 'Edge' scanner)
 findImports' :: NExprLoc -> [FilePath]
-findImports' expr = maybe [] extractImportPaths (findAttr "imports" (topBindings expr))
-
-extractImportPaths :: NExprLoc -> [FilePath]
-extractImportPaths (Layer (NList exprs)) = mapMaybe extractLiteralPath exprs
-extractImportPaths (Layer (NApp func arg)) = extractImportPaths func ++ extractImportPaths arg
-extractImportPaths _ = []
-
-extractLiteralPath :: NExprLoc -> Maybe FilePath
-extractLiteralPath (Layer (NLiteralPath (Path p))) = Just p
-extractLiteralPath (Layer (NStr (DoubleQuoted [Plain t]))) = Just (T.unpack t)
-extractLiteralPath _ = Nothing
+findImports' = Edge.flakeImportPaths
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 -- queries

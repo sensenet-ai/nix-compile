@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -49,16 +48,13 @@ module NixCompile.Layout.Closure (
 where
 
 import Data.List (isPrefixOf)
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Maybe (catMaybes)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
-import Nix.Expr.Types
-import Nix.Expr.Types.Annotated
-import Nix.Utils qualified as NixPath
+import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Core.Safety (safeParseNixFile)
 import NixCompile.Inference.Nix (
   TypeEnv,
@@ -68,67 +64,9 @@ import NixCompile.Inference.Nix (
   inferExprWithEnv,
  )
 import NixCompile.Inference.Nix.Type (NixType (..))
-import NixCompile.Layout.Import (Import (..), findImports)
-import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
+import NixCompile.Layout.Edge (Edge (..), EdgeKind (..), discoverEdges)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist)
-import System.FilePath (normalise, pathSeparator, takeDirectory, (</>))
-
--- ── edges ───────────────────────────────────────────────────────────
-
-{- | Which kind of dependency an edge encodes — the three ways one Nix file
-reaches another without evaluation.
--}
-data EdgeKind
-  = -- | @import ./path@ (also @import ./path args@, @builtins.import@)
-    EImport
-  | -- | a flake-parts @imports = [ ./a.nix … ]@ list element
-    EFlakeImport
-  | -- | a top-level @x = callPackage ./path { }@ binding
-    ECallPackage
-  deriving (Eq, Ord, Show)
-
-{- | One discovered edge: its kind, the path it resolves to (against the source
-file's directory, before any existence check), and the path text as written
-(the key inference's 'lookupImport' looks an @import@ up under).
--}
-data Edge = Edge
-  { edgeKind :: !EdgeKind
-  , edgePath :: !FilePath
-  , edgeRaw :: !Text
-  }
-  deriving (Eq, Show)
-
-{- | Every dependency edge of an expression, all three kinds, eval-free. The
-@import@ case delegates to the canonical 'findImports' walker; the flake-parts and
-@callPackage@ cases are scanned here.
--}
-discoverEdges :: FilePath -> NExprLoc -> [Edge]
-discoverEdges baseDir expr =
-  [Edge EImport (impPath i) (impRawPath i) | i <- findImports baseDir expr]
-    ++ [Edge EFlakeImport (resolveEdge baseDir p) (T.pack p) | p <- flakeImports expr]
-    ++ [Edge ECallPackage (resolveEdge baseDir (T.unpack raw)) raw | raw <- callPackagePaths expr]
-
--- | flake-parts module imports: the literal paths of a top-level @imports = [ … ]@.
-flakeImports :: NExprLoc -> [FilePath]
-flakeImports expr = maybe [] extractPaths (findAttr "imports" (topBindings expr))
- where
-  extractPaths (Layer (NList es)) = mapMaybe litPath es
-  extractPaths (Layer (NApp f a)) = extractPaths f ++ extractPaths a
-  extractPaths _ = []
-  litPath (Layer (NLiteralPath (NixPath.Path p))) = Just p
-  litPath (Layer (NStr (DoubleQuoted [Plain t]))) = Just (T.unpack t)
-  litPath _ = Nothing
-
--- | The literal paths of every top-level @x = callPackage ./path { … }@ binding.
-callPackagePaths :: NExprLoc -> [Text]
-callPackagePaths = mapMaybe binding . topBindings
- where
-  binding (NamedVar _ rhs _) = cpPath rhs
-  binding _ = Nothing
-  cpPath
-    (Layer (NApp (Layer (NApp (Layer (NSym f)) (Layer (NLiteralPath (NixPath.Path p))))) _))
-      | varNameText f `elem` (["callPackage", "callPackages"] :: [Text]) = Just (T.pack p)
-  cpPath _ = Nothing
+import System.FilePath (pathSeparator, takeDirectory, (</>))
 
 -- ── the closure ─────────────────────────────────────────────────────
 
@@ -297,27 +235,3 @@ closureEnv base file = do
   cl <- buildTypeClosure file
   canon <- canonicalizePath file
   pure (importEnvFor base cl canon)
-
--- ── small AST helpers ───────────────────────────────────────────────
-
--- | Top-level bindings, unwrapping lambda / let / with wrappers.
-topBindings :: NExprLoc -> [Binding NExprLoc]
-topBindings (Layer (NSet _ bs)) = bs
-topBindings (Layer (NAbs _ body)) = topBindings body
-topBindings (Layer (NLet _ body)) = topBindings body
-topBindings (Layer (NWith _ body)) = topBindings body
-topBindings _ = []
-
--- | The value of a named static binding, if present.
-findAttr :: Text -> [Binding NExprLoc] -> Maybe NExprLoc
-findAttr name = foldr check Nothing
- where
-  check (NamedVar (StaticKey k :| []) v _) acc
-    | varNameText k == name = Just v
-    | otherwise = acc
-  check _ acc = acc
-
--- | Resolve a raw import path against a base directory (absolute paths pass through).
-resolveEdge :: FilePath -> FilePath -> FilePath
-resolveEdge _ path@('/' : _) = path
-resolveEdge baseDir path = normalise (baseDir </> path)
