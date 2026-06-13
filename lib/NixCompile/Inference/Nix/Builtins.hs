@@ -106,6 +106,9 @@ builtinEnv =
   mono type_ = Forall [] type_
   req type_ = (type_, False)
 
+  -- everything Nix's `toString` coerces to a string (see note at the entry)
+  toStringDomain = TUnion [TInt, TFloat, TBool, TPath, TString, TNull, TList TAny, TDerivation]
+
   -- ── builtins attrset ──────────────────────────────────────────
   -- 'builtins' itself is typed as attrset of all function entries
   builtinsAttr = Map.singleton "builtins" (mono $ TAttrs builtinsTypes)
@@ -124,7 +127,17 @@ builtinEnv =
       map
         (\(name, type_) -> (name, req type_))
         -- ── string / path conversions ──
-        [ ("toString", TFun (TUnion [TInt, TFloat, TBool, TPath, TString]) TString)
+        -- n.b. `toString` coerces numbers, bools, paths, strings, null (→ ""),
+        -- derivations (→ outPath), and LISTS (space-joined — `toString
+        -- [ "-fpermissive" ]` is valid Nix). The earlier scalar-only domain
+        -- false-positived on every `toString <list>` (347 skips in pkgs/by-name
+        -- alone). A bare set (no `__toString`/`outPath`) is still correctly
+        -- rejected — it is not in the domain (see 'unionMemberAccepts').
+        [ ("toString", TFun toStringDomain TString)
+        , -- `placeholder "out"` and `fromTOML` are Nix GLOBALS (exposed unqualified,
+          -- not just under `builtins.`) — both appear bare in package files.
+          ("placeholder", TFun TString TString)
+        , ("fromTOML", TFun TString TAny)
         , ("baseNameOf", TFun TPath TString)
         , ("dirOf", TFun TPath TPath)
         , ("stringLength", TFun TString TInt)

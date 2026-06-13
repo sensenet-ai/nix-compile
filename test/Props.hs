@@ -1374,6 +1374,19 @@ prop_review_tostring_concrete_errors :: Bool
 prop_review_tostring_concrete_errors =
   isLeft (parseAndInfer "toString { a = 1; }")
 
+-- `toString` coerces lists (space-joined — `toString [ "-fpermissive" ]` is valid
+-- Nix), and the Nix globals `placeholder` / `fromTOML` resolve unqualified. All
+-- three were dominant false positives on real nixpkgs (lists alone ~318 skips in
+-- pkgs/by-name). The bare-set rejection above still holds — list subsumption in
+-- 'unionMemberAccepts' does not weaken it.
+prop_tostring_list_and_globals_ok :: Bool
+prop_tostring_list_and_globals_ok =
+  ok "toString [ \"-fpermissive\" ]"
+    && ok "placeholder \"out\""
+    && ok "builtins.fromTOML \"x = 1\""
+ where
+  ok src = either (const False) (const True) (parseAndInfer src)
+
 -- #16 (NEW PROPERTY, was missing): the comment-injecting formatter must be
 -- meaning-preserving. `annotateSource` only INSERTS `# ::` comment lines and never
 -- edits code, so stripping the injected lines from the output must recover the
@@ -4947,6 +4960,7 @@ main = do
       , run "review_plus_path_string" (property prop_review_plus_path_string)
       , run "review_plus_nonaddable_fails" (property prop_review_plus_nonaddable_fails)
       , run "review_tostring_concrete_errors" (property prop_review_tostring_concrete_errors)
+      , run "tostring_list_and_globals_ok" (property prop_tostring_list_and_globals_ok)
       , run "review_format_roundtrip" prop_review_format_roundtrip
       , run "reformatter_roundtrip" prop_reformatter_roundtrip
       , run "reformatter_roundtrip_corpus" prop_reformatter_roundtrip_corpus

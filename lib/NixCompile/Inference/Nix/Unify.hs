@@ -244,13 +244,26 @@ unifyUnion ts t = do
   flatten x = [x]
   checkUnionMembership t' ts'
     | TVar _ <- t' = pure ()
-    | t' `elem` concatMap flatten ts' = pure ()
+    | any (any (unionMemberAccepts t') . flatten) ts' = pure ()
     | otherwise =
         throwTypeError $
           "type mismatch: expected one of "
             <> T.intercalate " | " (map prettyType ts)
             <> ", got "
             <> prettyType t'
+
+{- | Does a union member accept a value of the given type? A member subsumes the
+value when it is 'TAny', when it is 'TString' and the value is a string literal, or
+when both are lists and the element is accepted — otherwise exact equality. Plain
+equality wrongly rejected e.g. @toString <list>@: a @[Any]@ member never
+structurally equals @["x"]@, yet it should. A bare set is still rejected, since no
+scalar/list member subsumes it.
+-}
+unionMemberAccepts :: NixType -> NixType -> Bool
+unionMemberAccepts _ TAny = True
+unionMemberAccepts (TStrLit _) TString = True
+unionMemberAccepts (TList a) (TList b) = unionMemberAccepts a b
+unionMemberAccepts a b = a == b
 
 -- ── type merging (for branches / polymorphic result combination) ──
 
