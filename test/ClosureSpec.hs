@@ -23,12 +23,14 @@
 
 module ClosureSpec (closureTests) where
 
+import Data.Either (isLeft)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import Nix.Expr.Types.Annotated (NExprLoc)
 import NixCompile.Core.Safety (safeParseNixText)
-import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv)
+import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, inferExprWithEnv)
 import NixCompile.Inference.Nix.Type (prettyType)
 import NixCompile.Layout.Closure (Edge (..), EdgeKind (..), closureEnv, discoverEdges)
 import System.FilePath ((</>))
@@ -53,6 +55,20 @@ withTree dep main act =
     TIO.writeFile (dir </> "main.nix") main
     env <- closureEnv builtinEnv (dir </> "main.nix")
     act env
+
+{- | Like 'withTree', but also hands the callback @main.nix@'s parsed expression
+(so a test can infer it against the cross-module env). Parse failure ⇒ False.
+-}
+withTreeMain :: Text -> Text -> (TypeEnv -> NExprLoc -> IO Bool) -> IO Bool
+withTreeMain dep main act =
+  withSystemTempDirectory "closure" $ \dir -> do
+    TIO.writeFile (dir </> "flake.nix") ""
+    TIO.writeFile (dir </> "dep.nix") dep
+    let mainPath = dir </> "main.nix"
+    TIO.writeFile mainPath main
+    env <- closureEnv builtinEnv mainPath
+    parsed <- safeParseNixText main
+    either (const (pure False)) (act env) parsed
 
 -- ── edge discovery ─────────────────────────────────────────────────
 
@@ -96,6 +112,15 @@ testCallPackageResult =
   depFn = "{ stdenv }: { nm = 1; }\n"
   callerFn = "{ callPackage }: { p = callPackage ./dep.nix { }; }\n"
 
+{- | The check-path payoff: accessing a field the dependency's closed record
+lacks is a cross-module type error the closure now catches (single-file inference,
+seeing @import ./dep.nix@ as opaque, would have let it pass).
+-}
+testCrossModuleFieldError :: IO Bool
+testCrossModuleFieldError =
+  withTreeMain "{ a = 1; }\n" "(import ./dep.nix).b\n" $ \env expr ->
+    pure (isLeft (inferExprWithEnv env expr))
+
 -- | A file with no in-project imports leaves the base env's import types untouched.
 testNoImportsIsBase :: IO Bool
 testNoImportsIsBase =
@@ -112,5 +137,6 @@ closureTests =
   , ("closure_discovers_callpackage_edge", testCallPackageEdge)
   , ("closure_cross_module_type_flows", testCrossModuleType)
   , ("closure_callpackage_result_type_flows", testCallPackageResult)
+  , ("closure_cross_module_field_error_caught", testCrossModuleFieldError)
   , ("closure_no_imports_is_base_env", testNoImportsIsBase)
   ]

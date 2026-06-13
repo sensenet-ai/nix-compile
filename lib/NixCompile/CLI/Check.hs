@@ -30,8 +30,9 @@ import NixCompile.Core.Config qualified as Config
 import NixCompile.Core.Diagnostic qualified as Diag
 import NixCompile.Core.Log
 import NixCompile.Core.Safety qualified as Safety
-import NixCompile.Inference.Nix qualified
+import NixCompile.Inference.Nix (TypeEnv (..), builtinEnv, inferExprWithEnv)
 import NixCompile.Inference.Nix.Type qualified
+import NixCompile.Layout.Closure qualified as Closure
 import NixCompile.Layout.ModuleKind (ModuleKind (..), detectKind, detectedKind)
 import NixCompile.Lint.Combined qualified as Combined
 import NixCompile.Lint.Derivation qualified as Derivation
@@ -141,23 +142,25 @@ performTypeCheck config file expression skipTypeCheck
   | otherwise = do
       -- Flakes and module-system files take their top-level parameters
       -- (self, inputs, config, pkgs, …) from the flake / module system, so we
-      -- infer them in module mode (those params are dynamic — see
-      -- 'inferModuleExpr'). Everything else uses the strict builtin env.
+      -- infer them in module mode (those params are dynamic). Everything else
+      -- uses the strict builtin env. Either way, seed the cross-module
+      -- import/callPackage closure (synchronous, eval-free — see
+      -- 'NixCompile.Layout.Closure') so an `import ./dep.nix` /
+      -- `callPackage ./pkg.nix` resolves to its real type instead of a dynamic.
       let kind = detectedKind (detectKind file expression)
-          infer_
-            | kind `elem` [Flake, FlakeModule, NixOSModule, HomeModule, DarwinModule] =
-                NixCompile.Inference.Nix.inferModuleExpr
-            | otherwise = NixCompile.Inference.Nix.inferExpr
-      -- n.b. `either` forces `infer_ expression` to WHNF inside the `try`, so an
-      -- exception from (pure but partial) inference is caught here; `prettyType`
-      -- itself stays a thunk, exactly as the old `case` left it.
+          moduleMode = kind `elem` [Flake, FlakeModule, NixOSModule, HomeModule, DarwinModule]
+      crossEnv <- liftIO (Closure.closureEnv builtinEnv file)
+      let env = if moduleMode then crossEnv{envModuleParams = True} else crossEnv
+      -- n.b. `either` forces inference to WHNF inside the `try`, so an exception
+      -- from (pure but partial) inference is caught here; `prettyType` itself
+      -- stays a thunk, exactly as the old `case` left it.
       result <-
         liftIO $
           try $
             either
               (pure . Left)
               (pure . Right . NixCompile.Inference.Nix.Type.prettyType . fst)
-              (infer_ expression)
+              (inferExprWithEnv env expression)
       handleResult result
  where
   handleResult (Left exception) = do
