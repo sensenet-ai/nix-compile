@@ -5,6 +5,7 @@ module NixCompile.CLI.Dispatch (
   cmdCheck,
   cmdFmt,
   cmdInfer,
+  cmdInferInPlace,
   cmdEmit,
   cmdScope,
   cmdScopeJSON,
@@ -22,7 +23,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
-import System.Directory (doesDirectoryExist, doesFileExist)
+import System.Directory (doesDirectoryExist, doesFileExist, renameFile)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (takeExtension)
 
@@ -36,7 +37,9 @@ import NixCompile.Core.Draw qualified as Draw
 import NixCompile.Core.Log
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (emitConfigFunction)
+import NixCompile.Inference.Nix (builtinEnv)
 import NixCompile.Inference.Nix.Annotate qualified as Annotate
+import NixCompile.LSP.Handlers qualified as Handlers
 import NixCompile.LSP.Server qualified as LSP
 import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Syntax.Format qualified as Formatter
@@ -85,9 +88,31 @@ cmdFmt file = withSafeNix file $ \expr -> do
 
 -- | @infer <file>@: print the Nix file annotated with inferred types to stdout.
 cmdInfer :: FilePath -> AppM ()
-cmdInfer file = withSafeNix file $ \_expr -> do
-  result <- liftIO $ Annotate.annotateFile file
-  either failSafety (liftIO . TIO.putStr) result
+cmdInfer = runInfer (liftIO . TIO.putStr)
+
+{- | @infer -i\/--in-place@: rewrite the file with its annotations instead of
+printing to stdout. Idempotent (prior annotations are stripped first) and written
+atomically (temp + rename), so a re-run replaces cleanly and a failure never
+clobbers the source — and on a parse/type error nothing is written at all.
+-}
+cmdInferInPlace :: FilePath -> AppM ()
+cmdInferInPlace file = runInfer (liftIO . atomicWriteFile file) file
+
+-- | Shared @infer@ core: enrich, annotate, and hand the result to a sink.
+runInfer :: (Text -> AppM ()) -> FilePath -> AppM ()
+runInfer sink file = withSafeNix file $ \expr -> do
+  -- Enrich with real nixpkgs types (best-effort, time-boxed) so a `pkgs.<…>`
+  -- reference annotates as its actual type rather than an opaque dynamic.
+  env <- liftIO $ Handlers.enrichInferEnv file expr builtinEnv
+  result <- liftIO $ Annotate.annotateFileWithEnv env file
+  either failSafety sink result
+
+-- | Write a file atomically: a sibling temp then 'renameFile' (atomic on POSIX).
+atomicWriteFile :: FilePath -> Text -> IO ()
+atomicWriteFile path txt = do
+  let tmp = path <> ".nix-compile.tmp"
+  TIO.writeFile tmp txt
+  renameFile tmp path
 
 {- | @emit <file>@: from a script's inferred schema, emit the generated
 @emit-config@ bash function to stdout.

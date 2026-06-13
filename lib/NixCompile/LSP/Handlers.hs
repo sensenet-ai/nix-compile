@@ -35,6 +35,7 @@ module NixCompile.LSP.Handlers (
   findExprAt,
   inferExprAt,
   semanticLegend,
+  enrichInferEnv,
 )
 where
 
@@ -96,6 +97,7 @@ import NixCompile.LSP.Handlers.Project (
   invalidateModuleGraphCache,
   latestNixpkgsIndex,
   lookupNixpkgsIndex,
+  resolveNixpkgsRoot,
   voidProjectDiags,
  )
 import NixCompile.LSP.Handlers.SemanticTokens (semanticLegend, semanticTokens)
@@ -241,6 +243,25 @@ enrichPkgsOracle uri expr env = do
     mOracle <- timeout oracleBudgetMicros (buildPkgsOracle nixpkgsBackend idx expr)
     pure (maybe env (`withPkgsOracle` env) mOracle)
   oracleBudgetMicros = 4_000_000
+
+{- | The inference env for a one-shot @infer@ of a file: the given base env plus a
+SYNCHRONOUSLY-built pkgs oracle (resolve the nixpkgs root, build its index, eval the
+file's @pkgs.<…>@ references). Time-boxed and best-effort — no nixpkgs, no working
+@nix@, or a timeout leaves the base env untouched, so @infer@ always works. Unlike
+'enrichPkgsOracle' (the hover path, which reads the async LSP index cache) this
+builds the index eagerly, so it lands within a single CLI invocation.
+-}
+enrichInferEnv :: FilePath -> NExprLoc -> TypeEnv -> IO TypeEnv
+enrichInferEnv file expr env = fromMaybe env <$> timeout enrichBudgetMicros build
+ where
+  build = do
+    mRoot <- resolveNixpkgsRoot (filePathToUri file)
+    mIdx <- traverse Nixpkgs.buildNixpkgsIndex mRoot
+    maybe (pure env) withOracle mIdx
+  withOracle idx = do
+    oracle <- buildPkgsOracle nixpkgsBackend idx expr
+    pure (withPkgsOracle oracle env)
+  enrichBudgetMicros = 10_000_000
 
 {- | nixpkgs attribute-typo diagnostics for a file: build the oracle (time-boxed,
 index-gated) and flag every @pkgs.<…>@ selection naming an attribute its known

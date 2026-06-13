@@ -27,6 +27,7 @@ module NixCompile.LSP.Handlers.Project (
   lookupNixpkgsIndex,
   warmNixpkgsIndex,
   latestNixpkgsIndex,
+  resolveNixpkgsRoot,
   nixpkgsRootFromLock,
 )
 where

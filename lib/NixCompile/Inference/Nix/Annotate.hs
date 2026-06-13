@@ -22,10 +22,13 @@ module NixCompile.Inference.Nix.Annotate (
 
   -- * Low-level
   annotateSource,
+  annotateText,
+  stripAnnotations,
 )
 where
 
 import Data.List (sortBy)
+import Data.Map.Strict qualified as Map
 import Data.Ord (comparing)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -40,7 +43,7 @@ import NixCompile.Inference.Nix (
   inferExprWithEnv,
  )
 import NixCompile.Inference.Nix.Type (prettyType)
-import NixCompile.Syntax.Parse (parseNix, parseNixFile)
+import NixCompile.Syntax.Parse (parseNix)
 
 -- | Annotate a file with inferred types using the default (no-import) env.
 annotateFile :: FilePath -> IO (Either Text Text)
@@ -53,15 +56,28 @@ knowledge by inferring with the empty env.
 annotateFileWithEnv :: TypeEnv -> FilePath -> IO (Either Text Text)
 annotateFileWithEnv env path = do
   readResult <- Safety.safeReadFile path
-  either (pure . Left . Safety.renderSafetyError) fromSrc readResult
- where
-  fromSrc src = do
-    parseResult <- parseNixFile path
-    pure $ either Left (annotateExprWithEnv env src) parseResult
+  pure (either (Left . Safety.renderSafetyError) (annotateText env path) readResult)
 
 -- | parse and annotate an in-memory expression source string with the default env.
 annotateExpr :: Text -> Either Text Text
-annotateExpr src = either Left (annotateExprWithEnv builtinEnv src) (parseNix "<input>" src)
+annotateExpr = annotateText builtinEnv "<input>"
+
+{- | Strip any prior @# :: …@ annotations, parse the cleaned source, and re-render
+it with fresh annotations. Stripping first is what makes @infer@ IDEMPOTENT: a
+second run replaces the comments rather than stacking a new layer on the old.
+-}
+annotateText :: TypeEnv -> FilePath -> Text -> Either Text Text
+annotateText env path src =
+  let clean = stripAnnotations src
+   in either Left (annotateExprWithEnv env clean) (parseNix path clean)
+
+{- | Remove previously-injected @# :: …@ annotation lines (a line whose first
+non-space content is the @# ::@ marker). Ordinary comments are untouched.
+-}
+stripAnnotations :: Text -> Text
+stripAnnotations = T.unlines . filter (not . isAnnotation) . T.lines
+ where
+  isAnnotation line = "# ::" `T.isPrefixOf` T.stripStart line
 
 annotateExprWithEnv :: TypeEnv -> Text -> NExprLoc -> Either Text Text
 annotateExprWithEnv env src expr =
@@ -78,9 +94,14 @@ annotateSource :: Text -> InferResult -> Text
 annotateSource src InferResult{..} =
   let
     bindingAnns = map mkBindingAnn irBindings
-    anns = sortBy (flip (comparing annLoc)) bindingAnns
+    -- one annotation per source line: keep the leftmost (outermost) binding, so
+    -- inline / nested bindings that share a line don't stack above it.
+    perLine = Map.elems (Map.fromListWith leftmost [(locLine (annLoc a), a) | a <- bindingAnns])
+    anns = sortBy (flip (comparing annLoc)) perLine
    in
     foldl' (flip applyAnn) src anns
+ where
+  leftmost a b = if locCol (annLoc a) <= locCol (annLoc b) then a else b
 
 data Ann = Ann
   { annLoc :: !Loc

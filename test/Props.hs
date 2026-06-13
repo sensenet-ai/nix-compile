@@ -25,6 +25,7 @@
 module Main (main) where
 
 import Adversarial qualified
+import AnnotateSpec qualified
 import Control.Exception (IOException, SomeException, catch, try)
 import Control.Monad (replicateM)
 import Data.Either (isLeft, isRight)
@@ -5300,6 +5301,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- infer annotation engine (idempotent / placement; hermetic) --"
+  annotateResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- AnnotateSpec.annotateTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5313,6 +5326,7 @@ main = do
           ++ oracleResults
           ++ oracleBridgeResults
           ++ rowLacksResults
+          ++ annotateResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
