@@ -25,13 +25,11 @@
 --   'buildTypeClosure' walks that graph from a root file — bounded to the
 --   enclosing project (flake.nix / .git), eval-free, cycle-guarded, resolving
 --   @./dir@ to @./dir/default.nix@ — and infers every reachable file's type in
---   dependency order, threading each file's import types into the next. The
---   result populates 'envImportTypes' so a one-shot CLI @infer@ / @check@ resolves
---   cross-module @import@ types synchronously (no async project cache needed).
---
---   n.b. 'ECallPackage' edges are FOLLOWED for reachability (their files are
---   parsed + typed + available) but their call-site result types are not yet
---   substituted into inference — that is the next step. See [[STR-312]].
+--   dependency order, threading each file's dependency types into the next. The
+--   result populates two env maps: 'envImportTypes' (what @import ./p@ yields) and
+--   'envCallPackageTypes' (the RESULT of @callPackage ./p { }@ — its function
+--   applied to its auto-filled args), so a one-shot CLI @infer@ resolves both
+--   cross-module forms synchronously, no async project cache needed.
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module NixCompile.Layout.Closure (
@@ -62,8 +60,14 @@ import Nix.Expr.Types
 import Nix.Expr.Types.Annotated
 import Nix.Utils qualified as NixPath
 import NixCompile.Core.Safety (safeParseNixFile)
-import NixCompile.Inference.Nix (TypeEnv, builtinEnv, extendImport, inferExprWithEnv)
-import NixCompile.Inference.Nix.Type (NixType)
+import NixCompile.Inference.Nix (
+  TypeEnv,
+  builtinEnv,
+  extendCallPackage,
+  extendImport,
+  inferExprWithEnv,
+ )
+import NixCompile.Inference.Nix.Type (NixType (..))
 import NixCompile.Layout.Import (Import (..), findImports)
 import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist)
@@ -255,18 +259,29 @@ inferOne nodes acc path = maybe acc viaNode (Map.lookup path nodes)
 
 -- ── consuming the closure ───────────────────────────────────────────
 
-{- | Extend a base env with the @import@ / flake-import types a file depends on,
-keyed by BOTH the canonical path and the raw text as written (inference's
-'lookupImport' keys on the literal). 'ECallPackage' edges are not yet substituted.
+{- | Extend a base env with the cross-module types a file depends on. An @import@ /
+flake-import contributes the dependency's own type, keyed by BOTH the canonical path
+and the raw text as written (inference's 'lookupImport' keys on the literal). A
+@callPackage ./p@ contributes the package's RESULT type — the dependency is a
+function @{ … }: package@, and @callPackage@ applies it, so the call site has the
+function's result — keyed by the raw path under 'envCallPackageTypes'.
 -}
 extendDeps :: TypeEnv -> Map FilePath NixType -> [Dep] -> TypeEnv
 extendDeps base known = foldl' add base
  where
-  add env (ECallPackage, _, _) = env
+  add env (ECallPackage, canon, raw) =
+    maybe env (\t -> extendCallPackage (T.unpack raw) (callResult t) env) (Map.lookup canon known)
   add env (_, canon, raw) =
     maybe env extend (Map.lookup canon known)
    where
     extend t = extendImport (T.unpack raw) t (extendImport canon t env)
+
+{- | The result of applying a package function: @callPackage f@ supplies @f@'s
+arguments, so the call yields @f@'s codomain. A non-function degrades to itself.
+-}
+callResult :: NixType -> NixType
+callResult (TFun _ r) = r
+callResult t = t
 
 -- | The cross-module inference env for one file already in a closure.
 importEnvFor :: TypeEnv -> Closure -> FilePath -> TypeEnv

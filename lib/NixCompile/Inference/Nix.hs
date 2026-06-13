@@ -49,8 +49,10 @@ module NixCompile.Inference.Nix (
   extendEnv,
   extendImport,
   extendImports,
+  extendCallPackage,
   lookupEnv,
   lookupImport,
+  lookupCallPackage,
 
   -- * Results
   InferResult (..),
@@ -152,19 +154,26 @@ inferAssert environment cond body = do
   unify condT TBool
   infer environment body
 
-{- | function application: unify func type as TFun arg result, return result
-n.b. intercepts import ./path to use cross-module type info
+{- | function application: unify func type as TFun arg result, return result.
+n.b. intercepts two cross-module forms when the closure has precomputed their types:
+@callPackage ./path { }@ (the head is @callPackage <literal>@) resolves to the
+package's RESULT type, and @import ./path@ resolves to the imported file's type.
+Both fall back to ordinary unifying application when the env has nothing for them.
 -}
 inferAppWithImport :: TypeEnv -> NExprLoc -> NExprLoc -> Infer NixType
 inferAppWithImport environment func arg =
-  maybe (inferApp environment func arg) viaImport (extractImportPathLiteral arg)
+  maybe viaImportArg viaCallPackage (callPackageLiteral func)
  where
+  viaCallPackage cpPath =
+    maybe viaImportArg useResolved (lookupCallPackage cpPath environment)
+  viaImportArg =
+    maybe (inferApp environment func arg) viaImport (extractImportPathLiteral arg)
   viaImport importPath =
-    maybe (inferApp environment func arg) useImported (lookupImport importPath environment)
-  useImported importedType = do
+    maybe (inferApp environment func arg) useResolved (lookupImport importPath environment)
+  useResolved resolvedType = do
     _ <- infer environment func
     _ <- infer environment arg
-    applyCurrentSubst importedType
+    applyCurrentSubst resolvedType
 
 -- | extract a literal file path from an expression (for import resolution)
 extractImportPathLiteral :: NExprLoc -> Maybe FilePath
@@ -172,6 +181,13 @@ extractImportPathLiteral (Layer (NLiteralPath (Nix.Path p))) = Just p
 extractImportPathLiteral (Layer (NStr (DoubleQuoted [Plain t]))) = Just (T.unpack t)
 extractImportPathLiteral (Layer (NStr (Indented _ [Plain t]))) = Just (T.unpack t)
 extractImportPathLiteral _ = Nothing
+
+-- | the literal path of a @callPackage ./path@ / @callPackages ./path@ head, if any
+callPackageLiteral :: NExprLoc -> Maybe FilePath
+callPackageLiteral (Layer (NApp (Layer (NSym f)) pathExpr))
+  | varNameText f `elem` (["callPackage", "callPackages"] :: [Text]) =
+      extractImportPathLiteral pathExpr
+callPackageLiteral _ = Nothing
 
 -- | function application: unify func type as TFun arg result, return result
 inferApp :: TypeEnv -> NExprLoc -> NExprLoc -> Infer NixType

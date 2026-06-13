@@ -23,6 +23,8 @@ module NixCompile.Inference.Nix.Environment (
   extendImport,
   extendImports,
   lookupImport,
+  extendCallPackage,
+  lookupCallPackage,
   withPkgsOracle,
 )
 where
@@ -40,6 +42,14 @@ data TypeEnv = TypeEnv
   { envBindings :: Map Text Scheme
   , envWith :: Maybe NixType
   , envImportTypes :: Map FilePath NixType
+  , envCallPackageTypes :: Map FilePath NixType
+  {- ^ precomputed RESULT types for @callPackage ./path { }@ call sites, keyed by
+    the raw path as written. Where 'envImportTypes' holds what @import ./p@ yields
+    (the file's value — a package is a function), this holds what @callPackage ./p
+    { }@ yields: that function applied to its auto-filled arguments, i.e. the
+    package itself. Seeded by the closure ("NixCompile.Layout.Closure"); empty by
+    default, so absent it changes nothing.
+  -}
   , envLenient :: Bool
   {- ^ when True, treat unbound names as fresh polymorphic vars instead of
     errors. Used for backwards compatibility with libraries that mention
@@ -67,7 +77,7 @@ data TypeEnv = TypeEnv
 
 -- | the empty environment: no bindings, no @with@, no imports, strict mode.
 emptyEnv :: TypeEnv
-emptyEnv = TypeEnv Map.empty Nothing Map.empty False False Map.empty
+emptyEnv = TypeEnv Map.empty Nothing Map.empty Map.empty False False Map.empty
 
 -- | seed the @pkgs.<path>@ type oracle (replacing any existing entries).
 withPkgsOracle :: Map [Text] NixType -> TypeEnv -> TypeEnv
@@ -95,3 +105,12 @@ extendImports imports env = env{envImportTypes = Map.union imports (envImportTyp
 -- | look up a previously imported module's type
 lookupImport :: FilePath -> TypeEnv -> Maybe NixType
 lookupImport path env = Map.lookup path (envImportTypes env)
+
+-- | register the RESULT type of a @callPackage ./path { }@ site (keyed by raw path)
+extendCallPackage :: FilePath -> NixType -> TypeEnv -> TypeEnv
+extendCallPackage path t env =
+  env{envCallPackageTypes = Map.insert path t (envCallPackageTypes env)}
+
+-- | look up the result type a @callPackage ./path { }@ site was precomputed to have
+lookupCallPackage :: FilePath -> TypeEnv -> Maybe NixType
+lookupCallPackage path env = Map.lookup path (envCallPackageTypes env)

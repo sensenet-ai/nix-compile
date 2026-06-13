@@ -96,6 +96,7 @@ builtinEnv =
     { envBindings = builtinBindings
     , envWith = Nothing
     , envImportTypes = Map.empty
+    , envCallPackageTypes = Map.empty
     , envLenient = False
     , envModuleParams = False
     , envPkgsOracle = Map.empty

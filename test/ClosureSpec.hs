@@ -85,6 +85,17 @@ testCrossModuleType =
   recordWithFields t = "a" `T.isInfixOf` rendered t && "b" `T.isInfixOf` rendered t
   rendered = prettyType
 
+{- | A @callPackage ./dep.nix { }@ site resolves to the package's RESULT type (the
+body of @dep.nix@'s function), not the function itself.
+-}
+testCallPackageResult :: IO Bool
+testCallPackageResult =
+  withTree depFn callerFn $ \env ->
+    pure (any (T.isInfixOf "nm" . prettyType) (Map.elems (envCallPackageTypes env)))
+ where
+  depFn = "{ stdenv }: { nm = 1; }\n"
+  callerFn = "{ callPackage }: { p = callPackage ./dep.nix { }; }\n"
+
 -- | A file with no in-project imports leaves the base env's import types untouched.
 testNoImportsIsBase :: IO Bool
 testNoImportsIsBase =
@@ -100,5 +111,6 @@ closureTests =
   , ("closure_discovers_flake_imports", testFlakeEdges)
   , ("closure_discovers_callpackage_edge", testCallPackageEdge)
   , ("closure_cross_module_type_flows", testCrossModuleType)
+  , ("closure_callpackage_result_type_flows", testCallPackageResult)
   , ("closure_no_imports_is_base_env", testNoImportsIsBase)
   ]
