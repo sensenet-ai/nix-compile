@@ -26,6 +26,7 @@ module Main (main) where
 
 import Adversarial qualified
 import AnnotateSpec qualified
+import ClosureSpec qualified
 import Control.Exception (IOException, SomeException, catch, try)
 import Control.Monad (replicateM)
 import Data.Either (isLeft, isRight)
@@ -5326,6 +5327,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- unified import/module closure (discovery + cross-module type flow) --"
+  closureResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- ClosureSpec.closureTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5341,6 +5354,7 @@ main = do
           ++ rowLacksResults
           ++ annotateResults
           ++ inferRecursiveResults
+          ++ closureResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed

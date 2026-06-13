@@ -44,6 +44,7 @@ import NixCompile.Inference.Nix (TypeEnv, builtinEnv)
 import NixCompile.Inference.Nix.Annotate qualified as Annotate
 import NixCompile.LSP.Handlers qualified as Handlers
 import NixCompile.LSP.Server qualified as LSP
+import NixCompile.Layout.Closure qualified as Closure
 import NixCompile.Layout.Scope qualified as Scope
 import NixCompile.Syntax.Format qualified as Formatter
 import NixCompile.Syntax.Parse qualified as Nix
@@ -104,9 +105,12 @@ cmdInferInPlace file = runInfer (liftIO . atomicWriteFile file) file
 -- | Shared @infer@ core: enrich, annotate, and hand the result to a sink.
 runInfer :: (Text -> AppM ()) -> FilePath -> AppM ()
 runInfer sink file = withSafeNix file $ \expr -> do
-  -- Enrich with real nixpkgs types (best-effort, time-boxed) so a `pkgs.<…>`
-  -- reference annotates as its actual type rather than an opaque dynamic.
-  env <- liftIO $ Handlers.enrichInferEnv file expr builtinEnv
+  -- Seed cross-module types: build the import/module closure rooted at this file
+  -- (synchronous, eval-free) so an `import ./dep.nix` annotates as `./dep.nix`'s
+  -- actual type instead of an opaque dynamic. Then layer the nixpkgs pkgs oracle
+  -- on top (best-effort, time-boxed) for `pkgs.<…>` references.
+  crossEnv <- liftIO $ Closure.closureEnv builtinEnv file
+  env <- liftIO $ Handlers.enrichInferEnv file expr crossEnv
   result <- liftIO $ Annotate.annotateFileWithEnv env file
   either failSafety sink result
 
@@ -156,7 +160,8 @@ inferOneFile enrich file = do
     either (pure . InferSkipped . depthMsg) (const (annotateOne expr)) (Safety.analyzeDepth expr)
   depthMsg de = Safety.renderSafetyError (Safety.SafetyDepthExceeded de)
   annotateOne expr = do
-    env <- enrich expr builtinEnv
+    crossEnv <- Closure.closureEnv builtinEnv file
+    env <- enrich expr crossEnv
     result <- Annotate.annotateFileWithEnv env file
     either (pure . InferSkipped) (writeIfChanged file) result
 
