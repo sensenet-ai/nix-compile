@@ -61,6 +61,8 @@ dispatchCommand config ["check", path] = cmdCheck config path
 dispatchCommand _ ["fmt", file] = cmdFmt file
 dispatchCommand _ ["infer", "-i", file] = cmdInferInPlace file
 dispatchCommand _ ["infer", "--in-place", file] = cmdInferInPlace file
+dispatchCommand config ["infer", "-r", path] = cmdInferRecursive config path
+dispatchCommand config ["infer", "--recursive", path] = cmdInferRecursive config path
 dispatchCommand _ ["infer", file] = cmdInfer file
 dispatchCommand _ ["emit", file] = cmdEmit file
 dispatchCommand _ ["lsp"] = cmdLSP
@@ -87,6 +89,7 @@ usage = do
   putStrLn "  nix-compile check <path>      Run all checks (auto-detects .sh, .nix, or directory)"
   putStrLn "  nix-compile infer <file.nix>  Infer types and print annotated source"
   putStrLn "  nix-compile infer -i <file>   Infer types and rewrite the file in place"
+  putStrLn "  nix-compile infer -r <path>   Annotate every .nix under a tree in place"
   putStrLn "  nix-compile fmt <file.nix>    Format Nix source (nixfmt)"
   putStrLn "  nix-compile emit <script.sh>  Generate emit-config bash function"
   putStrLn "  nix-compile scope <file.nix>  Show scope graph (--json, --dhall)"

@@ -36,12 +36,14 @@ module NixCompile.LSP.Handlers (
   inferExprAt,
   semanticLegend,
   enrichInferEnv,
+  enrichInferEnvBatch,
 )
 where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Control.Exception qualified as Exc
+import Control.Monad (join)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Char (isAlphaNum)
 import Data.List (inits, nub)
@@ -262,6 +264,27 @@ enrichInferEnv file expr env = fromMaybe env <$> timeout enrichBudgetMicros buil
     oracle <- buildPkgsOracle nixpkgsBackend idx expr
     pure (withPkgsOracle oracle env)
   enrichBudgetMicros = 10_000_000
+
+{- | The batch counterpart to 'enrichInferEnv' for @infer -r@ over a tree: resolve
+the nixpkgs root and build its index ONCE (time-boxed), then hand back a per-file
+enricher that rebuilds only the cheap per-expression @pkgs.<…>@ oracle. A recursive
+sweep thus pays the index build a single time rather than on every file. Degrades to
+the identity enricher when there is no nixpkgs / no working @nix@ / the build times
+out, so @infer -r@ always proceeds.
+-}
+enrichInferEnvBatch :: FilePath -> IO (NExprLoc -> TypeEnv -> IO TypeEnv)
+enrichInferEnvBatch root = do
+  mIdx <- join <$> timeout enrichBudgetMicros build
+  pure (maybe (\_ env -> pure env) perFile mIdx)
+ where
+  build = do
+    mRoot <- resolveNixpkgsRoot (filePathToUri root)
+    traverse Nixpkgs.buildNixpkgsIndex mRoot
+  perFile idx expr env = do
+    mOracle <- timeout oracleBudgetMicros (buildPkgsOracle nixpkgsBackend idx expr)
+    pure (maybe env (`withPkgsOracle` env) mOracle)
+  enrichBudgetMicros = 10_000_000
+  oracleBudgetMicros = 2_000_000
 
 {- | nixpkgs attribute-typo diagnostics for a file: build the oracle (time-boxed,
 index-gated) and flag every @pkgs.<…>@ selection naming an attribute its known

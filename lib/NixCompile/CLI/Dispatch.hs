@@ -6,6 +6,9 @@ module NixCompile.CLI.Dispatch (
   cmdFmt,
   cmdInfer,
   cmdInferInPlace,
+  cmdInferRecursive,
+  InferOutcome (..),
+  inferOneFile,
   cmdEmit,
   cmdScope,
   cmdScopeJSON,
@@ -37,7 +40,7 @@ import NixCompile.Core.Draw qualified as Draw
 import NixCompile.Core.Log
 import NixCompile.Core.Safety qualified as Safety
 import NixCompile.Emit.Config (emitConfigFunction)
-import NixCompile.Inference.Nix (builtinEnv)
+import NixCompile.Inference.Nix (TypeEnv, builtinEnv)
 import NixCompile.Inference.Nix.Annotate qualified as Annotate
 import NixCompile.LSP.Handlers qualified as Handlers
 import NixCompile.LSP.Server qualified as LSP
@@ -113,6 +116,76 @@ atomicWriteFile path txt = do
   let tmp = path <> ".nix-compile.tmp"
   TIO.writeFile tmp txt
   renameFile tmp path
+
+-- | What @infer -r@ did with one file.
+data InferOutcome
+  = -- | annotations changed; the file was rewritten
+    Wrote
+  | -- | annotations already correct; nothing written
+    AlreadyOk
+  | -- | a parse / depth / type error; the file was left untouched
+    InferSkipped !Text
+  deriving (Eq, Show)
+
+{- | @infer -r\/--recursive <path>@: annotate every @.nix@ file under a directory
+(or the single file, if @path@ is one) in place. Each file is handled independently
+and NON-fatally — a parse, depth, or type error skips just that file and leaves it
+untouched (never a clobber), while the rest proceed. File discovery honours the
+configured ignores (the same 'collectFiles' the CI sweep uses), and the nixpkgs
+index is built once for the whole run (see 'Handlers.enrichInferEnvBatch') rather
+than per file. A summary is printed at the end; the command always exits success —
+a file that doesn't type-check is expected, not a failure of @infer@.
+-}
+cmdInferRecursive :: Config.Config -> FilePath -> AppM ()
+cmdInferRecursive config root = do
+  files <- liftIO $ collectFiles config root
+  enrich <- liftIO $ Handlers.enrichInferEnvBatch root
+  outcomes <- liftIO $ mapM (\f -> (,) f <$> inferOneFile enrich f) files
+  reportInferSweep outcomes
+
+{- | Annotate one file in place, non-fatally, reusing a batch pkgs enricher. Any
+failure becomes an 'InferSkipped' rather than aborting the sweep, and the file is
+only rewritten when the annotation actually changes it (so a clean tree is a no-op).
+-}
+inferOneFile :: (NExprLoc -> TypeEnv -> IO TypeEnv) -> FilePath -> IO InferOutcome
+inferOneFile enrich file = do
+  parsed <- Nix.parseNixFile file
+  either (pure . InferSkipped) viaExpr parsed
+ where
+  viaExpr expr =
+    either (pure . InferSkipped . depthMsg) (const (annotateOne expr)) (Safety.analyzeDepth expr)
+  depthMsg de = Safety.renderSafetyError (Safety.SafetyDepthExceeded de)
+  annotateOne expr = do
+    env <- enrich expr builtinEnv
+    result <- Annotate.annotateFileWithEnv env file
+    either (pure . InferSkipped) (writeIfChanged file) result
+
+-- | Rewrite the file only when the annotation differs from what is already on disk.
+writeIfChanged :: FilePath -> Text -> IO InferOutcome
+writeIfChanged file txt = do
+  existing <- TIO.readFile file
+  if txt == existing
+    then pure AlreadyOk
+    else atomicWriteFile file txt >> pure Wrote
+
+-- | Print the per-file skips and a one-line tally for an @infer -r@ sweep.
+reportInferSweep :: [(FilePath, InferOutcome)] -> AppM ()
+reportInferSweep outcomes = liftIO $ do
+  forM_ skips $ \(file, reason) ->
+    putStrLn $ "  ⚠ " <> file <> " — " <> T.unpack (firstLine reason)
+  putStrLn $
+    "infer -r: "
+      <> show (length outcomes)
+      <> " files · "
+      <> show (length [() | (_, Wrote) <- outcomes])
+      <> " annotated · "
+      <> show (length [() | (_, AlreadyOk) <- outcomes])
+      <> " unchanged · "
+      <> show (length skips)
+      <> " skipped"
+ where
+  skips = [(file, reason) | (file, InferSkipped reason) <- outcomes]
+  firstLine = T.takeWhile (/= '\n')
 
 {- | @emit <file>@: from a script's inferred schema, emit the generated
 @emit-config@ bash function to stdout.

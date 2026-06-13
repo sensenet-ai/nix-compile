@@ -38,6 +38,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import InferRecursiveSpec qualified
 import InferenceOracleSpec qualified
 import LSPFeatureSpec qualified
 import Language.LSP.Protocol.Types (
@@ -5313,6 +5314,18 @@ main = do
       ]
 
   putStrLn ""
+  putStrLn "  -- infer -r tree sweep (skip-on-error / no-clobber; hermetic) --"
+  inferRecursiveResults <-
+    sequence
+      [ do
+          putStr $ "  " ++ name ++ " ... "
+          ok <- action
+          putStrLn (if ok then "OK" else "FAILED")
+          pure ok
+      | (name, action) <- InferRecursiveSpec.inferRecursiveTests
+      ]
+
+  putStrLn ""
   let allResults =
         results
           ++ psychoticResults
@@ -5327,6 +5340,7 @@ main = do
           ++ oracleBridgeResults
           ++ rowLacksResults
           ++ annotateResults
+          ++ inferRecursiveResults
   let passed = length (filter id allResults)
   let totalPassed = length allResults
   putStrLn $ "Passed: " ++ show passed ++ "/" ++ show totalPassed
