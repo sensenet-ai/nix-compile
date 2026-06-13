@@ -114,7 +114,7 @@ import NixCompile.Nixpkgs.Cache (
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..), composeBackend, shapeBackend)
 import NixCompile.Nixpkgs.EvalRepl (replBackend)
 import NixCompile.Nixpkgs.Index qualified as Nixpkgs
-import NixCompile.Nixpkgs.Oracle (buildPkgsOracle)
+import NixCompile.Nixpkgs.Oracle (buildPkgsOracle, collectPkgsChainsAnn, pkgsAttrTypos)
 import NixCompile.Nixpkgs.Warm (WarmPool, enqueueDemand, newWarmPool, swapFocus)
 import System.FilePath ((</>))
 import System.IO.Unsafe (unsafePerformIO)
@@ -242,6 +242,23 @@ enrichPkgsOracle uri expr env = do
     pure (maybe env (`withPkgsOracle` env) mOracle)
   oracleBudgetMicros = 4_000_000
 
+{- | nixpkgs attribute-typo diagnostics for a file: build the oracle (time-boxed,
+index-gated) and flag every @pkgs.<…>@ selection naming an attribute its known
+closed record lacks — the "better error messages" win as real squiggles. Best
+effort: no index yet, timeout, or no typos ⇒ []. Surfaced on didOpen/didSave, not
+the per-keystroke didChange (which stays lint-fast).
+-}
+pkgsTypoDiagnostics :: Uri -> NExprLoc -> IO [Diagnostic]
+pkgsTypoDiagnostics uri expr = do
+  mIdx <- lookupNixpkgsIndex uri
+  maybe (pure []) viaIdx mIdx
+ where
+  viaIdx idx = do
+    mOracle <- timeout 2_000_000 (buildPkgsOracle nixpkgsBackend idx expr)
+    pure (maybe [] toDiags mOracle)
+  toDiags oracle =
+    [spToDiagnostic msg sp | (sp, msg) <- pkgsAttrTypos oracle (collectPkgsChainsAnn expr)]
+
 {- | The full request registry: maps every supported LSP notification/request
   method to its handler. Passed to the server as the static handler set.
 -}
@@ -290,10 +307,12 @@ installLspConfig mroot = do
 documentOpenHandler :: TNotificationMessage 'Method_TextDocumentDidOpen -> LspM () ()
 documentOpenHandler notif = do
   let TNotificationMessage _ _ (DidOpenTextDocumentParams (TextDocumentItem uri _ _ txt)) = notif
-  -- Single-file diagnostics: always available, never blocks.
-  let diags = fullLint txt
+  -- Single-file lints (always available, never blocks) plus best-effort nixpkgs
+  -- attribute-typo diagnostics (index-gated, time-boxed).
+  let baseDiags = fullLint txt
+  typos <- liftIO (maybe (pure []) (pkgsTypoDiagnostics uri) (lspSafeParse txt))
   sendNotification SMethod_TextDocumentPublishDiagnostics $
-    PublishDiagnosticsParams uri Nothing diags
+    PublishDiagnosticsParams uri Nothing (baseDiags <> typos)
   -- BFS seed: the currently-open file is the highest priority. Workers will
   -- pick it up, expand to its imports, etc. This replaces voidProjectDiags
   -- as the "warm the cache" entry point.
@@ -351,9 +370,12 @@ documentSaveHandler notif = do
     pc <- getProjectCache
     PC.invalidateFile pc fp
   publish uri t = do
-    let diags = fullLint t
+    let baseDiags = fullLint t
+    -- On save, enrich with nixpkgs attribute-typo diagnostics (the cache/warm pool
+    -- have usually made the eval here cheap).
+    typos <- liftIO (maybe (pure []) (pkgsTypoDiagnostics uri) (lspSafeParse t))
     sendNotification SMethod_TextDocumentPublishDiagnostics $
-      PublishDiagnosticsParams uri Nothing diags
+      PublishDiagnosticsParams uri Nothing (baseDiags <> typos)
     liftIO $ voidProjectDiags uri
 
 documentCloseHandler :: TNotificationMessage 'Method_TextDocumentDidClose -> LspM () ()

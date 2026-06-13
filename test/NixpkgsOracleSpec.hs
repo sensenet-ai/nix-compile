@@ -27,12 +27,20 @@ import Data.List (sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as T
 import Nix.Expr.Types.Annotated (NExprLoc)
 import Nix.Parser (parseNixTextLoc)
+import NixCompile.Core.Span (Loc (..), Span (..))
 import NixCompile.Inference.Nix.Type (NixType (..), pattern TAttrs)
 import NixCompile.Nixpkgs.Eval (EvalBackend (..), EvalError (..))
 import NixCompile.Nixpkgs.Index (emptyIndex)
-import NixCompile.Nixpkgs.Oracle (buildPkgsOracle, collectPkgsChains, isScalarType)
+import NixCompile.Nixpkgs.Oracle (
+  buildPkgsOracle,
+  collectPkgsChains,
+  collectPkgsChainsAnn,
+  isScalarType,
+  pkgsAttrTypos,
+ )
 
 -- ── helpers ────────────────────────────────────────────────────────
 
@@ -111,6 +119,38 @@ testScalarClassification =
         && not (any isScalarType [TAny, TAttrs Map.empty, TFun TInt TInt])
     )
 
+-- ── attribute-typo diagnostics ─────────────────────────────────────
+
+-- | A placeholder span for the pure typo-checker tests.
+dummySpan :: Span
+dummySpan = Span (Loc 1 1) (Loc 1 9) Nothing
+
+-- | A closed record of two string fields, the unit of the typo tests.
+helloRecord :: NixType
+helloRecord = TAttrs (Map.fromList [("pname", (TString, False)), ("version", (TString, False))])
+
+-- | A selection naming an attribute the closed record lacks is flagged.
+testTypoDetected :: IO Bool
+testTypoDetected =
+  let typos = pkgsAttrTypos (Map.singleton ["hello"] helloRecord) [(dummySpan, ["hello", "bogus"])]
+   in pure (length typos == 1 && any (("bogus" `T.isInfixOf`) . snd) typos)
+
+-- | A selection naming a real attribute is not flagged.
+testNoTypoOnValidAttr :: IO Bool
+testNoTypoOnValidAttr =
+  let chains = [(dummySpan, ["hello", "pname"])]
+   in pure (null (pkgsAttrTypos (Map.singleton ["hello"] helloRecord) chains))
+
+-- | No closed record known at the prefix ⇒ no typo (no false positives).
+testNoTypoOnUnknownPrefix :: IO Bool
+testNoTypoOnUnknownPrefix =
+  pure (null (pkgsAttrTypos (Map.singleton ["hello"] helloRecord) [(dummySpan, ["world", "x"])]))
+
+-- | The span-aware collector recovers the same chains (with spans attached).
+testCollectAnnChains :: IO Bool
+testCollectAnnChains =
+  pure (map snd (collectPkgsChainsAnn (parse "pkgs.hello.bogus")) == [["hello", "bogus"]])
+
 -- ── runner ─────────────────────────────────────────────────────────
 
 -- | The eval→inference oracle-bridge tests (hermetic; fake backend only).
@@ -121,4 +161,8 @@ nixpkgsOracleTests =
   , ("oracle_record_with_enrichment", testRecordWithEnrichment)
   , ("oracle_unresolvable_skipped", testUnresolvableSkipped)
   , ("oracle_scalar_classification", testScalarClassification)
+  , ("oracle_typo_detected", testTypoDetected)
+  , ("oracle_no_typo_on_valid_attr", testNoTypoOnValidAttr)
+  , ("oracle_no_typo_on_unknown_prefix", testNoTypoOnUnknownPrefix)
+  , ("oracle_collect_ann_chains", testCollectAnnChains)
   ]

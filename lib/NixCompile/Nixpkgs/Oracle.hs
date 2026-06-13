@@ -34,6 +34,10 @@
 module NixCompile.Nixpkgs.Oracle (
   buildPkgsOracle,
 
+  -- * Attribute-typo diagnostics
+  collectPkgsChainsAnn,
+  pkgsAttrTypos,
+
   -- * Internals (exposed for testing)
   collectPkgsChains,
   isScalarType,
@@ -42,17 +46,20 @@ where
 
 import Control.Monad (foldM, mfilter)
 import Data.Foldable (toList)
-import Data.List (nub)
+import Data.List (inits, nub)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (Text)
+import Data.Text qualified as T
 import Nix.Expr.Types (NExprF (..), NKeyName (..))
 import Nix.Expr.Types.Annotated (NExprLoc)
 
+import NixCompile.Core.Span (Span)
 import NixCompile.Inference.Nix.Type (NixType (..), pattern TAttrs)
 import NixCompile.Nixpkgs.Eval (EvalBackend (..))
 import NixCompile.Nixpkgs.Index (NixpkgsIndex)
-import NixCompile.Syntax.Annotation (varNameText, pattern Layer)
+import NixCompile.Syntax.Annotation (srcSpanToSpan, varNameText, pattern Layer, pattern LayerAnn)
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- building the oracle
@@ -64,7 +71,10 @@ skipped silently (that path just falls back to the engine's opaque handling).
 -}
 buildPkgsOracle :: EvalBackend -> NixpkgsIndex -> NExprLoc -> IO (Map [Text] NixType)
 buildPkgsOracle backend idx expr = do
-  let chains = nub (collectPkgsChains expr)
+  -- Every non-empty PREFIX of every referenced chain — so `pkgs.hello.bogus`
+  -- still builds the `pkgs.hello` record that flags the typo, even when the file
+  -- never names `pkgs.hello` on its own.
+  let chains = nub (concatMap (drop 1 . inits) (collectPkgsChains expr))
   -- pass 1: each path's own type via typeOf; keep only the scalar leaves.
   leaves <- foldM addLeaf Map.empty chains
   -- pass 2: a non-scalar (set-valued) path becomes a closed record of its spine,
@@ -78,12 +88,20 @@ buildPkgsOracle backend idx expr = do
   addRecord leaves acc path = do
     spine <- evalSpine backend idx path
     pure (either (const acc) (insertRecord leaves acc path) spine)
-  insertRecord leaves acc path names = Map.insert path (recordOf leaves path names) acc
+  -- skip pathologically large sets (namespaces): a 10k-field record is costly and
+  -- rarely the thing you typo into; derivations (~tens of attrs) sail under the cap.
+  insertRecord leaves acc path names
+    | length names > recordFieldCap = acc
+    | otherwise = Map.insert path (recordOf leaves path names) acc
   recordOf leaves path names =
     TAttrs (Map.fromList [(n, (fieldType leaves path n, False)) | n <- names])
   -- a directly-referenced field's scalar leaf wins; otherwise a well-known
   -- derivation field gets its conventional type; otherwise it stays opaque.
   fieldType leaves path n = Map.findWithDefault (conventionalFieldType n) (path <> [n]) leaves
+
+-- | Skip building a record for a set larger than this (keeps namespaces out).
+recordFieldCap :: Int
+recordFieldCap = 1024
 
 {- | Well-known derivation scalar fields whose type is fixed by nixpkgs convention
 (@pname@, @version@, … are always strings). Applied ONLY to fields actually present
@@ -137,6 +155,35 @@ pkgsChainOf :: NExprF NExprLoc -> Maybe [Text]
 pkgsChainOf (NSelect _ base path)
   | isPkgsSym base = traverse staticKey (toList path)
 pkgsChainOf _ = Nothing
+
+{- | Like 'collectPkgsChains', but each chain carries the source span of its
+selection node — for placing attribute-typo diagnostics.
+-}
+collectPkgsChainsAnn :: NExprLoc -> [(Span, [Text])]
+collectPkgsChainsAnn (LayerAnn sp node) = here <> concatMap collectPkgsChainsAnn (toList node)
+ where
+  here = maybe [] (\ks -> [(srcSpanToSpan sp, ks)]) (pkgsChainOf node)
+
+{- | The attribute-typo diagnostics for a file's @pkgs.<path>@ references, given an
+oracle: a selection that names an attribute a known CLOSED record (a derivation's
+complete spine) does not have is flagged with the offending span and a message.
+Only closed records trigger this — open records and scalars yield nothing, so
+there are no false positives on partial knowledge.
+-}
+pkgsAttrTypos :: Map [Text] NixType -> [(Span, [Text])] -> [(Span, Text)]
+pkgsAttrTypos oracle = mapMaybe check
+ where
+  check (sp, keys) = (\(prefix, key) -> (sp, missingMsg prefix key)) <$> firstTypo keys
+  firstTypo keys =
+    listToMaybe
+      [ (prefix, key)
+      | (prefix, key) <- closedSplits keys
+      , Just (TAttrs fields) <- [Map.lookup prefix oracle]
+      , key `Map.notMember` fields
+      ]
+  closedSplits keys = [(take i keys, keys !! i) | i <- [1 .. length keys - 1]]
+  missingMsg prefix key =
+    "nixpkgs: `pkgs." <> T.intercalate "." prefix <> "` has no attribute `" <> key <> "`"
 
 -- | Is this expression the bare symbol @pkgs@?
 isPkgsSym :: NExprLoc -> Bool
